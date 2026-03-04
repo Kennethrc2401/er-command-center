@@ -73,7 +73,7 @@ export default function MAR({ encounterId, patientAllergies }: MARProps) {
                   <Button
                     size="sm"
                     disabled={hasConflict}
-                    onClick={() => administer({ medId: med._id })}
+                    onClick={() => administer({ medicationId: med._id })}
                     className={hasConflict ? "bg-slate-200 text-slate-500" : "bg-emerald-600 hover:bg-emerald-700"}
                   >
                     {hasConflict ? "Blocked" : "Administer"}
