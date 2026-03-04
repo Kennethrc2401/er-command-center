@@ -1,3 +1,56 @@
+🏥 ER Command Center: Unit 4B Triage System
+A Clinical Operating System for Emergency Department Management & Triage Education.
+
+🩺 Project Overview
+The ER Command Center is a full-stack clinical dashboard designed to streamline the flow of an Emergency Department. Built with a focus on the ESI (Emergency Severity Index) triage algorithm used at Hackensack Meridian Health, this application provides real-time situational awareness for CCMAs, Nurses, and Charge Doctors.
+
+🌟 Key Clinical Features
+Live Triage Queue: Real-time patient census with automated wait-time tracking and acuity-based sorting.
+
+Big-Board Monitor View: A high-contrast, dark-mode interface designed for unit station monitors, featuring Ambulance Diversion alerts when the unit reaches 90% capacity.
+
+Interactive EKG Telemetry: Live waveform simulation for high-acuity patients (ESI 1 & 2) to visualize cardiac distress.
+
+Smart Documentation: Template-driven clinical notes (Chest Pain, SOB, Abdominal Pain) to ensure standardized charting.
+
+SBAR Handoff Exporter: Generates professional PDF Shift Reports for end-of-shift handoffs between clinical teams.
+
+Privacy Mode: A "HIPAA-Ready" toggle that anonymizes patient names and MRNs for public presentations and clinical demos.
+
+🎓 Staff Training Suite
+Designed for FDU Clinical Students, the integrated Training Center includes:
+
+Triage Master Class Quiz: A scenario-based flashcard system to practice ESI level assignment.
+
+Interactive ESI Wizard: A step-by-step decision support tool based on the official ESI handbook.
+
+Clinical Reference Guide: Instant access to normal lab values (WBC, Potassium, Hgb) and "Panic" level thresholds.
+
+💻 Technical Stack
+Frontend: Next.js 15 (App Router), Tailwind CSS, Lucide React (Icons), Radix UI.
+
+Backend & Real-time: Convex (Reactive Database & Mutations).
+
+Authentication: Clerk (Provider-grade secure login).
+
+PDF Generation: jsPDF & AutoTable.
+
+State Management: Zustand (Presentation & Privacy logic).
+
+🚀 Getting Started
+Clone the repo: git clone https://github.com/Kennethrc2401/er-command-center.git
+
+Install dependencies: npm install
+
+Environment Variables: Create a .env.local with your NEXT_PUBLIC_CONVEX_URL and Clerk credentials.
+
+Launch the System: npm run dev
+
+🛡️ Disclaimer & Privacy
+This application is a Clinical Simulation Tool created for educational purposes at Fairleigh Dickinson University. It is not intended for the storage of real Protected Health Information (PHI) in a live clinical environment.
+
+
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
