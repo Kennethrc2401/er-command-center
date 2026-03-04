@@ -19,8 +19,7 @@ export default function DischargeButton({ encounterId }: { encounterId: Id<"enco
   const handleDischarge = async () => {
     await discharge({
       encounterId,
-      disposition: "Home",
-      followUp: followUp,
+      summary: followUp,
     });
     setIsOpen(false);
     router.push("/"); // Return to Command Center after discharge
