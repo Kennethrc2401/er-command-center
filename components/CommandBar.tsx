@@ -13,7 +13,7 @@ export default function CommandBar({ setTab }: { setTab: (tab: string) => void }
   // Toggle the menu when Cmd+K or Ctrl+K is pressed
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "k" && (e.metaKey || e.ctrlKey || e.altKey)) {
         e.preventDefault();
         setOpen((open) => !open);
       }

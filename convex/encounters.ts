@@ -121,10 +121,6 @@ export const getTriageStats = query({
 /**
  * Returns all active encounters with joined Patient data, sorted by acuity.
  */
-// convex/encounters.ts
-
-// convex/encounters.ts
-
 export const getActive = query({
   args: {},
   handler: async (ctx) => {
@@ -198,27 +194,41 @@ export const updateVitals = mutation({
  */
 export const getERStats = query({
   handler: async (ctx) => {
+    const now = Date.now();
+
+    // 1. Get all active patients
     const active = await ctx.db
       .query("encounters")
       .withIndex("by_status")
       .filter((q) => q.neq(q.field("status"), "discharged"))
       .collect();
 
-    const TOTAL_CAPACITY = 15;
-    const occupiedBeds = active.length;
-    
-    // Calculate available beds but clamp it at zero
-    const availableBeds = Math.max(0, TOTAL_CAPACITY - occupiedBeds);
-    
-    // Calculate overflow (boarding)
-    const boardingPatients = Math.max(0, occupiedBeds - TOTAL_CAPACITY);
+    // 🩺 THE "REALITY" FILTER:
+    // A patient occupies a bed IF they have a status of 'in_treatment'/'admitted'
+    // AND they actually have something written in their 'bedId' or 'location' field.
+    const patientsInBeds = active.filter(
+      (p) => 
+        (p.status === "treating" || p.status === "waiting") && 
+        p.location && p.location.trim() !== "" 
+    );
 
+    const physicalOccupancy = patientsInBeds.length;
+    const TOTAL_CAPACITY = 20;
+    
+    // Result: 20 - 4 = 16
+    const availableBeds = Math.max(0, TOTAL_CAPACITY - physicalOccupancy);
+
+    // DEBUG: Check your terminal/console to see exactly what's being counted
+    console.log(`Beds Occupied: ${physicalOccupancy} | Available: ${availableBeds}`);
     return {
-      totalPatients: occupiedBeds,
-      highAcuity: active.filter((p) => p.acuity <= 2).length,
-      availableBeds,
-      boardingPatients,
-      status: occupiedBeds > TOTAL_CAPACITY ? "CRITICAL_OVERLOAD" : "NORMAL",
+      totalPatients: active.length,
+      highAcuity: active.filter((p) => (p.acuity ?? 5) <= 2).length,
+      availableBeds, 
+      boardingPatients: active.filter((p) => p.status === "observed").length,
+      pendingInsurance: 0, 
+      status: physicalOccupancy >= TOTAL_CAPACITY ? "DIVERSION_RISK" : "NORMAL",
+      dailyRevenue: 0, 
+      collectionCount: 0,
     };
   },
 });
@@ -234,7 +244,6 @@ export const getByPatient = query({
   },
 });
 
-// Add this to convex/encounters.ts if not already there
 export const updateStatus = mutation({
   args: {
     encounterId: v.id("encounters"),
@@ -441,4 +450,81 @@ export const seedMockPatient = mutation({
 
     return encounterId;
   },
+});
+
+export const getEncounterDetails = query({
+  args: { encounterId: v.id("encounters") },
+  handler: async (ctx, args) => {
+    const encounter = await ctx.db.get(args.encounterId);
+    if (!encounter) return null;
+
+    const insurance = await ctx.db
+      .query("insurance")
+      .withIndex("by_patient", (q) => q.eq("patientId", encounter.patientId))
+      .first();
+
+    return {
+      ...encounter,
+      insurance, // Now the UI gets both in one object
+    };
+  },
+});
+
+export const getEncounterWithInsurance = query({
+  args: { encounterId: v.id("encounters") },
+  handler: async (ctx, args) => {
+    const encounter = await ctx.db.get(args.encounterId);
+    if (!encounter) return null;
+
+    // "Join" the insurance table using the patientId
+    const insurance = await ctx.db
+      .query("insurance")
+      .withIndex("by_patient", (q) => q.eq("patientId", encounter.patientId))
+      .first();
+
+    return {
+      ...encounter,
+      insurance: insurance ?? null, // Now 'insurance' exists on this object
+    };
+  },
+});
+
+// convex/encounters.ts
+
+export const getByPatientWithInsurance = query({
+  args: { patientId: v.id("patients") },
+  handler: async (ctx, args) => {
+    // 1. Get all encounters for this specific patient
+    const encounters = await ctx.db
+      .query("encounters")
+      .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+      .collect();
+
+    // 2. Map through them and attach the insurance record
+    // Since insurance is tied to the patientId, we can fetch it once
+    const insurance = await ctx.db
+      .query("insurance")
+      .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+      .first();
+
+    // 3. Return the merged objects
+    return encounters.map((encounter) => ({
+      ...encounter,
+      insurance: insurance ?? null,
+    }));
+  },
+});
+
+export const runCOBDiscovery = mutation({
+  args: { patientId: v.id("patients") },
+  handler: async (ctx, args) => {
+    // This simulates searching a state database for secondary coverage
+    const hasSecondary = Math.random() > 0.7; // 30% chance they have secondary
+    
+    if (hasSecondary) {
+      // In a real app, you'd create a second insurance record here
+      return { found: true, provider: "NJ FamilyCare (Medicaid)" };
+    }
+    return { found: false };
+  }
 });

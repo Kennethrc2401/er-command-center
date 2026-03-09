@@ -3,7 +3,7 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, Users, Clock, BedDouble, AlertCircle } from "lucide-react";
+import { Activity, Users, Clock, BedDouble, AlertCircle, ShieldAlert, DollarSign } from "lucide-react";
 
 export default function DashboardStats() {
   const stats = useQuery(api.encounters.getERStats);
@@ -28,6 +28,19 @@ export default function DashboardStats() {
     { title: "High Acuity (1-2)", value: stats.highAcuity, icon: Activity, color: "text-red-600" },
     { title: "Boarding Patients", value: stats.boardingPatients, icon: Clock, color: "text-orange-600" },
     { title: "Available Beds", value: stats.availableBeds, icon: BedDouble, color: "text-emerald-600" },
+    { 
+      title: "Insurance Tasks", 
+      value: stats.pendingInsurance, 
+      icon: ShieldAlert, 
+      color: stats.pendingInsurance > 0 ? "text-amber-500" : "text-slate-300" 
+    },
+    { 
+      title: "POS Collected", 
+      value: `$${stats.dailyRevenue}`, 
+      icon: DollarSign, 
+      color: "text-emerald-600",
+      description: `${stats.collectionCount} Transactions Today`
+    }
   ];
 
   return (
@@ -64,6 +77,11 @@ export default function DashboardStats() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black tracking-tighter text-slate-900">{item.value}</div>
+              {item.description && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {item.description}
+                </p>
+              )}
             </CardContent>
           </Card>
         ))}

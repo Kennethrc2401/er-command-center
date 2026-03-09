@@ -54,6 +54,8 @@ export default function TriageSummaryCard({ criticalPatient }: TriageSummaryProp
       // Fallback if there's only one name
       return `Patient-${name.length}${name.charCodeAt(0)}`; 
     };
+
+  const maskedChiefComplaint = isDemoMode ? "Clinical details hidden in presentation mode" : criticalPatient.chiefComplaint;
     
   return (
     <Card className="border-none bg-slate-900 text-white shadow-2xl rounded-[2.5rem] overflow-hidden mb-8 relative">
@@ -79,7 +81,7 @@ export default function TriageSummaryCard({ criticalPatient }: TriageSummaryProp
                 {formatPatientName(criticalPatient.patientName)}
               </h2>
               <p className="text-blue-400 font-bold text-sm mt-2 flex items-center gap-2 uppercase tracking-tight">
-                <Activity className="h-4 w-4" /> Chief Complaint: {criticalPatient.chiefComplaint}
+                <Activity className="h-4 w-4" /> Chief Complaint: {maskedChiefComplaint}
               </p>
             </div>
 

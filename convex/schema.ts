@@ -13,7 +13,19 @@ export default defineSchema({
       v.literal("DNR/DNI"), 
       v.literal("DNR-Limited")
     )),
-  })
+    isHighRisk: v.optional(v.boolean()),
+    medicalHistory: v.optional(v.array(v.string())), // e.g., ["HTN", "DM", "CAD"]
+    socialHistory: v.optional(v.string()), // e.g., "Smokes 1 ppd, Lives alone"
+    familyHistory: v.optional(v.string()), // e.g., "Father had MI at 60"
+    vitals: v.optional(
+      v.object({
+        hr: v.number(),
+        bp: v.string(),
+        temp: v.number(),
+        spO2: v.number(),
+      })
+    )
+   })
     .index("by_mrn", ["mrn"])
     /** * Search Index: This resolves the "search_patients" error.
      * We allow searching by name and filtering by MRN.
@@ -46,6 +58,16 @@ export default defineSchema({
     disposition: v.optional(v.string()),
     followUp: v.optional(v.string()),
     assignedProvider: v.optional(v.string()),
+    estimatedDischargeTime: v.optional(v.number()),
+    insurance: v.optional(
+      v.object({
+        provider: v.string(),
+        policyNumber: v.string(),
+        groupNumber: v.string(),
+        status: v.string(), // "Verified", "Pending", "Denied"
+        coPay: v.number(),
+      })
+    ),
   })
     .index("by_status", ["status"])
     // Add this to fix the getByPatient "Could not find public function" error
@@ -105,6 +127,22 @@ labResults: defineTable({
     resourceId: v.string(),
     timestamp: v.number(),
   }),
+  insurance: defineTable({
+    patientId: v.id("patients"),
+    provider: v.string(),
+    policyNumber: v.string(),
+    groupNumber: v.string(),
+    status: v.union(
+      v.literal("pending"), 
+      v.literal("verified"), 
+      v.literal("denied")
+    ),
+    planType: v.string(), // e.g., "PPO", "HMO", "Medicare"
+    coPayAmount: v.number(),
+    authorizationRequired: v.boolean(),
+    authStatus: v.optional(v.union(v.literal("not_started"), v.literal("requested"), v.literal("approved"))),
+    lastVerified: v.optional(v.number()),
+  }).index("by_patient", ["patientId"]),
   vitals: defineTable({
     encounterId: v.id("encounters"),
     hr: v.number(),
@@ -194,5 +232,13 @@ labResults: defineTable({
       date: v.string(),      // e.g., "2026-03-05"
       time: v.string(),      // e.g., "14:30"
       instructions: v.optional(v.string()), // e.g., "Fast for 8 hours"
+    }).index("by_encounter", ["encounterId"]),
+    collections: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      amount: v.number(),
+      type: v.string(), // "co-pay", "self-pay", "deductible"
+      status: v.string(), // "completed", "refunded"
+      timestamp: v.number(),
     }).index("by_encounter", ["encounterId"]),
 });

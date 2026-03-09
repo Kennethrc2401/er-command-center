@@ -1,10 +1,10 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Id } from "@/convex/_generated/dataModel";
+import { Doc, Id } from "@/convex/_generated/dataModel";
 
 // UI Components
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,9 +13,11 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { 
   Activity, Pill, History, Beaker, FileText, ClipboardCheck, Loader2, Printer, Scan, Home, AlertCircle,
-  CheckCircle2,
-  Clock,
-  FileStack
+  FileStack,
+  ShieldCheck,
+  Download,
+  Info,
+  Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -46,6 +48,12 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import ShiftReport from "@/components/ShiftReport";
 import SmartNotes from "@/components/notes/SmartNotes";
 import EKGMonitor from "@/components/Monitors/EKGMonitor";
+import InsuranceBadge from "@/components/insurance/InsuranceBadge";
+import VirtualInsuranceCard from "@/components/insurance/finances/VirtualInsuranceCard";
+import InsuranceFinancials from "@/components/insurance/InsuranceFinancials";
+import InsuranceCardModal from "@/components/insurance/InsuranceCardModal";
+import IdentityVerificationModal from "@/components/insurance/identification/IdentityVerificationModal";
+import { toast } from "sonner";
 
 // DYNAMIC IMPORT: DischargeSummary
 const DischargeSummary = dynamic(
@@ -65,47 +73,47 @@ const DischargeSummary = dynamic(
   }
 );
 
+interface DetailedEncounter extends Omit<Doc<"encounters">, "insurance"> {
+  insurance?: Doc<"insurance">;
+  estimatedDischargeTime?: number;
+}
+
 export default function PatientPage() {
   const params = useParams();
   const patientId = params.id as Id<"patients">;
-
+  const runDiscovery = useMutation(api.insurance.discoverSecondaryCoverage);
+  const [isSearching, setIsSearching] = useState(false);
   const [activeTab, setActiveTab] = useState("vitals");
   const [currentTime] = useState(() => Date.now());
+  const [isPresentationMode, setIsPresentationMode] = useState(false);
 
-  // --- 1. CONVEX SUBSCRIPTIONS ---
+  // --- 2. CONVEX SUBSCRIPTIONS ---
   const patient = useQuery(api.patients.getById, { patientId });
-  const encounters = useQuery(api.encounters.getByPatient, { patientId });
+  
+  // Use the new JOINED query we discussed
+  const encounters = useQuery(api.encounters.getByPatientWithInsurance, { patientId });
   
   // Find the active encounter safely
-  const activeEncounter = encounters?.find(e => e.status !== "discharged") || encounters?.[0];
+  const activeEncounter = (encounters?.find(e => e.status !== "discharged") || encounters?.[0]) as DetailedEncounter | undefined;
   
-  // Clinical Safety Subscriptions
   const criticalLabs = useQuery(api.labs.getCriticalAlerts, 
     activeEncounter ? { encounterId: activeEncounter._id } : "skip"
   );
 
-  const gcsScore = useQuery(
-    api.triage.getLatestGCS, 
+  const gcsScore = useQuery(api.triage.getLatestGCS, 
     activeEncounter ? { encounterId: activeEncounter._id } : "skip"
   );
-// const pendingImagingCount = useQuery(api.imaging.getPendingCount, 
-//   activeEncounter ? { encounterId: activeEncounter._id } : "skip"
-// ) ?? 0;
 
-  // Pending Task Counts for Tab Badges
-  // Note: These assume you have these specific queries in your API
   const pendingLabsCount = useQuery(api.labs.getPendingCount, 
     activeEncounter ? { encounterId: activeEncounter._id } : "skip"
   ) ?? 0;
 
-  // --- 2. EARLY RETURNS (LOADING & ERROR STATES) ---
+  // --- 3. LOADING & ERROR STATES ---
   if (!patient || !encounters) {
     return (
       <div className="flex h-screen flex-col items-center justify-center space-y-4 bg-slate-50">
         <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
-        <p className="text-slate-500 font-black uppercase text-[10px] tracking-[0.3em]">
-          Accessing Encrypted Records
-        </p>
+        <p className="text-slate-500 font-black uppercase text-[10px] tracking-[0.3em]">Accessing Encrypted Records</p>
       </div>
     );
   }
@@ -113,23 +121,15 @@ export default function PatientPage() {
   if (encounters.length === 0 || !activeEncounter) {
     return (
       <div className="flex h-screen flex-col items-center justify-center space-y-4 bg-white">
-        <div className="bg-slate-100 p-6 rounded-full">
-          <History className="h-10 w-10 text-slate-400" />
-        </div>
-        <h2 className="text-xl font-black text-slate-800">No Active Encounter</h2>
-        <p className="text-slate-500 text-sm font-medium max-w-xs text-center">
-          This patient is not currently checked into the ER. Please initiate a new encounter to begin charting.
-        </p>
-        <Button onClick={() => window.history.back()} variant="outline" className="rounded-xl font-bold">
-          Return to Patient List
-        </Button>
+        <History className="h-10 w-10 text-slate-400" />
+        <h2 className="text-xl font-black text-slate-800 uppercase italic">No Active Encounter</h2>
+        <Button onClick={() => window.history.back()} variant="outline">Return to Census</Button>
       </div>
     );
   }
 
-  // --- 3. CLINICAL LOGIC & CALCULATIONS ---
-  const currentEncounter = activeEncounter; 
-  const latestVitals = currentEncounter?.vitals;
+  // --- 4. CLINICAL LOGIC & CALCULATIONS ---
+  const latestVitals = activeEncounter?.vitals;
 
   const getSystolic = (bpString: string | undefined) => {
     if (!bpString) return 0;
@@ -138,56 +138,90 @@ export default function PatientPage() {
   };
 
   const sbp = getSystolic(latestVitals?.bp);
+  
+  // Refined CCMA Instability Logic
   const isUnstable = latestVitals && (
     latestVitals.hr > 100 || 
+    latestVitals.hr < 50 ||
     (latestVitals.spO2 < 94 && latestVitals.spO2 > 0) || 
     sbp > 160 || 
-    (sbp < 90 && sbp > 0)
+    (sbp < 90 && sbp > 0) ||
+    latestVitals.temp > 103
   );
 
   const getInstabilityReason = () => {
     if (!latestVitals) return "";
     if (latestVitals.hr > 100) return "Tachycardia";
+    if (latestVitals.hr < 50) return "Bradycardia";
     if (latestVitals.spO2 < 94 && latestVitals.spO2 > 0) return "Hypoxia";
-    if (sbp > 160) return "Hypertension";
+    if (sbp > 160) return "Severe HTN";
     if (sbp < 90 && sbp > 0) return "Hypotension";
+    if (latestVitals.temp > 103) return "Hyperpyrexia";
     return "Critical Vitals";
   };
 
-  return (
-    <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
+      const handleDiscovery = async () => {
+        setIsSearching(true);
+        
+        toast.info("Accessing NJ Health Information Exchange...", {
+          description: "Querying state Medicaid and Medicare databases...",
+        });
+
+        try {
+          // 1. Manually create the "fake" delay on the frontend
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+
+          // 2. Call the mutation (now fast and error-free!)
+          const result = await runDiscovery({ patientId });
+          
+          setIsSearching(false);
+
+          if (result.success) {
+            toast.success("Secondary Coverage Found!", {
+              description: `Linked: ${result.provider}. Coordination of Benefits updated.`,
+              duration: 5000,
+            });
+          } else {
+            toast.error("No Secondary Coverage Located", {
+              description: "Patient verified as Primary Payer only.",
+            });
+          }
+        } catch (err) {
+          setIsSearching(false);
+          toast.error("System Error", { description: "HIE interface failure." });
+        }
+      };
       
-      {/* CRITICAL ALERTS BANNER */}
+  return (
+    <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6 bg-slate-50/30">
+      
       {criticalLabs && criticalLabs.length > 0 && <CriticalLabBanner alerts={criticalLabs} />}
 
-      {/* 4. CLINICAL HEADER */}
+      {/* HEADER */}
       <header className="bg-white p-6 rounded-[2.5rem] border shadow-sm flex flex-col md:flex-row justify-between gap-4 border-slate-100 relative overflow-hidden">
         {isUnstable && <div className="absolute top-0 left-0 w-full h-1 bg-red-500 animate-pulse" />}
         
         <div className="flex items-center gap-5">
-          <div className="h-16 w-16 rounded-2xl bg-slate-900 flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-slate-200">
+          <div className="h-16 w-16 rounded-2xl bg-slate-900 flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-slate-200 uppercase italic">
             {patient.name.charAt(0)}
           </div>
           <div className="text-left">
             <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-black tracking-tighter text-slate-900 uppercase">
+              <h1 className="text-3xl font-black tracking-tighter text-slate-900 uppercase italic">
                 {patient.name}
               </h1>
               {isUnstable && (
-                <Badge className="bg-red-600 text-white animate-bounce border-none px-2 py-0.5 text-[9px] font-black uppercase">
+                <Badge className="bg-red-600 text-white animate-bounce border-none px-2 py-1 text-[9px] font-black uppercase tracking-widest">
                   <AlertCircle className="h-3 w-3 mr-1" /> {getInstabilityReason()}
                 </Badge>
               )}
             </div>
             <div className="flex flex-wrap gap-2 items-center mt-1">
-              <span className="text-[10px] font-mono font-black text-slate-400 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
+              <span className="text-[10px] font-mono font-black text-slate-400 bg-slate-50 px-2 py-0.5 rounded border border-slate-100 tracking-tighter">
                 MRN: {patient.mrn}
               </span>
-              <CodeStatusSelector 
-                patientId={patientId} 
-                currentStatus={patient.codeStatus || "Full Code"} 
-              />
-              <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 uppercase">
+              <CodeStatusSelector patientId={patientId} currentStatus={patient.codeStatus || "Full Code"} />
+              <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 uppercase italic">
                 DOB: {new Date(patient.dob).toLocaleDateString()}
               </span>
             </div>
@@ -203,34 +237,39 @@ export default function PatientPage() {
                 </span>
               ))
             ) : (
-              <span className="px-3 py-1 bg-emerald-50 text-emerald-600 border border-emerald-100 text-[9px] font-black rounded-full uppercase tracking-widest">
-                No Known Drug Allergies
+              <span className="px-3 py-1 bg-emerald-50 text-emerald-600 border border-emerald-100 text-[9px] font-black rounded-full uppercase tracking-widest italic">
+                NKDA
               </span>
             )}
           </div>
           <div className="flex gap-2">
-             <OrderMedication 
-                patientId={patientId} 
-                encounterId={currentEncounter._id} 
-                patientAllergies={patient.allergies} 
-              />
-              <DischargeButton encounterId={currentEncounter._id} />
+             <OrderMedication patientId={patientId} encounterId={activeEncounter._id} patientAllergies={patient.allergies} />
+             <DischargeButton encounterId={activeEncounter._id} />
           </div>
         </div>
       </header>
 
-      {/* 5. CLINICAL WORKSPACE GRID */}
+      {/* WORKSPACE GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
-        
+        {/* PRESENTATION MODE TOGGLE */}
+        <div className="flex justify-end mb-4">
+          <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl border border-slate-100 shadow-sm">
+            <span className={`text-[9px] font-black uppercase tracking-widest ${isPresentationMode ? 'text-blue-600' : 'text-slate-400'}`}>
+              {isPresentationMode ? "Presentation Mode: ON" : "Normal Mode"}
+            </span>
+            <button 
+              onClick={() => setIsPresentationMode(!isPresentationMode)}
+              className={`relative w-12 h-6 rounded-full transition-colors duration-300 ${isPresentationMode ? 'bg-blue-600' : 'bg-slate-200'}`}
+            >
+              <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform duration-300 ${isPresentationMode ? 'translate-x-6' : 'translate-x-0'}`} />
+            </button>
+          </div>
+        </div>
         <div className="lg:col-span-3 space-y-6">
           <CommandBar setTab={setActiveTab} />
-          <Tabs 
-            defaultValue={activeTab}
-            className="w-full"
-            value={activeTab} 
-            onValueChange={setActiveTab}
-          >
-            <TabsList className="flex flex-wrap md:flex-nowrap w-full h-auto gap-1.5 bg-slate-100/80 p-1.5 rounded-[2rem] border border-slate-200 overflow-x-auto scrollbar-hide">
+          
+          <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="flex flex-wrap md:flex-nowrap w-full h-auto gap-1.5 bg-slate-100/80 p-1.5 rounded-[2rem] border border-slate-200 overflow-x-auto">
               {[
                 { value: "vitals", icon: Activity, label: "Vitals", badge: 0 },
                 { value: "triage", icon: ClipboardCheck, label: "Triage", badge: 0 },
@@ -238,285 +277,274 @@ export default function PatientPage() {
                 { value: "imaging", icon: Scan, label: "Imaging", badge: 0 },
                 { value: "mar", icon: Pill, label: "MAR", badge: 0 },
                 { value: "notes", icon: FileText, label: "Notes", badge: 0 },
+                { value: "billing", icon: FileStack, label: "Billing", badge: 0 },
+                { value: "discharge", icon: Home, label: "Discharge", badge: 0 },
               ].map((tab) => (
                 <TabsTrigger
                   key={tab.value}
                   value={tab.value}
-                  className="flex-1 min-w-25 md:min-w-0 py-3 rounded-[1.5rem] font-black text-[10px] uppercase tracking-wider data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-blue-600 transition-all"
+                  className="flex-1 min-w-25 md:min-w-0 py-3 rounded-[1.5rem] font-black text-[10px] uppercase tracking-widest data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-blue-600 transition-all italic"
                 >
                   <tab.icon className="size-3.5 mr-2 shrink-0" /> 
                   <span className="truncate">{tab.label}</span>
                   {tab.badge > 0 && (
-                    <span className="ml-1.5 px-1.5 py-0.5 bg-blue-600 text-white text-[8px] rounded-full animate-pulse">
-                      {tab.badge}
-                    </span>
+                    <span className="ml-1.5 px-1.5 py-0.5 bg-blue-600 text-white text-[8px] rounded-full animate-pulse">{tab.badge}</span>
                   )}
                 </TabsTrigger>
               ))}
-
-              <TabsTrigger
-                value="discharge"
-                className="flex-1 min-w-25 md:min-w-0 py-3 rounded-[1.5rem] font-black text-[10px] uppercase tracking-wider data-[state=active]:bg-emerald-600 data-[state=active]:text-white transition-all"
-              >
-                <Home className="size-3.5 mr-2 shrink-0" /> 
-                <span className="truncate">Discharge</span>
-              </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="vitals" className="space-y-6 animate-in fade-in-50 focus-visible:ring-0 pt-4">
-               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                 <div className="md:col-span-1"><VitalSignsForm encounterId={currentEncounter._id} /></div>
-                 <div className="md:col-span-2"><VitalsTrend encounterId={currentEncounter._id} /></div>
+            {/* VITALS & ADMINISTRATIVE TAB */}
+           <TabsContent value="vitals" className="space-y-6 animate-in fade-in-50 pt-4 outline-none">
+            {/* TOP ROW: CLINICAL CORE */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-1">
+                <VitalSignsForm encounterId={activeEncounter._id} />
+              </div>
+              <div className="xl:col-span-2">
+                <VitalsTrend encounterId={activeEncounter._id} />
+              </div>
+            </div>
 
-                 {/* Smart Note Card */}
-                {/* <SmartNotes encounterId={currentEncounter._id} /> */}
-                <Card className="border-slate-200 shadow-sm rounded-[2.5rem] overflow-hidden bg-slate-50">
-                  <div className="bg-slate-900 p-4 text-center">
-                    <span className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-400">AI-Powered Smart Notes</span>
+            {/* MIDDLE ROW: ADMINISTRATIVE SUITE (Cleaned & Responsive) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* LEFT: Eligibility & Identity Audit (7 Cols) */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className="flex items-center gap-2 px-2">
+                  <div className="h-1 w-6 bg-blue-500 rounded-full" />
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 italic">Insurance & Eligibility Audit</h3>
+                </div>
+                
+                <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4">
+                  <InsuranceBadge 
+                    encounterId={activeEncounter._id} 
+                    insurance={activeEncounter.insurance} 
+                  />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {activeEncounter.insurance && (
+                      <IdentityVerificationModal 
+                        patient={patient} 
+                        insurance={activeEncounter.insurance} 
+                      />
+                    )}
+                    
+                    <button 
+                      onClick={handleDiscovery}
+                      disabled={isSearching}
+                      className="flex items-center justify-center gap-3 py-4 bg-slate-50 text-slate-500 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all border border-slate-200 disabled:opacity-50"
+                    >
+                      {isSearching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />} 
+                      {isSearching ? "Querying HIE..." : "Check Secondary"}
+                    </button>
                   </div>
-                  <CardContent className="p-6">
-                    <SmartNotes encounterId={currentEncounter._id} />
-                  </CardContent>
-                </Card>
+                </div>
+              </div>
+
+              {/* RIGHT: Financial Counseling (5 Cols) */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="flex items-center gap-2 px-2">
+                  <div className="h-1 w-6 bg-emerald-500 rounded-full" />
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 italic">Financial Counseling</h3>
+                </div>
+                
+                <div className="space-y-3">
+                  {activeEncounter.insurance && (
+                    <InsuranceFinancials insurance={activeEncounter.insurance} />
+                  )}
+                  
+                  {/* COMPLIANCE STATUS */}
+                  <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-emerald-500 rounded-lg text-white">
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black uppercase text-emerald-800 leading-none">Identity Secured</p>
+                        <p className="text-[8px] font-bold text-emerald-600/70 mt-1 uppercase">Red Flag Rule Audit Passed</p>
+                      </div>
+                    </div>
+                    <button className="text-[9px] font-black uppercase text-emerald-700 underline underline-offset-4 hover:text-emerald-900">
+                      Audit Log
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* BOTTOM ROW: DOCUMENTATION */}
+            <Card className="border-slate-200 shadow-sm rounded-[2.5rem] overflow-hidden bg-slate-50/50">
+              <div className="bg-slate-900 px-8 py-4 flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                  <div className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
+                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-400 italic">AI Clinical Scribe v2.0</span>
+                </div>
+                <Badge className="bg-white/10 text-slate-400 border-none text-[8px] font-black tracking-widest uppercase py-0.5">Real-Time Sync</Badge>
+              </div>
+              <CardContent className="p-6">
+                <SmartNotes encounterId={activeEncounter._id} />
+              </CardContent>
+            </Card>
+          </TabsContent> 
+
+            <TabsContent value="triage" className="pt-4"><TriageAssessment encounterId={activeEncounter._id} /></TabsContent>
+            <TabsContent value="labs" className="pt-4">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2"><LabResults encounterId={activeEncounter._id} /></div>
+                <div className="lg:col-span-1"><LabTrends encounterId={activeEncounter._id} /></div>
+              </div>
+            </TabsContent>
+            <TabsContent value="imaging" className="pt-4">
+               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  <div className="lg:col-span-1"><ImagingOrders encounterId={activeEncounter._id} /></div>
+                  <div className="lg:col-span-2"><ImagingResults encounterId={activeEncounter._id} /></div>
+               </div>
+            </TabsContent>
+            <TabsContent value="mar" className="pt-4 space-y-6">
+               <MedicationHistory encounterId={activeEncounter._id} />
+               <MAR encounterId={activeEncounter._id} patientAllergies={patient.allergies} />
+            </TabsContent>
+            <TabsContent value="notes" className="pt-4">
+               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  <div className="lg:col-span-2"><ClinicalNotes encounterId={activeEncounter._id} /></div>
+                  <div className="lg:col-span-1"><SBARHandoff patient={patient} encounter={activeEncounter} gcs={gcsScore} criticalLabs={criticalLabs || []} /></div>
                </div>
             </TabsContent>
 
-            <TabsContent value="triage" className="animate-in slide-in-from-left-2 focus-visible:ring-0 pt-4">
-              <TriageAssessment encounterId={currentEncounter._id} />
-            </TabsContent>
-
-            <TabsContent value="labs" className="animate-in fade-in-50 focus-visible:ring-0 pt-4">
+              <TabsContent value="billing" className="space-y-6 animate-in fade-in-50 pt-4">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-                  {/* PRIMARY LAB LIST (2/3) */}
-                  <div className="lg:col-span-2">
-                    <LabResults encounterId={currentEncounter._id} />
+                  
+                  {/* LEFT COLUMN: INSURANCE & AUTHORIZATION (2/3) */}
+                  <div className="lg:col-span-2 space-y-6">
+                    {/* 1. Virtual Insurance Card Section */}
+                    {activeEncounter.insurance && (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between px-2">
+                          <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400 italic">Document Imaging</h3>
+                          <Badge variant="outline" className="text-[8px] font-black border-slate-200">SCAN_REF: 992834</Badge>
+                        </div>
+                        <VirtualInsuranceCard 
+                          insurance={activeEncounter.insurance} 
+                          patientName={patient.name} 
+                        />
+                      </div>
+                    )}
+
+                    {/* 2. Detailed Eligibility Response */}
+                    <Card className="border-slate-200 shadow-sm rounded-[2.5rem] overflow-hidden bg-white">
+                      <div className="bg-slate-900 p-4 flex justify-between items-center">
+                        <span className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-400">EDI 271 Transaction Detail</span>
+                        <span className="text-[9px] font-mono text-slate-500 uppercase">Gateway: Availity v5.1</span>
+                      </div>
+                      <CardContent className="p-8">
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-8">
+                          <div className="space-y-1">
+                            <Label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Plan Type</Label>
+                            <p className="text-sm font-bold text-slate-900">Commercial PPO</p>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Effective Date</Label>
+                            <p className="text-sm font-bold text-slate-900">01/01/2026</p>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Coordination of Benefits</Label>
+                            <p className="text-sm font-bold text-blue-600">Primary</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-8 pt-8 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-8">
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+                              <span className="text-xs font-black uppercase tracking-widest text-slate-800">Prior Auth Required</span>
+                            </div>
+                            <p className="text-xs text-slate-500 leading-relaxed">
+                              Prior authorization is <span className="font-bold text-slate-900 underline">REQUIRED</span> for advanced imaging (CT/MRI) and inpatient stays exceeding 23 hours.
+                            </p>
+                          </div>
+                          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
+                            <div>
+                              <p className="text-[9px] font-black uppercase text-slate-400">Auth Case ID</p>
+                              <p className="text-sm font-mono font-bold text-slate-900">AUTH-PEND-772</p>
+                            </div>
+                            <Button variant="outline" size="sm" className="rounded-xl font-black text-[9px] uppercase tracking-tighter">Update Status</Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
                   </div>
 
-                  {/* TREND ANALYSIS (1/3) */}
-                  <div className="lg:col-span-1 space-y-6">
-                    <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
-                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-6">Serial Lab Tracking</h4>
-                      <LabTrends encounterId={currentEncounter._id} />
+                  {/* RIGHT COLUMN: FINANCIAL COUNSELING (1/3) */}
+                  <div className="lg:col-span-1 space-y-6 lg:sticky lg:top-8">
+                    {/* 3. POS Collections Card */}
+                    {activeEncounter.insurance && <InsuranceFinancials insurance={activeEncounter.insurance as NonNullable<typeof activeEncounter.insurance>} />}
+
+                    {/* 4. Billing Narrative Note */}
+                    <Card className="border-amber-100 bg-amber-50/30 rounded-[2.5rem] p-6">
+                      <h4 className="text-[10px] font-black uppercase text-amber-800 mb-4 flex items-center gap-2 tracking-widest italic">
+                        <Info className="h-4 w-4" /> Registrar&apos;s Note
+                      </h4>
+                      <textarea 
+                        placeholder="Log insurance-related discussions or secondary coverage info..."
+                        className="w-full h-32 bg-white/50 border border-amber-200 rounded-2xl p-4 text-xs font-medium focus:ring-2 focus:ring-amber-400 outline-none transition-all placeholder:text-amber-200"
+                      />
+                      <Button className="w-full mt-4 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-black text-[10px] uppercase tracking-widest italic shadow-lg shadow-amber-200/50">
+                        Save Admin Note
+                      </Button>
+                    </Card>
+
+                    {/* 5. Quick Actions */}
+                    <div className="grid grid-cols-1 gap-3">
+                      <Button variant="outline" className="rounded-2xl py-6 font-black text-[10px] uppercase tracking-widest border-slate-200 group">
+                        <Download className="h-4 w-4 mr-2 group-hover:translate-y-0.5 transition-transform" /> Download Face Sheet
+                      </Button>
+                      <Button variant="outline" className="rounded-2xl py-6 font-black text-[10px] uppercase tracking-widest border-slate-200 group">
+                        <Printer className="h-4 w-4 mr-2 group-hover:-translate-y-0.5 transition-transform" /> Print ID Stickers
+                      </Button>
                     </div>
                   </div>
                 </div>
               </TabsContent>
 
-            {/* <TabsContent value="imaging" className="animate-in fade-in-50 focus-visible:ring-0 pt-4">
-              <ImagingOrders encounterId={currentEncounter._id} />
-            </TabsContent> */}
-
-            <TabsContent value="imaging" className="animate-in fade-in-50 focus-visible:ring-0 pt-4">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-                {/* Left 2/3: Order new imaging */}
-                <div className="lg:col-span-1">
-                  <ImagingOrders encounterId={currentEncounter._id} />
-                </div>
-                
-                {/* Right 2/3: View existing results */}
-                <div className="lg:col-span-2">
-                  <ImagingResults encounterId={currentEncounter._id} />
-                </div>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="mar" className="space-y-6 animate-in fade-in-50 focus-visible:ring-0 pt-4">
-              <MedicationHistory encounterId={currentEncounter._id} />
-              <MAR encounterId={currentEncounter._id} patientAllergies={patient.allergies} />
-            </TabsContent>
-
-            <TabsContent value="notes" className="animate-in fade-in-50 focus-visible:ring-0 pt-4">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-                <div className="lg:col-span-2">
-                  <ClinicalNotes encounterId={currentEncounter._id} />
-                </div>
-                <div className="lg:col-span-1">
-                  <SBARHandoff 
-                    patient={patient} 
-                    encounter={currentEncounter}
-                    gcs={gcsScore}
-                    criticalLabs={criticalLabs || []}
-                  />
-                </div>
-
-                {/* FLOATING HANDOFF BUTTON */}
-                <Dialog>
-                  <DialogTrigger asChild>
-                    <button className="fixed bottom-8 right-8 h-16 w-16 bg-slate-900 text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all z-50 group">
-                      <div className="absolute -top-12 right-0 bg-slate-800 text-white text-[9px] font-black uppercase px-3 py-1.5 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap tracking-widest">
-                        Prepare Handoff
-                      </div>
-                      <FileStack className="h-6 w-6" />
-                    </button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-3xl bg-transparent border-none p-0 shadow-none">
-                    <ShiftReport 
-                      patient={{
-                        name: patient.name,
-                        mrn: patient.mrn,
-                        dob: patient.dob,
-                        codeStatus: patient.codeStatus || "Full Code",
-                        allergies: patient.allergies
-                      }}
-                      encounter={{
-                        chiefComplaint: currentEncounter.chiefComplaint,
-                        acuity: currentEncounter.acuity,
-                        location: currentEncounter.location,
-                        vitals: {
-                          hr: currentEncounter.vitals.hr,
-                          bp: currentEncounter.vitals.bp,
-                          spO2: currentEncounter.vitals.spO2
-                        }
-                      }}
-                      medsDue={[
-                        { name: "Morphine", dose: "4mg", time: "19:00" },
-                        { name: "Zofran", dose: "4mg", time: "20:30" }
-                      ]}
-                      pendingTasks={pendingLabsCount} 
-                    />
-                  </DialogContent>
-                </Dialog>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="discharge" className="mt-6 animate-in fade-in-50 duration-500 outline-none">
-              <div className="flex justify-between items-center mb-6 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em]">Departure Protocol: Active</span>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2 font-black text-[10px] uppercase h-9 border-slate-200 bg-white hover:bg-slate-50 rounded-xl">
-                  <Printer className="h-3.5 w-3.5" /> Generate Patient Packet
-                </Button>
-              </div>
-
-              <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
-                <div className="xl:col-span-8 space-y-6">
-                  <FollowUpCard 
-                    appt={{
-                      specialty: "Cardiology",
-                      provider: "Dr. Amanda Ramirez",
-                      date: "2026-03-05",
-                      time: "02:30 PM",
-                      address: "Hackensack Meridian Health Ctr",
-                      instructions: "Fast 8 hours prior to lab work."
-                    }} 
-                  />
-                  <Card className="border-slate-200 shadow-sm rounded-[2.5rem] overflow-hidden">
-                    <div className="bg-slate-900 p-4 text-center">
-                      <span className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-400">Official Discharge Summary</span>
-                    </div>
-                    <DischargeSummary encounterId={currentEncounter._id} />
-                  </Card>
-                </div>
-
-                <div className="xl:col-span-4 space-y-6 lg:sticky lg:top-8">
-                  <EducationTracker encounterId={currentEncounter._id} />
-                  <Card className="border-emerald-100 bg-emerald-50/30 rounded-[2.5rem] p-6">
-                    <h4 className="text-[10px] font-black uppercase text-emerald-800 mb-4 flex items-center gap-2 tracking-widest">
-                      <CheckCircle2 className="h-4 w-4" /> Final Safety Check
-                    </h4>
-                    <div className="space-y-3">
-                      {["Vitals within discharge limits", "Prescriptions sent to pharmacy", "Next Appt Confirmed", "Stable for private transport"].map((item) => (
-                        <label key={item} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-emerald-100/50 shadow-sm cursor-pointer hover:bg-emerald-50 transition-colors">
-                          <input type="checkbox" className="rounded-md border-emerald-300 text-emerald-600 h-4 w-4" />
-                          <span className="text-[11px] font-bold text-slate-700">{item}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </Card>
-                </div>
-              </div>
+            <TabsContent value="discharge" className="pt-4 space-y-6">
+               <div className="flex justify-between items-center bg-slate-100/50 p-4 rounded-3xl border border-slate-200">
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest italic flex items-center gap-2">
+                     <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /> Final Safety Handoff
+                  </span>
+                  <Button variant="outline" size="sm" className="font-black text-[10px] uppercase rounded-xl"><Printer className="h-3.5 w-3.5 mr-2" /> Print Summary</Button>
+               </div>
+               <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+                  <div className="xl:col-span-8 space-y-6"><FollowUpCard appt={{ followUpDate: activeEncounter.estimatedDischargeTime ? new Date(activeEncounter.estimatedDischargeTime).toISOString().split('T')[0] : undefined, provider: "", specialty: "", time: "", address: "" }} /><DischargeSummary encounterId={activeEncounter._id} /></div>
+                  <div className="xl:col-span-4"><EducationTracker encounterId={activeEncounter._id} /></div>
+               </div>
             </TabsContent>
           </Tabs>
         </div>
 
-        {/* PERSISTENT CARE SIDEBAR (Right 25%) */}
+        {/* SIDEBAR */}
         <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-8">
-          {/* MEDICATION DUE WATCHLIST */}
-          <Card className="border-slate-200 shadow-xl rounded-[2.5rem] overflow-hidden bg-white">
-            <div className="p-5 border-b bg-slate-50/50 flex justify-between items-center">
-              <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
-                <Clock className="h-4 w-4" /> Meds Due
-              </h4>
-              <Badge variant="outline" className="text-[8px] font-black border-slate-200">Next 4H</Badge>
-            </div>
-            <CardContent className="p-4 space-y-3">
-              {/* You would map over your active medications here */}
-              <MedTimer med={{ name: "Morphine", dose: "4mg", route: "IVP", frequency: 240, lastAdministered: currentTime - 235 * 60000 }} />
-              <MedTimer med={{ name: "Zofran", dose: "4mg", route: "IVP", frequency: 480, lastAdministered: currentTime - 485 * 60000 }} />
-            </CardContent>
-          </Card>
-
-          {/* 1. CARE SIDEBAR (Medications/Allergies/Alerts) */}
-          <PatientCareSidebar 
-            patientId={patientId} 
-            encounterId={currentEncounter._id} 
-          />
-
-          {/* 1.5. LIVE TELEMETRY */}
-          <EKGMonitor 
-            bpm={currentEncounter.vitals.hr} 
-            isUnstable={currentEncounter.vitals.hr > 110 || currentEncounter.vitals.hr < 50} 
-          />
-
-          {/* 2. ER CONTEXT (Pinned High for Clinical Priority) */}
+          <EKGMonitor bpm={activeEncounter.vitals.hr} isUnstable={isUnstable} />
+          
           <Card className="border-slate-200 shadow-xl rounded-[2.5rem] overflow-hidden bg-slate-900 text-white">
             <CardContent className="p-6 space-y-5">
               <div className="flex items-center justify-between border-b border-slate-700/50 pb-4">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">ER Context</span>
-                <Badge className="bg-emerald-500/10 text-emerald-400 border-none uppercase text-[8px] font-black tracking-widest">Active</Badge>
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">ER Context</span>
+                <Badge className="bg-emerald-500 text-white border-none text-[8px] font-black">ACTIVE</Badge>
               </div>
-
-              <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50 flex items-center justify-between">
-                <div className="text-left">
-                  <Label className="text-[9px] font-black uppercase text-slate-500 block mb-1 tracking-widest">Neuro Status</Label>
-                  <p className="text-xs font-bold text-slate-200 uppercase">
-                    {gcsScore !== undefined ? (gcsScore === 15 ? "Intact" : "Altered") : "Pending"}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <Label className="text-[9px] font-black uppercase text-slate-500 block mb-1 tracking-widest">GCS</Label>
-                  <span className={`text-xl font-black ${gcsScore && gcsScore <= 8 ? "text-red-500 animate-pulse" : "text-emerald-400"}`}>
-                    {gcsScore ?? "--"}
-                  </span>
-                </div>
+              <div className="flex justify-between">
+                 <div><Label className="text-[9px] font-black uppercase text-slate-500 block">GCS</Label><span className="text-xl font-black">{gcsScore ?? "15"}</span></div>
+                 <div className="text-right"><Label className="text-[9px] font-black uppercase text-slate-500 block">ESI</Label><span className="text-xl font-black text-blue-400">{activeEncounter.acuity}</span></div>
               </div>
-              
               <div>
-                <Label className="text-[9px] font-black uppercase text-slate-500 block mb-2 tracking-widest text-left">Current CC</Label>
-                <p className="text-sm font-bold italic text-slate-200 leading-relaxed border-l-2 border-blue-500 pl-3 text-left">
-                  &quot;{currentEncounter.chiefComplaint}&quot;
-                </p>
-              </div>
-
-              <div>
-                <Label className="text-[9px] font-black uppercase text-slate-500 block mb-2 tracking-widest text-left">Triage Acuity</Label>
-                <div className={`w-full py-3 rounded-2xl text-center text-xs font-black uppercase tracking-widest ${currentEncounter.acuity <= 2 ? 'bg-red-500/10 text-red-500 border border-red-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'}`}>
-                  ESI LEVEL {currentEncounter.acuity}
-                </div>
+                <Label className="text-[9px] font-black uppercase text-slate-500 block mb-1">Chief Complaint</Label>
+                <p className="text-sm font-bold italic text-slate-200 border-l-2 border-blue-500 pl-3">&quot;{activeEncounter.chiefComplaint}&quot;</p>
               </div>
             </CardContent>
           </Card>
-
-          {/* 3. VISIT TIMELINE (Scroll-Locked History) */}
-          <Card className="border-slate-200 shadow-sm rounded-[2.5rem] overflow-hidden bg-white">
-            <div className="p-5 border-b bg-slate-50/50">
-              <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
-                <History className="h-4 w-4" /> Visit Timeline
-              </h4>
-            </div>
-            
-            {/* Setting a max-height and custom scrollbar to keep layout stable */}
-            <CardContent className="p-6 max-h-87.5 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
-              <PatientTimeline encounterId={currentEncounter._id} />
-              {/* Spacer to allow the last item to be fully visible */}
-              <div className="h-4" />
-            </CardContent>
-
-            {/* Visual Fade effect to indicate more content below */}
-            <div className="h-8 bg-linear-to-t from-white to-transparent -mt-8 pointer-events-none" />
-          </Card>
+          
+          <PatientCareSidebar patientId={patientId} encounterId={activeEncounter._id} />
+          <PatientTimeline encounterId={activeEncounter._id} />
         </aside>
       </div>
     </div>

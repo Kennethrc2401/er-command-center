@@ -23,6 +23,7 @@ import {
   ResponsiveContainer, 
   Tooltip 
 } from "recharts";
+import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
 
 // --- Types to resolve ESLint 'any' errors ---
 
@@ -60,6 +61,17 @@ interface ShiftSummaryProps {
 
 export default function ShiftSummary({ onFilterChange, activeFilter }: ShiftSummaryProps) {
   const metrics = useQuery(api.encounters.getShiftMetrics);
+  const { isDemoMode } = usePresentationMode();
+
+  const formatPatientName = (name: string) => {
+    if (!isDemoMode) return name;
+
+    const parts = name.trim().split(/\s+/);
+    if (parts.length > 1) {
+      return `${parts[0][0]}. ${parts[1]}`;
+    }
+    return `Patient-${name.length}${name.charCodeAt(0)}`;
+  };
 
   if (!metrics) return (
     <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8 opacity-50">
@@ -78,7 +90,7 @@ export default function ShiftSummary({ onFilterChange, activeFilter }: ShiftSumm
             {[...metrics.highRiskPatients, ...metrics.highRiskPatients].map((p, i) => (
               <span key={i} className="mx-8 flex items-center gap-2 text-white text-[10px] font-black uppercase tracking-tighter">
                 <Activity className="h-3 w-3 animate-pulse" />
-                CRITICAL VITALS: {p.name} ({p.location}) — {p.issue}
+                CRITICAL VITALS: {formatPatientName(p.name)} ({p.location}) {isDemoMode ? "- Sensitive details hidden" : `- ${p.issue}`}
               </span>
             ))}
           </div>
@@ -87,7 +99,7 @@ export default function ShiftSummary({ onFilterChange, activeFilter }: ShiftSumm
 
       <div className="flex flex-col lg:flex-row gap-4">
         {/* 2. THE METRIC CARDS (Left Side) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-grow">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 grow">
           
           <MetricCard 
             label="Staff Ratio" 

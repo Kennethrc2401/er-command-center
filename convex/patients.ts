@@ -55,3 +55,45 @@ export const updateCodeStatus = mutation({
     await ctx.db.patch(args.patientId, { codeStatus: args.status });
   },
 });
+// export default defineSchema({
+//   patients: defineTable({
+//     name: v.string(),
+//     mrn: v.string(),
+//     dob: v.string(),
+//     gender: v.string(),
+//     allergies: v.array(v.string()),
+//     codeStatus: v.optional(v.union(
+//       v.literal("Full Code"), 
+//       v.literal("DNR/DNI"), 
+//       v.literal("DNR-Limited")
+//     )),
+//     isHighRisk: v.optional(v.boolean()),
+//     medicalHistory: v.optional(v.array(v.string())), // e.g., ["HTN", "DM", "CAD"]
+//     socialHistory: v.optional(v.string()), // e.g., "Smokes 1 ppd, Lives alone"
+//     familyHistory: v.optional(v.string()), // e.g., "Father had MI at 60"
+//     vitals: v.optional(
+//       v.object({
+//         hr: v.number(),
+//         bp: v.string(),
+//         temp: v.number(),
+//         spO2: v.number(),
+//       })
+//     )
+//    })
+export const createPatient = mutation({
+  args: {
+    name: v.string(),
+    // We start with minimal info from the kiosk
+  },
+  handler: async (ctx, args) => {
+    const newPatient = {
+      name: args.name,
+      mrn: `MRN${Date.now()}`, // Simple MRN generation for demo
+      dob: "",
+      gender: "",
+      allergies: [],
+    };
+    const patientId = await ctx.db.insert("patients", newPatient);
+    return patientId;
+  }
+});
