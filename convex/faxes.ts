@@ -5,14 +5,20 @@ import { mutation, query } from "./_generated/server";
 export const getInbox = query({
   args: { status: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    if (args.status) {
-      return await ctx.db
-        .query("faxes")
-        .filter((q) => q.eq(q.field("status"), args.status))
-        .order("desc")
-        .collect();
+    try {
+      if (args.status) {
+        return await ctx.db
+          .query("faxes")
+          .withIndex("by_status", (q) => q.eq("status", args.status))
+          .order("desc")
+          .collect();
+      }
+      return await ctx.db.query("faxes").order("desc").collect();
+    } catch (error) {
+      console.error("faxes:getInbox failed", { error, status: args.status });
+      // Return an empty list instead of throwing to the client so the page remains usable.
+      return [];
     }
-    return await ctx.db.query("faxes").order("desc").collect();
   },
 });
 

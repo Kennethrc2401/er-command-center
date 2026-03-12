@@ -257,13 +257,15 @@ labResults: defineTable({
       timestamp: v.number(),
     }).index("by_encounter", ["encounterId"]),
     faxes: defineTable({
-      from: v.string(),        // e.g., "North Jersey Imaging"
-      faxNumber: v.string(),   // e.g., "(201) 555-0199"
-      pages: v.number(),
-      status: v.string(),      // "received", "processed", "archived"
-      documentUrl: v.string(), // Link to the PDF/Image
-      timestamp: v.number(),
-      subject: v.string(),     // e.g., "STAT MRI Result: DOE, J"
+      // Keep fax fields optional so legacy rows don't crash queries after schema changes.
+      from: v.optional(v.string()),        // e.g., "North Jersey Imaging"
+      faxNumber: v.optional(v.string()),   // e.g., "(201) 555-0199"
+      pages: v.optional(v.number()),
+      status: v.optional(v.string()),      // "received", "processed", "archived"
+      documentUrl: v.optional(v.string()), // Link to the PDF/Image
+      timestamp: v.optional(v.number()),
+      subject: v.optional(v.string()),     // e.g., "STAT MRI Result: DOE, J"
       patientId: v.optional(v.id("patients")),
-    }).index("by_faxNumber", ["faxNumber"]),
+    }).index("by_faxNumber", ["faxNumber"])
+      .index("by_status", ["status"]),
   })

@@ -52,8 +52,8 @@ export default function FaxCenter() {
   };
 
   const filteredFaxes = activeFaxes?.filter(f => 
-    f.from.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    f.subject.toLowerCase().includes(searchQuery.toLowerCase())
+    (f.from ?? "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+    (f.subject ?? "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -133,11 +133,11 @@ export default function FaxCenter() {
                       <FileText className="h-7 w-7" />
                     </div>
                     <div>
-                      <h3 className="font-black text-slate-900 uppercase text-sm tracking-tight">{fax.from}</h3>
+                      <h3 className="font-black text-slate-900 uppercase text-sm tracking-tight">{fax.from ?? "Unknown Sender"}</h3>
                       <div className="flex items-center gap-3 mt-1">
-                        <p className="text-xs font-bold text-slate-500">{fax.subject}</p>
+                        <p className="text-xs font-bold text-slate-500">{fax.subject ?? "Untitled Document"}</p>
                         <span className="h-1 w-1 rounded-full bg-slate-300" />
-                        <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">{fax.pages} Pages</p>
+                        <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">{fax.pages ?? 0} Pages</p>
                       </div>
                     </div>
                   </div>
@@ -145,7 +145,7 @@ export default function FaxCenter() {
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-300 mr-6 uppercase tracking-widest">
                       <Clock className="h-3 w-3" />
-                      {new Date(fax.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(fax.timestamp ?? fax._creationTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
                     
                     <FaxActionBtn 
