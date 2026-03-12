@@ -179,7 +179,10 @@ export default function FaxCenter() {
       {/* 🔗 MODAL OVERLAYS */}
       {selectedFax && (
         <FaxLinkerModal 
-          fax={selectedFax} 
+          fax={{
+            _id: selectedFax._id,
+            subject: selectedFax.subject ?? "Untitled Document",
+          }}
           onClose={() => setSelectedFax(null)} 
         />
       )}
