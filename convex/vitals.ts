@@ -46,7 +46,9 @@ export const getHistory = query({
     return history.map((v) => ({
       time: new Date(v.recordedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       hr: v.hr,
+      bp: v.bp,
       spO2: v.spO2,
+      temp: v.temp,
       recordedAt: v.recordedAt,
     }));
   },

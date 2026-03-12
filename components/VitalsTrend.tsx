@@ -73,7 +73,7 @@ export default function VitalsTrend({ encounterId }: { encounterId: Id<"encounte
 
   // 2. Data Transformation (Parsing BP string to SBP number)
   const formattedData: VitalsPoint[] = history?.map(v => {
-    const bpString = `${v.hr}/${v.spO2}`; // Construct bp string from available data
+    const bpString = v.bp || "0/0";
     return {
       ...v,
       bp: bpString,

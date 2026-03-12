@@ -35,6 +35,7 @@ export default function PatientKiosk() {
         chiefComplaint: formData.complaint,
         acuity: 5, 
         vitals: { hr: 0, bp: "0/0", temp: 0, spO2: 0 },
+        patientName: formData.name
       });
 
       setStep(3); // Success Screen

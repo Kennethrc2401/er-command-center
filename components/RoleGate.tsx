@@ -16,7 +16,8 @@ export default function RoleGate({ children, allowedRole }: RoleGateProps) {
   // Check the publicMetadata we set in the Clerk Dashboard
   const userRole = user?.publicMetadata?.role as string;
 
-  if (userRole !== allowedRole) {
+  // Admin is a superrole — bypass all role gates
+  if (userRole !== allowedRole && userRole !== "admin") {
     return (
       <div className="p-6 border-2 border-dashed border-red-200 rounded-xl bg-red-50 flex flex-col items-center text-center space-y-3">
         <div className="p-3 bg-red-100 rounded-full text-red-600">

@@ -24,7 +24,7 @@ export const search = query({
     return await ctx.db
       .query("patients")
       .withSearchIndex("search_patients", (q) => 
-        q.search("name", trimSearch)
+        q.search("searchVector", trimSearch)
       )
       .take(10);
   },
@@ -55,31 +55,6 @@ export const updateCodeStatus = mutation({
     await ctx.db.patch(args.patientId, { codeStatus: args.status });
   },
 });
-// export default defineSchema({
-//   patients: defineTable({
-//     name: v.string(),
-//     mrn: v.string(),
-//     dob: v.string(),
-//     gender: v.string(),
-//     allergies: v.array(v.string()),
-//     codeStatus: v.optional(v.union(
-//       v.literal("Full Code"), 
-//       v.literal("DNR/DNI"), 
-//       v.literal("DNR-Limited")
-//     )),
-//     isHighRisk: v.optional(v.boolean()),
-//     medicalHistory: v.optional(v.array(v.string())), // e.g., ["HTN", "DM", "CAD"]
-//     socialHistory: v.optional(v.string()), // e.g., "Smokes 1 ppd, Lives alone"
-//     familyHistory: v.optional(v.string()), // e.g., "Father had MI at 60"
-//     vitals: v.optional(
-//       v.object({
-//         hr: v.number(),
-//         bp: v.string(),
-//         temp: v.number(),
-//         spO2: v.number(),
-//       })
-//     )
-//    })
 export const createPatient = mutation({
   args: {
     name: v.string(),
@@ -92,8 +67,97 @@ export const createPatient = mutation({
       dob: "",
       gender: "",
       allergies: [],
+      searchVector: args.name, // Add search vector for full-text search index
     };
     const patientId = await ctx.db.insert("patients", newPatient);
     return patientId;
   }
+});
+
+export const searchPatients = query({
+  args: { query: v.string() },
+  handler: async (ctx, args) => {
+    const searchTerm = args.query.trim().toLowerCase();
+
+    // 1. If the search bar is empty, return the most recent patients
+    // This provides immediate feedback before the user even types
+    if (searchTerm === "") {
+      return await ctx.db
+        .query("patients")
+        .order("desc")
+        .take(5)
+    }
+
+    // 2. Perform high-speed search using the combined Name + MRN index
+    // This allows the user to type "John" OR "ER-5501"
+    return await ctx.db
+      .query("patients")
+      .withSearchIndex("search_patients", (q) => 
+        q.search("searchVector", searchTerm)
+      )
+      .take(10)
+  },
+});
+
+export const updateVitals = mutation({
+  args: {
+    patientId: v.id("patients"),
+    encounterId: v.id("encounters"),
+    vitals: v.object({
+      hr: v.number(),
+      bp: v.string(),
+      temp: v.number(),
+      spO2: v.number(),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const timestamp = Date.now();
+
+    // 1. Permanent Audit Log (The 'vitals' table)
+    await ctx.db.insert("vitals", {
+      encounterId: args.encounterId,
+      patientId: args.patientId, 
+      hr: args.vitals.hr,
+      bp: args.vitals.bp,
+      spO2: args.vitals.spO2,
+      temp: args.vitals.temp,
+      recordedAt: timestamp,
+    });
+
+    // 2. Fetch records for Delta Logic
+    const [encounter, patient] = await Promise.all([
+      ctx.db.get(args.encounterId),
+      ctx.db.get(args.patientId)
+    ]);
+
+    // 🩺 Defensive Check: Stop if records are missing
+    if (!encounter || !patient) {
+      throw new Error("Clinical record sync failed: Patient or Encounter not found.");
+    }
+
+    const oldHr = encounter.vitals?.hr ?? args.vitals.hr;
+
+    // 3. Update Encounter Snapshot (For Dashboard Sorting/Arrows)
+    await ctx.db.patch(args.encounterId, {
+      vitals: {
+        ...args.vitals,
+        previousHr: oldHr,
+      },
+    });
+
+    // 4. Update Patient Document (For High-Speed Sparklines)
+    const newHistoryEntry = { ...args.vitals, timestamp };
+    const existingHistory = patient.vitalsHistory ?? [];
+
+    await ctx.db.patch(args.patientId, { 
+      vitals: {
+        ...args.vitals,
+        timestamp,
+      },
+      // We unshift to keep newest at the front, then slice
+      vitalsHistory: [newHistoryEntry, ...existingHistory].slice(0, 20)
+    });
+
+    return { success: true };
+  },
 });

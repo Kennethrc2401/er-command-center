@@ -36,29 +36,29 @@ export default function AdminDashboard() {
   ];
 
   return (
-    <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8 bg-slate-50/30 min-h-screen">
+    <div className="mx-auto min-h-screen max-w-7xl space-y-8 bg-slate-50/30 p-4 text-slate-900 dark:bg-slate-950/30 dark:text-slate-100 md:p-8">
       
       {/* 1. ADMIN HEADER & TOGGLE */}
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-4xl font-black tracking-tighter text-slate-900 uppercase italic">
+          <h1 className="text-4xl font-black uppercase italic tracking-tighter text-slate-900 dark:text-slate-100">
             Unit Ops <span className="text-blue-600">Command</span>
           </h1>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">
+          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">
             Hackensack Meridian Health | Emergency Dept 4B
           </p>
         </div>
 
-        <div className="flex items-center gap-4 bg-white p-2 rounded-[2rem] border border-slate-200 shadow-sm">
+        <div className="flex items-center gap-4 rounded-[2rem] border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center gap-2 px-3">
             {isPresentationMode ? <Lock className="h-3 w-3 text-blue-600" /> : <Eye className="h-3 w-3 text-slate-400" />}
-            <span className={`text-[9px] font-black uppercase tracking-widest ${isPresentationMode ? 'text-blue-600' : 'text-slate-400'}`}>
+            <span className={`text-[9px] font-black uppercase tracking-widest ${isPresentationMode ? 'text-blue-600' : 'text-slate-400 dark:text-slate-500'}`}>
               {isPresentationMode ? "Privacy Mode Active" : "Internal Data View"}
             </span>
           </div>
           <button 
             onClick={() => setIsPresentationMode(!isPresentationMode)}
-            className={`relative w-14 h-7 rounded-full transition-all duration-500 ${isPresentationMode ? 'bg-blue-600 shadow-inner' : 'bg-slate-200'}`}
+            className={`relative h-7 w-14 rounded-full transition-all duration-500 ${isPresentationMode ? 'bg-blue-600 shadow-inner' : 'bg-slate-200 dark:bg-slate-700'}`}
           >
             <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-500 ${isPresentationMode ? 'translate-x-7' : 'translate-x-0'}`} />
           </button>
@@ -85,7 +85,7 @@ export default function AdminDashboard() {
 
         {/* REVENUE CYCLE TASKS (1/3) */}
         <aside className="space-y-6">
-          <Card className="border-slate-900 bg-slate-900 text-white rounded-[2.5rem] overflow-hidden shadow-2xl">
+          <Card className="overflow-hidden rounded-[2.5rem] border-slate-900 bg-slate-900 text-white shadow-2xl">
             <CardContent className="p-8 space-y-6">
               <div className="space-y-1">
                 <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest">Shift Collection Goal</p>
@@ -120,19 +120,19 @@ export default function AdminDashboard() {
 
           {/* QUICK ADMIN ACTIONS */}
           <div className="space-y-3">
-            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 px-2 italic">Admin Actions</h4>
+            <h4 className="px-2 text-[10px] font-black uppercase italic tracking-[0.2em] text-slate-400 dark:text-slate-500">Admin Actions</h4>
             
             {/* SHIFT HANDOFF (Safely rendered) */}
             {stats && <ShiftHandoffModal stats={stats} />}
 
             <Link href="/dashboard/admin/audit" className="w-full">
-              <Button className="w-full py-7 rounded-2xl bg-white border border-slate-200 text-slate-900 hover:bg-slate-50 font-black text-[10px] uppercase tracking-widest shadow-sm gap-3 group">
+              <Button className="group w-full gap-3 rounded-2xl border border-slate-200 bg-white py-7 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800">
                 <ShieldCheck className="h-4 w-4 text-emerald-600 group-hover:scale-110 transition-transform" />
                 Identity Audit Log (Full Unit)
               </Button>
             </Link>
 
-            <Button className="w-full py-7 rounded-2xl bg-white border border-slate-200 text-slate-900 hover:bg-slate-50 font-black text-[10px] uppercase tracking-widest shadow-sm gap-3 group">
+            <Button className="group w-full gap-3 rounded-2xl border border-slate-200 bg-white py-7 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800">
               <Activity className="h-4 w-4 text-purple-600 group-hover:animate-pulse" />
               ESI vs. Payer Disparity Analysis
             </Button>

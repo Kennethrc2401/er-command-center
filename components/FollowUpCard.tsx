@@ -26,6 +26,9 @@ export default function FollowUpCard({ appt }: { appt: AppointmentProps }) {
   const day = isValidDate ? dateObj.toLocaleDateString('en-US', { day: '2-digit' }) : "--";
   const month = isValidDate ? dateObj.toLocaleDateString('en-US', { month: 'short' }) : "ERR";
 
+  // Check if appointment is empty
+  const hasAppointment = appt.provider && appt.specialty && appt.time && appt.address;
+
   return (
     <Card className="border-blue-100 bg-white shadow-xl rounded-[2.5rem] overflow-hidden">
       <div className="bg-blue-600 p-4 text-center">
@@ -34,44 +37,56 @@ export default function FollowUpCard({ appt }: { appt: AppointmentProps }) {
         </span>
       </div>
       
-      <CardContent className="p-8 flex flex-col md:flex-row gap-8 items-center">
-        {/* Date Icon */}
-        <div className="flex flex-col items-center justify-center bg-slate-50 border-2 border-slate-100 rounded-[2rem] h-24 w-24 shrink-0 shadow-inner">
-          <span className="text-[10px] font-black uppercase text-blue-600 tracking-tighter italic">{month}</span>
-          <span className="text-4xl font-black text-slate-900 tracking-tighter">{day}</span>
-        </div>
-
-        {/* Details */}
-        <div className="flex-1 space-y-4 text-center md:text-left">
-          <div>
-            <Badge className="bg-blue-50 text-blue-700 border-none mb-2 px-3 py-1 text-[10px] font-black uppercase tracking-widest italic">
-              {appt.specialty}
-            </Badge>
-            <h3 className="text-2xl font-black text-slate-900 tracking-tight leading-none uppercase italic">
-              {appt.provider}
-            </h3>
+      <CardContent className="p-8">
+        {!hasAppointment ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <Info className="h-8 w-8 text-slate-300 mb-3" />
+            <p className="text-sm font-black uppercase text-slate-400 tracking-widest italic">
+              No Follow-Up Appointment Scheduled
+            </p>
+            <p className="text-[10px] text-slate-300 mt-2">Provide patient with cardiology, PT, or specialist referral as needed.</p>
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="flex items-center gap-3 justify-center md:justify-start">
-              <Clock className="h-4 w-4 text-slate-400" />
-              <span className="text-xs font-bold text-slate-600">{appt.time}</span>
+        ) : (
+          <div className="flex flex-col md:flex-row gap-8 items-center">
+            {/* Date Icon */}
+            <div className="flex flex-col items-center justify-center bg-slate-50 border-2 border-slate-100 rounded-[2rem] h-24 w-24 shrink-0 shadow-inner">
+              <span className="text-[10px] font-black uppercase text-blue-600 tracking-tighter italic">{month}</span>
+              <span className="text-4xl font-black text-slate-900 tracking-tighter">{day}</span>
             </div>
-            <div className="flex items-center gap-3 justify-center md:justify-start">
-              <MapPin className="h-4 w-4 text-slate-400" />
-              <span className="text-xs font-bold text-slate-600 truncate max-w-[150px] italic">{appt.address}</span>
+
+            {/* Details */}
+            <div className="flex-1 space-y-4 text-center md:text-left">
+              <div>
+                <Badge className="bg-blue-50 text-blue-700 border-none mb-2 px-3 py-1 text-[10px] font-black uppercase tracking-widest italic">
+                  {appt.specialty}
+                </Badge>
+                <h3 className="text-2xl font-black text-slate-900 tracking-tight leading-none uppercase italic">
+                  {appt.provider}
+                </h3>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex items-center gap-3 justify-center md:justify-start">
+                  <Clock className="h-4 w-4 text-slate-400" />
+                  <span className="text-xs font-bold text-slate-600">{appt.time}</span>
+                </div>
+                <div className="flex items-center gap-3 justify-center md:justify-start">
+                  <MapPin className="h-4 w-4 text-slate-400" />
+                  <span className="text-xs font-bold text-slate-600 truncate max-w-37.5 italic">{appt.address}</span>
+                </div>
+              </div>
+
+              {appt.instructions && (
+                <div className="bg-amber-50 p-3 rounded-2xl border border-amber-100 flex items-start gap-3">
+                  <Info className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[10px] font-bold text-amber-800 leading-tight uppercase tracking-tight">
+                    Note: {appt.instructions}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
-
-          {appt.instructions && (
-            <div className="bg-amber-50 p-3 rounded-2xl border border-amber-100 flex items-start gap-3">
-              <Info className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-              <p className="text-[10px] font-bold text-amber-800 leading-tight uppercase tracking-tight">
-                Note: {appt.instructions}
-              </p>
-            </div>
-          )}
-        </div>
+        )}
       </CardContent>
     </Card>
   );

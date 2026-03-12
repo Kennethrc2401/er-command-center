@@ -11,8 +11,10 @@
 import type * as analytics from "../analytics.js";
 import type * as auth from "../auth.js";
 import type * as checklists from "../checklists.js";
+import type * as debug from "../debug.js";
 import type * as education from "../education.js";
 import type * as encounters from "../encounters.js";
+import type * as faxes from "../faxes.js";
 import type * as imaging from "../imaging.js";
 import type * as insurance from "../insurance.js";
 import type * as labs from "../labs.js";
@@ -35,8 +37,10 @@ declare const fullApi: ApiFromModules<{
   analytics: typeof analytics;
   auth: typeof auth;
   checklists: typeof checklists;
+  debug: typeof debug;
   education: typeof education;
   encounters: typeof encounters;
+  faxes: typeof faxes;
   imaging: typeof imaging;
   insurance: typeof insurance;
   labs: typeof labs;

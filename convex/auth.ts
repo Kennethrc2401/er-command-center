@@ -15,8 +15,8 @@ export const mustBeDoctor = async (ctx: MutationCtx | QueryCtx) => {
   // Cast the role as a string to fix the Type Error
   const role = identity.role as string; 
 
-  // Authorized roles list
-  const authorizedRoles = ["doctor", "staff", "nurse"];
+  // Authorized roles list — admin has full clinical privileges
+  const authorizedRoles = ["doctor", "staff", "nurse", "admin"];
 
   if (!role || !authorizedRoles.includes(role)) {
     throw new Error(`Unauthorized: Role '${role}' does not have permission to sign clinical notes.`);

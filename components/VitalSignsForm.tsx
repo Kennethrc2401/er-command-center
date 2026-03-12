@@ -11,11 +11,7 @@ import {
   Activity, 
   CheckCircle2, 
   Loader2, 
-  ThermometerSun, 
-  Heart, 
-  Wind, 
-  Gauge,
-  AlertTriangle 
+  ThermometerSun
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,12 +20,70 @@ interface Props {
   onComplete?: () => void;
 }
 
+type VitalType = "hr" | "spO2" | "bp" | "temp";
+
+function VitalInput({
+  label,
+  value,
+  onChange,
+  type,
+  suffix = ""
+}: {
+  label: string;
+  value: string | number | undefined;
+  onChange: (value: string) => void;
+  type: VitalType;
+  suffix?: string;
+}) {
+  const getStatusColor = () => {
+    const num = parseFloat(String(value ?? ""));
+    if (Number.isNaN(num)) return "text-slate-900";
+
+    if (type === "hr") {
+      if (num > 140 || num < 40) return "text-red-600 animate-pulse";
+      if (num > 100 || num < 60) return "text-amber-500";
+    }
+    if (type === "spO2") {
+      if (num < 90) return "text-red-600 animate-pulse";
+      if (num < 94) return "text-amber-500";
+    }
+    return "text-slate-900";
+  };
+
+  const statusColor = getStatusColor();
+  const isCritical = statusColor.includes("red");
+
+  return (
+    <div
+      className={`bg-slate-50 p-4 rounded-2xl border-2 transition-all ${
+        isCritical ? "border-red-200 bg-red-50" : "border-slate-100"
+      }`}
+    >
+      <p className="text-[9px] font-black uppercase text-slate-400 mb-2 tracking-tighter">{label}</p>
+      <div className="flex items-baseline gap-1">
+        <input
+          type="text"
+          value={value ?? ""}
+          onChange={(e) => onChange(e.target.value)}
+          className={`bg-transparent font-black text-xl w-full outline-none transition-colors ${statusColor}`}
+        />
+        <span className="text-[10px] font-bold text-slate-400">{suffix}</span>
+      </div>
+      {isCritical && (
+        <p className="text-[8px] font-black text-red-500 uppercase mt-1 leading-none">
+          Critical Value
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function VitalSignsForm({ encounterId, onComplete }: Props) {
   const recordVitals = useMutation(api.vitals.record);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [unit, setUnit] = useState<"C" | "F">("F");
 
-  const { register, handleSubmit, formState: { errors }, reset, watch, setValue } = useForm<VitalsFormData>({
+  const { handleSubmit, reset, watch, setValue } = useForm<VitalsFormData>({
     resolver: zodResolver(vitalsSchema) as Resolver<VitalsFormData>,
     defaultValues: { bp: "", hr: undefined, temp: undefined, spO2: undefined }
   });
@@ -38,22 +92,30 @@ export default function VitalSignsForm({ encounterId, onComplete }: Props) {
   const acuity = calculateAcuity(watched, unit);
 
   // --- BP MASKING ---
-  const handleBPChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.replace(/[^\d/]/g, "");
+  const handleBPChange = (rawValue: string) => {
+    let value = rawValue.replace(/[^\d/]/g, "");
     if (value.length === 3 && !value.includes("/")) {
       value = value + "/";
     }
-    setValue("bp", value);
+    setValue("bp", value, { shouldValidate: true, shouldDirty: true });
   };
 
-  // --- CLINICAL ALERTS ---
-  const sbp = parseInt(watched.bp?.split("/")[0]) || 0;
-  const alerts = {
-    hr: watched.hr ? (watched.hr > 100 || watched.hr < 60) : false,
-    spO2: watched.spO2 ? (watched.spO2 < 94) : false,
-    // Fever detection based on selected unit
-    temp: watched.temp ? (unit === "F" ? watched.temp > 100.4 : watched.temp > 38) : false,
-    bp: sbp > 160 || (sbp < 90 && sbp > 0)
+  const handleNumericChange = (field: "hr" | "temp" | "spO2") => (rawValue: string) => {
+    const cleaned = field === "temp"
+      ? rawValue.replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1")
+      : rawValue.replace(/[^\d]/g, "");
+
+    if (cleaned === "") {
+      setValue(field, undefined as never, { shouldValidate: true, shouldDirty: true });
+      return;
+    }
+
+    const numeric = Number(cleaned);
+    if (Number.isNaN(numeric)) {
+      return;
+    }
+
+    setValue(field, numeric as never, { shouldValidate: true, shouldDirty: true });
   };
 
   const onSubmit: SubmitHandler<VitalsFormData> = async (data) => {
@@ -75,7 +137,7 @@ export default function VitalSignsForm({ encounterId, onComplete }: Props) {
       toast.success("Clinical telemetry synced successfully.");
       reset();
       if (onComplete) onComplete();
-    } catch (error) {
+    } catch {
       toast.error("Telemetry sync failed.");
     } finally {
       setIsSubmitting(false);
@@ -118,72 +180,47 @@ export default function VitalSignsForm({ encounterId, onComplete }: Props) {
         </div>
 
         <div className="grid grid-cols-2 gap-x-4 gap-y-5">
-          {/* Heart Rate */}
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1.5">
-              <Heart className={`size-3 ${alerts.hr ? "text-red-500 animate-pulse" : "text-slate-400"}`} /> Heart Rate
-            </label>
-            <input
-              {...register("hr", { valueAsNumber: true })}
-              type="number"
-              className={`w-full p-2.5 rounded-xl border font-bold text-sm outline-none focus:ring-2 transition-all ${
-                alerts.hr ? "bg-red-50 border-red-300 focus:ring-red-500 text-red-900" : "bg-slate-50 border-slate-200 focus:ring-blue-500"
-              }`}
-            />
-          </div>
+          <VitalInput
+            label="Heart Rate"
+            value={watched.hr}
+            onChange={handleNumericChange("hr")}
+            type="hr"
+            suffix="bpm"
+          />
 
-          {/* Blood Pressure */}
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1.5">
-              <Gauge className={`size-3 ${alerts.bp ? "text-red-500 animate-pulse" : "text-slate-400"}`} /> BP (mmHg)
-            </label>
-            <input
-              {...register("bp")}
-              placeholder="120/80"
-              onChange={handleBPChange}
-              className={`w-full p-2.5 rounded-xl border font-bold text-sm outline-none focus:ring-2 transition-all ${
-                alerts.bp ? "bg-red-50 border-red-300 focus:ring-red-500 text-red-900" : "bg-slate-50 border-slate-200 focus:ring-blue-500"
-              }`}
-            />
-          </div>
+          <VitalInput
+            label="Blood Pressure"
+            value={watched.bp}
+            onChange={handleBPChange}
+            type="bp"
+            suffix="mmHg"
+          />
 
-          {/* Temperature - WITH REAL-TIME CONVERSION PREVIEW */}
           <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-slate-400 uppercase flex justify-between items-center">
-              <span className="flex items-center gap-1.5"><ThermometerSun className={`size-3 ${alerts.temp ? "text-orange-500" : "text-slate-400"}`} /> Temp</span>
-              <span className="opacity-50 tracking-tighter">°{unit}</span>
-            </label>
-            <input
-              {...register("temp", { valueAsNumber: true })}
-              type="number"
-              step="0.1"
-              placeholder={unit === "C" ? "37.0" : "98.6"}
-              className={`w-full p-2.5 rounded-xl border font-bold text-sm outline-none focus:ring-2 transition-all ${
-                alerts.temp ? "bg-orange-50 border-orange-300 focus:ring-orange-500 text-orange-900" : "bg-slate-50 border-slate-200 focus:ring-blue-500"
-              }`}
+            <VitalInput
+              label={`Temp (°${unit})`}
+              value={watched.temp}
+              onChange={handleNumericChange("temp")}
+              type="temp"
+              suffix={`°${unit}`}
             />
-            {watched.temp && (
-               <p className="text-[9px] text-slate-400 italic mt-1 pl-1 font-medium">
-                 {unit === "F" 
-                   ? `≈ ${((watched.temp - 32) * 5/9).toFixed(1)}°C` 
-                   : `≈ ${((watched.temp * 9/5) + 32).toFixed(1)}°F`}
-               </p>
+            {typeof watched.temp === "number" && (
+              <p className="text-[9px] text-slate-400 italic mt-1 pl-1 font-medium flex items-center gap-1">
+                <ThermometerSun className="size-3" />
+                {unit === "F"
+                  ? `≈ ${((watched.temp - 32) * 5 / 9).toFixed(1)}°C`
+                  : `≈ ${((watched.temp * 9 / 5) + 32).toFixed(1)}°F`}
+              </p>
             )}
           </div>
 
-          {/* SpO2 */}
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1.5">
-              <Wind className={`size-3 ${alerts.spO2 ? "text-sky-500 animate-pulse" : "text-slate-400"}`} /> SpO2 (%)
-            </label>
-            <input
-              {...register("spO2", { valueAsNumber: true })}
-              type="number"
-              className={`w-full p-2.5 rounded-xl border font-bold text-sm outline-none focus:ring-2 transition-all ${
-                alerts.spO2 ? "bg-red-50 border-red-300 focus:ring-red-500 text-red-900" : "bg-slate-50 border-slate-200 focus:ring-blue-500"
-              }`}
-            />
-          </div>
+          <VitalInput
+            label="SpO2"
+            value={watched.spO2}
+            onChange={handleNumericChange("spO2")}
+            type="spO2"
+            suffix="%"
+          />
         </div>
 
         <button

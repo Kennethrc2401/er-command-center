@@ -1,36 +1,28 @@
 "use client";
 
-import { useUser } from "@clerk/nextjs";
-import { SignInButton, SignOutButton } from "@clerk/nextjs";
-import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
+import React from "react";
+import { SignedIn, SignedOut, useUser } from "@clerk/nextjs";
+import { SignInButton } from "@clerk/nextjs";
 import { 
   Monitor, 
   ShieldCheck, 
   UserPlus, 
-  ChevronRight, 
-  Lock, 
   ArrowRight,
-  Stethoscope
+  Stethoscope,
+  GraduationCap
 } from "lucide-react";
 import Link from "next/link";
-import { Card, CardContent } from "@/components/ui/card";
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-slate-50">
-      <AuthLoading>
-        <div className="flex h-screen items-center justify-center bg-white">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        </div>
-      </AuthLoading>
-
-      <Authenticated>
+    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <SignedIn>
         <PortalDashboard />
-      </Authenticated>
+      </SignedIn>
 
-      <Unauthenticated>
+      <SignedOut>
         <PublicLanding />
-      </Unauthenticated>
+      </SignedOut>
     </div>
   );
 }
@@ -56,6 +48,14 @@ function PortalDashboard() {
       color: "bg-emerald-500",
       role: "Public Facing"
     },
+    {
+      title: "Training Center",
+      desc: "Scenario drills, ESI refreshers, and onboarding practice tools",
+      href: "/dashboard/training",
+      icon: GraduationCap,
+      color: "bg-violet-600",
+      role: "Staff Learning"
+    },
     ...(isAdmin ? [{
       title: "Executive Suite",
       desc: "Revenue analytics and compliance audits",
@@ -66,41 +66,64 @@ function PortalDashboard() {
     }] : [])
   ];
 
+  const colorMap: Record<string, string> = {
+    "bg-blue-600": "#2563eb",
+    "bg-emerald-500": "#10b981",
+    "bg-violet-600": "#7c3aed",
+    "bg-slate-900": "#0f172a"
+  };
+
   return (
     <main className="max-w-6xl mx-auto px-6 py-20 space-y-12">
       <div className="space-y-2">
-        <h1 className="text-5xl font-black text-slate-900 tracking-tighter italic uppercase">
+        <h1 className="text-5xl font-black italic uppercase tracking-tighter text-slate-900 dark:text-slate-100">
           Welcome back, <span className="text-blue-600">{user?.firstName || "Staff"}</span>
         </h1>
-        <p className="text-xs font-black text-slate-400 uppercase tracking-[0.3em]">
+        <p className="text-xs font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">
           Nexus ER Ecosystem • Unit 4B • {new Date().toLocaleDateString()}
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {portals.map((p) => (
-          <Link href={p.href} key={p.title} className="group">
-            <Card className="h-full border-none rounded-[3rem] bg-white shadow-xl shadow-slate-200/50 hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden">
-              <CardContent className="p-10 flex flex-col h-full">
-                <div className={`h-14 w-14 rounded-2xl ${p.color} flex items-center justify-center mb-8 shadow-lg`}>
-                  <p.icon className="h-7 w-7 text-white" />
+      {/* Some space before the grid */}
+      <div className="h-6" />
+
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {portals.map((p) => {
+          return (
+            <Link href={p.href} key={p.title} className="group block">
+              <div className="h-full rounded-[2rem] overflow-hidden bg-white shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 dark:bg-slate-900">
+                {/* Icon Header Banner */}
+              <div style={{ backgroundColor: colorMap[p.color as keyof typeof colorMap], height: "128px" }} className="flex items-center justify-center relative">
+                  {React.createElement(p.icon, { className: "h-16 w-16 text-white drop-shadow-xl" })}
                 </div>
-                <div className="flex-1 space-y-3">
-                  <div className="flex justify-between items-center">
-                    <h3 className="text-xl font-black uppercase italic tracking-tight text-slate-900">{p.title}</h3>
-                    <span className="text-[8px] font-black text-slate-400 uppercase border border-slate-200 px-2 py-0.5 rounded-full">
-                      {p.role}
-                    </span>
+                
+                {/* Content Area */}
+                <div className="p-6 flex flex-col h-[calc(100%-128px)]">
+                  <div className="flex-1">
+                    <div className="flex justify-between items-start gap-2 mb-3">
+                      <h3 className="text-lg font-black uppercase italic tracking-tight text-slate-900 dark:text-slate-100 flex-1">
+                        {p.title}
+                      </h3>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[7px] font-black uppercase text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 whitespace-nowrap">
+                        {p.role}
+                      </span>
+                    </div>
+                    <p className="text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-300">
+                      {p.desc}
+                    </p>
                   </div>
-                  <p className="text-sm font-medium text-slate-500 leading-relaxed">{p.desc}</p>
+                  
+                  {/* Action Footer */}
+                  <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center gap-2 text-[10px] font-black uppercase text-blue-600 tracking-widest group-hover:gap-3 transition-all">
+                      Enter <ArrowRight className="h-3 w-3" />
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-8 flex items-center gap-2 text-[10px] font-black uppercase text-blue-600 tracking-widest group-hover:gap-4 transition-all">
-                  Access Portal <ArrowRight className="h-3 w-3" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
+              </div>
+            </Link>
+          );
+        })}
       </div>
     </main>
   );

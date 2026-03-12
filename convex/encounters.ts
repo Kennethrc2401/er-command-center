@@ -33,11 +33,13 @@ export const admitPatient = mutation({
       gender: args.gender ?? "Not Specified", 
       allergies: [], // Initializing with empty array
       codeStatus: "Full Code", // Default code status
+      searchVector: `${args.name} ${args.mrn}`, // Combine name and MRN for full-text search
     });
 
     // 2. Create the ER Encounter
     const encounterId = await ctx.db.insert("encounters", {
       patientId,
+      patientName: args.name,
       status: "waiting",
       acuity: args.acuity,
       chiefComplaint: args.chiefComplaint,
@@ -74,6 +76,7 @@ export const createEncounter = mutation({
   args: {
     patientId: v.id("patients"),
     chiefComplaint: v.string(),
+    patientName: v.string(),
     acuity: v.number(),
     vitals: vitalsValidator,
   },
@@ -81,6 +84,7 @@ export const createEncounter = mutation({
     const id = await ctx.db.insert("encounters", {
       patientId: args.patientId,
       chiefComplaint: args.chiefComplaint,
+      patientName: args.patientName,
       acuity: args.acuity,
       vitals: args.vitals,
       status: "triage",
@@ -307,8 +311,11 @@ export const getShiftMetrics = query({
     const shiftStart = now - (12 * 60 * 60 * 1000); 
 
     const active = allEncounters.filter(e => e.status !== "discharged");
-    const dischargedInShift = allEncounters.filter(e => 
-      e.status === "discharged" && (e.dischargedAt ?? 0) > shiftStart
+    const dischargedInShift = allEncounters.filter(
+      (e) =>
+        e.status === "discharged" &&
+        // Backfill-safe: some historical rows may not have dischargedAt.
+        (e.dischargedAt ?? e._creationTime) > shiftStart
     );
 
     // 1. ACUITY DISTRIBUTION (ESI MIX)
@@ -345,18 +352,21 @@ export const getShiftMetrics = query({
     );
 
     // 3. LENGTH OF STAY (LOS) & TREND
-    const totalLOS = dischargedInShift.reduce((acc, e) => {
-      return acc + ((e.dischargedAt ?? now) - e._creationTime);
-    }, 0);
+    const losSamplesMs = [
+      ...dischargedInShift.map((e) => (e.dischargedAt ?? now) - e._creationTime),
+      ...active.map((e) => now - e._creationTime),
+    ].filter((ms) => ms > 0);
 
-    const avgLOS = dischargedInShift.length > 0 
-      ? Math.floor(totalLOS / dischargedInShift.length / 60000) 
+    const totalLOS = losSamplesMs.reduce((acc, ms) => acc + ms, 0);
+
+    const avgLOS = losSamplesMs.length > 0
+      ? Math.floor(totalLOS / losSamplesMs.length / 60000)
       : 0;
 
     const losTrend = [
       { value: Math.max(0, avgLOS - 15) },
       { value: Math.max(0, avgLOS + 10) },
-      { value: avgLOS - 5 },
+      { value: Math.max(0, avgLOS - 5) },
       { value: avgLOS + 12 },
       { value: avgLOS }
     ];
@@ -436,6 +446,7 @@ export const seedMockPatient = mutation({
       gender: "M",
       allergies: ["NKDA"],
       codeStatus: "Full Code",
+      searchVector: "John Doe 12345678",
     });
 
     // 2. Now use that real ID for the encounter
@@ -446,6 +457,7 @@ export const seedMockPatient = mutation({
       vitals: { hr: 110, bp: "150/90", spO2: 95, temp: 98.6 },
       status: "waiting",
       location: "",
+      patientName: "John Doe",
     });
 
     return encounterId;
@@ -489,8 +501,6 @@ export const getEncounterWithInsurance = query({
   },
 });
 
-// convex/encounters.ts
-
 export const getByPatientWithInsurance = query({
   args: { patientId: v.id("patients") },
   handler: async (ctx, args) => {
@@ -527,4 +537,33 @@ export const runCOBDiscovery = mutation({
     }
     return { found: false };
   }
+});
+
+export const triageHandoff = mutation({
+  args: {
+    encounterId: v.id("encounters"),
+    acuity: v.number(),
+    location: v.string(),
+    vitals: v.object({
+      hr: v.number(),
+      bp: v.string(),
+      spO2: v.number(),
+      temp: v.number(),
+    }),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.encounterId, {
+      acuity: args.acuity,
+      location: args.location,
+      vitals: args.vitals,
+      status: "treating", // Move from 'waiting' to 'treating'
+    });
+  },
+});
+
+export const updateAcuity = mutation({
+  args: { id: v.id("encounters"), acuity: v.number() },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, { acuity: args.acuity });
+  },
 });

@@ -6,6 +6,7 @@ export default defineSchema({
     name: v.string(),
     mrn: v.string(),
     dob: v.string(),
+    searchVector: v.string(), 
     gender: v.string(),
     allergies: v.array(v.string()),
     codeStatus: v.optional(v.union(
@@ -14,28 +15,42 @@ export default defineSchema({
       v.literal("DNR-Limited")
     )),
     isHighRisk: v.optional(v.boolean()),
-    medicalHistory: v.optional(v.array(v.string())), // e.g., ["HTN", "DM", "CAD"]
-    socialHistory: v.optional(v.string()), // e.g., "Smokes 1 ppd, Lives alone"
-    familyHistory: v.optional(v.string()), // e.g., "Father had MI at 60"
+    medicalHistory: v.optional(v.array(v.string())),
+    socialHistory: v.optional(v.string()),
+    familyHistory: v.optional(v.string()),
+    // 🩺 Current Snapshot (The latest data)
     vitals: v.optional(
       v.object({
         hr: v.number(),
         bp: v.string(),
         temp: v.number(),
         spO2: v.number(),
+        timestamp: v.optional(v.number()), // Time of last entry
       })
-    )
-   })
-    .index("by_mrn", ["mrn"])
-    /** * Search Index: This resolves the "search_patients" error.
-     * We allow searching by name and filtering by MRN.
-     */
-    .searchIndex("search_patients", {
-      searchField: "name",
-      filterFields: ["mrn"],
-    }),
+    ),
+    // 📈 Historical Trend (The "Sparkline" Data)
+    vitalsHistory: v.optional(
+      v.array(
+        v.object({
+          hr: v.number(),
+          bp: v.string(),
+          temp: v.number(),
+          spO2: v.number(),
+          timestamp: v.number(), // Required for chronological graphing
+        })
+      )
+    ),
+  })
+  .index("by_mrn", ["mrn"])
+  .searchIndex("search_patients", {
+    searchField: "searchVector",
+  })
+  .searchIndex("search_name", {
+    searchField: "name",
+  }),
   encounters: defineTable({
     patientId: v.id("patients"),
+    patientName: v.optional(v.string()),
     status: v.union(
       v.literal("triage"),
       v.literal("waiting"),
@@ -115,8 +130,6 @@ labResults: defineTable({
   range: v.string(),
   isAbnormal: v.boolean(),
   status: v.union(v.literal("pending"), v.literal("final")),
-  
-  // ADD THESE FIELDS:
   acknowledgedBy: v.optional(v.string()),
   acknowledgedAt: v.optional(v.number()),
 }).index("by_encounter", ["encounterId"]),
@@ -145,12 +158,14 @@ labResults: defineTable({
   }).index("by_patient", ["patientId"]),
   vitals: defineTable({
     encounterId: v.id("encounters"),
+    patientId: v.optional(v.id("patients")), // Adding this makes querying easier later
     hr: v.number(),
     bp: v.string(),
     spO2: v.number(),
     temp: v.number(),
     recordedAt: v.number(), // Timestamp for the X-axis
-  }).index("by_encounter", ["encounterId"]),
+    }).index("by_encounter", ["encounterId"])
+    .index("by_patient", ["patientId"]),
    checklists: defineTable({
       encounterId: v.id("encounters"),
       item: v.string(),
@@ -241,4 +256,14 @@ labResults: defineTable({
       status: v.string(), // "completed", "refunded"
       timestamp: v.number(),
     }).index("by_encounter", ["encounterId"]),
-});
+    faxes: defineTable({
+      from: v.string(),        // e.g., "North Jersey Imaging"
+      faxNumber: v.string(),   // e.g., "(201) 555-0199"
+      pages: v.number(),
+      status: v.string(),      // "received", "processed", "archived"
+      documentUrl: v.string(), // Link to the PDF/Image
+      timestamp: v.number(),
+      subject: v.string(),     // e.g., "STAT MRI Result: DOE, J"
+      patientId: v.optional(v.id("patients")),
+    }).index("by_faxNumber", ["faxNumber"]),
+  })

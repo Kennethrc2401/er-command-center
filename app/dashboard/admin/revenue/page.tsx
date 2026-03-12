@@ -25,10 +25,10 @@ export default function RevenuePage() {
   ];
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-8 text-slate-900 animate-in fade-in duration-500 dark:text-slate-100">
       <div>
-        <h1 className="text-4xl font-black tracking-tighter text-slate-900 uppercase italic">Revenue <span className="text-blue-600">Analytics</span></h1>
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Fiscal Year 2026 | Unit 4B Performance</p>
+        <h1 className="text-4xl font-black uppercase italic tracking-tighter text-slate-900 dark:text-slate-100">Revenue <span className="text-blue-600">Analytics</span></h1>
+        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Fiscal Year 2026 | Unit 4B Performance</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -39,17 +39,17 @@ export default function RevenuePage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <RevenuePayerMix payerData={payerMix} />
-        <Card className="rounded-[2.5rem] border-slate-200 bg-white p-8">
-          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6 italic">Shift Collection Velocity</h3>
+        <Card className="rounded-[2.5rem] border-slate-200 bg-white p-8 dark:border-slate-800 dark:bg-slate-900">
+          <h3 className="mb-6 text-xs font-black uppercase italic tracking-widest text-slate-400 dark:text-slate-500">Shift Collection Velocity</h3>
           <div className="h-64 flex items-end gap-2 px-4">
             {[40, 70, 45, 90, 65, 80, 95].map((h, i) => (
-              <div key={i} className="flex-1 bg-slate-100 rounded-t-lg relative group hover:bg-blue-100 transition-colors">
+              <div key={i} className="group relative flex-1 rounded-t-lg bg-slate-100 transition-colors hover:bg-blue-100 dark:bg-slate-800 dark:hover:bg-blue-950/40">
                 <div className="absolute bottom-0 w-full bg-blue-600 rounded-t-lg transition-all duration-1000" style={{ height: `${h}%` }} />
-                <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-400 opacity-0 group-hover:opacity-100">0{i+1}:00</span>
+                <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-400 opacity-0 group-hover:opacity-100 dark:text-slate-500">0{i+1}:00</span>
               </div>
             ))}
           </div>
-          <p className="text-center text-[9px] font-black text-slate-400 uppercase mt-4 tracking-widest">Hourly Cash Capture (Current Shift)</p>
+          <p className="mt-4 text-center text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Hourly Cash Capture (Current Shift)</p>
         </Card>
       </div>
     </div>
@@ -58,10 +58,10 @@ export default function RevenuePage() {
 
 function RevenueCard({ title, value, trend, trendUp }: RevenueCardProps) {
   return (
-    <Card className="p-6 rounded-[2rem] border-slate-200 bg-white shadow-sm">
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{title}</p>
+    <Card className="rounded-[2rem] border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">{title}</p>
       <div className="flex items-baseline gap-3">
-        <h2 className="text-3xl font-black text-slate-900 tracking-tighter italic">{value}</h2>
+        <h2 className="text-3xl font-black italic tracking-tighter text-slate-900 dark:text-slate-100">{value}</h2>
         <div className={`flex items-center text-[10px] font-black ${trendUp ? 'text-emerald-500' : 'text-red-500'}`}>
           {trendUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
           {trend}
