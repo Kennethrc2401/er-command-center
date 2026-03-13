@@ -48,6 +48,22 @@ export default defineSchema({
   .searchIndex("search_name", {
     searchField: "name",
   }),
+  users: defineTable({
+    name: v.string(),
+    email: v.string(),
+    role: v.union(
+      v.literal("ADMIN"), 
+      v.literal("DOCTOR"), 
+      v.literal("NURSE"), 
+      v.literal("CCMA")
+    ),
+    credentials: v.string(), // e.g., "MD, FACS" or "RN, BSN"
+    department: v.string(),
+    status: v.union(v.literal("ACTIVE"), v.literal("INACTIVE")),
+    npiNumber: v.optional(v.string()), // Required for doctors
+  })
+  .index("by_email", ["email"])
+  .index("by_role", ["role"]),
   encounters: defineTable({
     patientId: v.id("patients"),
     patientName: v.optional(v.string()),
@@ -85,7 +101,6 @@ export default defineSchema({
     ),
   })
     .index("by_status", ["status"])
-    // Add this to fix the getByPatient "Could not find public function" error
     .index("by_patient", ["patientId"]),
 
   medications: defineTable({
@@ -122,7 +137,7 @@ export default defineSchema({
     isTemplate: v.boolean(),
   }).index("by_encounter", ["encounterId"]),
 
-labResults: defineTable({
+  labResults: defineTable({
   encounterId: v.id("encounters"),
   testName: v.string(),
   value: v.string(),
@@ -135,11 +150,17 @@ labResults: defineTable({
 }).index("by_encounter", ["encounterId"]),
 
   auditLogs: defineTable({
-    userId: v.string(),
-    action: v.string(),
-    resourceId: v.string(),
+    userId: v.id("users"),
+    userName: v.string(),
+    action: v.string(), // e.g., "VIEW_CHART", "PLACE_ORDER", "DISCHARGE"
+    patientId: v.optional(v.id("patients")),
+    patientName: v.optional(v.string()),
     timestamp: v.number(),
-  }),
+    metadata: v.optional(v.string()), // Any extra context
+  })
+  .index("by_timestamp", ["timestamp"])
+  .index("by_user", ["userId"])
+  .index("by_patient", ["patientId"]),
   insurance: defineTable({
     patientId: v.id("patients"),
     provider: v.string(),
@@ -205,6 +226,23 @@ labResults: defineTable({
       report: v.optional(v.string()), // The radiologist's findings
       orderedAt: v.number(),
     }).index("by_encounter", ["encounterId"]),
+  orders: defineTable({
+    encounterId: v.id("encounters"),
+    patientId: v.id("patients"),
+    type: v.union(v.literal("LAB"), v.literal("IMAGING")),
+    testName: v.string(),
+    // Optional for legacy rows; newly created orders should always set this.
+    searchVector: v.optional(v.string()),
+    priority: v.union(v.literal("ROUTINE"), v.literal("STAT")),
+    status: v.union(v.literal("PENDING"), v.literal("COMPLETED"), v.literal("CANCELLED")),
+    orderedAt: v.number(),
+  })
+.index("by_encounter", ["encounterId"])
+.index("by_patient", ["patientId"])
+.searchIndex("search_orders", {
+  searchField: "searchVector",
+  filterFields: ["encounterId", "patientId"],
+}),
     triageAssessments: defineTable({
       encounterId: v.id("encounters"),
       // NEURO

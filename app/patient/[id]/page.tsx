@@ -40,9 +40,9 @@ import SBARHandoff from "@/components/SBARHandoff";
 import EducationTracker from "@/components/EducationTracker";
 import FollowUpCard from "@/components/FollowUpCard";
 import ImagingResults from "@/components/ImagingResults";
-import PatientTimeline from "@/components/PatientTimeline";
+import PatientTimeline from "@/components/clinical/PatientTimeline";
 import DiagnosisSuggester from "@/components/clinical/DiagnosisSuggester";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import CommandBar from "@/components/CommandBar";
 import LabTrends from "@/components/LabTrends";
 import SmartNotes from "@/components/notes/SmartNotes";
@@ -58,6 +58,9 @@ import VitalsSparkline from "@/components/clinical/VitalsSparkline";
 import SBARGenerator from "@/components/clinical/SBARGenerator";
 import DischargeSummaryOverlay from "@/components/clinical/DischargeSummary";
 import MedicationOrder from "@/components/clinical/MedicationOrder";
+import ProtocolLibrary from "@/components/clinical/ProtocolLibrary";
+import OrderEntry from "@/components/clinical/OrderEntry";
+import { PROTOCOL_LIBRARY } from "@/lib/hooks/protocols";
 
 // DYNAMIC IMPORT: DischargeInlineComponent
 const DischargeInlineComponent = dynamic(
@@ -90,7 +93,14 @@ export default function PatientPage() {
   const [activeTab, setActiveTab] = useState("vitals");
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [showDischarge, setShowDischarge] = useState(false);
+  const [suggestedTriageOrders, setSuggestedTriageOrders] = useState<string[]>([]);
+  const [nowTs, setNowTs] = useState(() => Date.now());
   const { isDemoMode, toggleDemoMode } = usePresentationMode();
+
+  useEffect(() => {
+    const timerId = setInterval(() => setNowTs(Date.now()), 60_000);
+    return () => clearInterval(timerId);
+  }, []);
 
   // --- 2. CONVEX SUBSCRIPTIONS ---
   const patient = useQuery(api.patients.getById, { patientId });
@@ -112,6 +122,28 @@ export default function PatientPage() {
   const pendingLabsCount = useQuery(api.labs.getPendingCount, 
     activeEncounter ? { encounterId: activeEncounter._id } : "skip"
   ) ?? 0;
+
+  const timelineEvents = useQuery(
+    api.encounters.getPatientTimeline,
+    activeEncounter ? { encounterId: activeEncounter._id, patientId } : "skip"
+  );
+  const timelineEventCount = timelineEvents?.length ?? 0;
+  const urgentRecentTimelineCount = timelineEvents?.filter((event) => {
+    const eventTime = event.time ?? 0;
+    const isRecent = eventTime >= nowTs - 60 * 60 * 1000;
+
+    const isStatOrder =
+      event.type === "ORDER" && event.description?.includes("STAT");
+
+    const isCriticalVitals =
+      event.type === "VITALS" &&
+      ((event.description?.match(/HR:\s*(\d+)/)?.[1] !== undefined && Number(event.description?.match(/HR:\s*(\d+)/)?.[1]) >= 120) ||
+        (event.description?.match(/O2:\s*(\d+)%/)?.[1] !== undefined && Number(event.description?.match(/O2:\s*(\d+)%/)?.[1]) <= 93));
+
+    return isRecent && (isStatOrder || isCriticalVitals);
+  }).length ?? 0;
+  const hasUrgentTimelineEvents = urgentRecentTimelineCount > 0;
+  const protocolCount = PROTOCOL_LIBRARY.length;
 
   // --- 3. LOADING & ERROR STATES ---
   if (!patient || !encounters) {
@@ -295,22 +327,21 @@ export default function PatientPage() {
       </header>
 
       {/* WORKSPACE GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
-        {/* PRESENTATION MODE TOGGLE */}
-        <div className="flex justify-end mb-4">
-          <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-2 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <span className={`text-[9px] font-black uppercase tracking-widest ${isDemoMode ? 'text-blue-600' : 'text-slate-400 dark:text-slate-500'}`}>
-              {isDemoMode ? "Presentation Mode: ON" : "Normal Mode"}
-            </span>
-            <button 
-              onClick={toggleDemoMode}
-              className={`relative h-6 w-12 rounded-full transition-colors duration-300 ${isDemoMode ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}
-            >
-              <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform duration-300 ${isDemoMode ? 'translate-x-6' : 'translate-x-0'}`} />
-            </button>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
         <div className="lg:col-span-3 space-y-6">
+          <div className="flex justify-end">
+            <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-2 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <span className={`text-[9px] font-black uppercase tracking-widest ${isDemoMode ? 'text-blue-600' : 'text-slate-400 dark:text-slate-500'}`}>
+                {isDemoMode ? "Presentation Mode: ON" : "Normal Mode"}
+              </span>
+              <button
+                onClick={toggleDemoMode}
+                className={`relative h-6 w-12 rounded-full transition-colors duration-300 ${isDemoMode ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}
+              >
+                <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform duration-300 ${isDemoMode ? 'translate-x-6' : 'translate-x-0'}`} />
+              </button>
+            </div>
+          </div>
           <CommandBar setTab={setActiveTab} />
           
           <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -446,9 +477,17 @@ export default function PatientPage() {
                       <span className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-50 italic">Clinical Decision Support</span>
                     </div>
                     <CardContent className="p-6">
-                      <DiagnosisSuggester encounter={activeEncounter} />
+                      <DiagnosisSuggester
+                        encounter={activeEncounter}
+                        onSelectDiagnosis={setSuggestedTriageOrders}
+                      />
                     </CardContent>
                   </Card>
+                  <OrderEntry
+                    patientId={patientId}
+                    encounterId={activeEncounter._id}
+                    suggestedOrders={suggestedTriageOrders}
+                  />
                 </div>
               </div>
             </TabsContent>
@@ -628,43 +667,82 @@ export default function PatientPage() {
         </div>
 
         {/* SIDEBAR */}
-        <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-8">
-          <div className="p-5 rounded-3xl border bg-white shadow-sm flex items-center justify-between gap-4">
-            <div>
-              <p className="text-[8px] font-black uppercase text-slate-400 mb-1 tracking-tighter">Heart Rate Trend</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-xl font-black tracking-tighter">{activeEncounter.vitals.hr}</span>
-                <span className="text-[9px] font-bold opacity-60 uppercase text-slate-400">BPM</span>
-              </div>
-            </div>
+        <aside className="lg:col-span-1 flex flex-col gap-4 lg:sticky lg:top-8 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto pb-8">
 
-            <VitalsSparkline
-              data={patient?.vitalsHistory ?? []}
-              color={activeEncounter.vitals.hr > 100 ? "#ef4444" : "#3b82f6"}
-            />
-          </div>
-
-          <EKGMonitor bpm={activeEncounter.vitals.hr} isUnstable={isUnstable} />
-          
-          <Card className="border-slate-200 shadow-xl rounded-[2.5rem] overflow-hidden bg-slate-900 text-white">
-            <CardContent className="p-6 space-y-5">
-              <div className="flex items-center justify-between border-b border-slate-700/50 pb-4">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">ER Context</span>
+          {/* Patient Status Card — HR + ER Context merged */}
+          <Card className="border-0 shadow-xl rounded-[2rem] overflow-hidden bg-slate-900 text-white shrink-0">
+            <CardContent className="p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-700/50 pb-3">
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Patient Status</span>
                 <Badge className="bg-emerald-500 text-white border-none text-[8px] font-black">ACTIVE</Badge>
               </div>
-              <div className="flex justify-between">
-                 <div><Label className="text-[9px] font-black uppercase text-slate-500 block">GCS</Label><span className="text-xl font-black">{gcsScore ?? "15"}</span></div>
-                 <div className="text-right"><Label className="text-[9px] font-black uppercase text-slate-500 block">ESI</Label><span className="text-xl font-black text-blue-400">{activeEncounter.acuity}</span></div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[8px] font-black uppercase text-slate-500 mb-0.5 tracking-tighter">Heart Rate</p>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-black tracking-tighter">{activeEncounter.vitals.hr}</span>
+                    <span className="text-[9px] font-bold opacity-60 uppercase text-slate-400">BPM</span>
+                  </div>
+                </div>
+                <VitalsSparkline
+                  data={patient?.vitalsHistory ?? []}
+                  color={activeEncounter.vitals.hr > 100 ? "#ef4444" : "#3b82f6"}
+                />
+              </div>
+              <div className="flex justify-between border-t border-slate-700/40 pt-3">
+                <div><Label className="text-[9px] font-black uppercase text-slate-500 block">GCS</Label><span className="text-xl font-black">{gcsScore ?? "15"}</span></div>
+                <div className="text-right"><Label className="text-[9px] font-black uppercase text-slate-500 block">ESI</Label><span className="text-xl font-black text-blue-400">{activeEncounter.acuity}</span></div>
               </div>
               <div>
                 <Label className="text-[9px] font-black uppercase text-slate-500 block mb-1">Chief Complaint</Label>
-                <p className="text-sm font-bold italic text-slate-200 border-l-2 border-blue-500 pl-3">&quot;{displayedChiefComplaint}&quot;</p>
+                <p className="text-xs font-bold italic text-slate-200 border-l-2 border-blue-500 pl-3">&quot;{displayedChiefComplaint}&quot;</p>
               </div>
             </CardContent>
           </Card>
-          
+
+          <EKGMonitor bpm={activeEncounter.vitals.hr} isUnstable={isUnstable} />
           <PatientCareSidebar patientId={patientId} encounterId={activeEncounter._id} />
-          <PatientTimeline encounterId={activeEncounter._id} />
+          <div className="rounded-3xl border border-slate-100 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <Tabs defaultValue="timeline" className="w-full">
+              <TabsList className="grid w-full grid-cols-2 rounded-2xl bg-slate-100/90 p-1 dark:bg-slate-800/80">
+                <TabsTrigger value="timeline" className="rounded-xl text-[9px] font-black uppercase tracking-widest">
+                  <span className="flex items-center gap-1.5">
+                    Timeline
+                    <span className={`rounded-full px-1.5 py-0.5 text-[8px] font-black text-white ${
+                      hasUrgentTimelineEvents ? "bg-red-500 animate-pulse" : "bg-blue-500"
+                    }`}>
+                      {timelineEventCount}
+                    </span>
+                    {hasUrgentTimelineEvents && (
+                      <span
+                        className="rounded-full bg-red-50 px-1.5 py-0.5 text-[8px] font-black text-red-600 dark:bg-red-900/30 dark:text-red-300"
+                        title="Urgent events in last 60 minutes"
+                        aria-label="Urgent events in last 60 minutes"
+                      >
+                        {urgentRecentTimelineCount}
+                      </span>
+                    )}
+                  </span>
+                </TabsTrigger>
+                <TabsTrigger value="protocols" className="rounded-xl text-[9px] font-black uppercase tracking-widest">
+                  <span className="flex items-center gap-1.5">
+                    Protocols
+                    <span className="rounded-full bg-slate-600 px-1.5 py-0.5 text-[8px] font-black text-white dark:bg-slate-500">
+                      {protocolCount}
+                    </span>
+                  </span>
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="timeline" className="mt-3 max-h-128 overflow-y-auto pr-1">
+                <PatientTimeline encounterId={activeEncounter._id} patientId={patientId} />
+              </TabsContent>
+
+              <TabsContent value="protocols" className="mt-3 max-h-128 overflow-y-auto pr-1">
+                <ProtocolLibrary />
+              </TabsContent>
+            </Tabs>
+          </div>
         </aside>
       </div>
 

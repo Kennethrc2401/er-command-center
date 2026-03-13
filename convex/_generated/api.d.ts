@@ -9,8 +9,10 @@
  */
 
 import type * as analytics from "../analytics.js";
+import type * as audit from "../audit.js";
 import type * as auth from "../auth.js";
 import type * as checklists from "../checklists.js";
+import type * as clinical from "../clinical.js";
 import type * as debug from "../debug.js";
 import type * as education from "../education.js";
 import type * as encounters from "../encounters.js";
@@ -20,10 +22,12 @@ import type * as insurance from "../insurance.js";
 import type * as labs from "../labs.js";
 import type * as medications from "../medications.js";
 import type * as notes from "../notes.js";
+import type * as orders from "../orders.js";
 import type * as patients from "../patients.js";
 import type * as seed from "../seed.js";
 import type * as socialHistory from "../socialHistory.js";
 import type * as triage from "../triage.js";
+import type * as users from "../users.js";
 import type * as verifyInsurance from "../verifyInsurance.js";
 import type * as vitals from "../vitals.js";
 
@@ -35,8 +39,10 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   analytics: typeof analytics;
+  audit: typeof audit;
   auth: typeof auth;
   checklists: typeof checklists;
+  clinical: typeof clinical;
   debug: typeof debug;
   education: typeof education;
   encounters: typeof encounters;
@@ -46,10 +52,12 @@ declare const fullApi: ApiFromModules<{
   labs: typeof labs;
   medications: typeof medications;
   notes: typeof notes;
+  orders: typeof orders;
   patients: typeof patients;
   seed: typeof seed;
   socialHistory: typeof socialHistory;
   triage: typeof triage;
+  users: typeof users;
   verifyInsurance: typeof verifyInsurance;
   vitals: typeof vitals;
 }>;

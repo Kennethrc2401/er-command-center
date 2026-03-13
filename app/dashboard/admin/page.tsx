@@ -6,14 +6,9 @@ import { api } from "@/convex/_generated/api";
 import Link from "next/link";
 
 // UI Components
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { 
-  BarChart3, DollarSign, Users, ShieldCheck, 
-  TrendingUp, ArrowUpRight, Search, FileText, 
-  Activity, PieChart, Lock, Eye
-} from "lucide-react";
+import { ShieldCheck, Activity, Lock, Eye } from "lucide-react";
 
 // Your Custom Components
 import UnitRevenueSummary from "@/components/mgmt/UnitRevenueSummary";
@@ -139,6 +134,7 @@ export default function AdminDashboard() {
           </div>
         </aside>
       </div>
+
     </div>
   );
 }

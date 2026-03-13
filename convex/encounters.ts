@@ -90,12 +90,22 @@ export const createEncounter = mutation({
       status: "triage",
     });
     
-    await ctx.db.insert("auditLogs", {
-      userId: "staff-user-id", 
-      action: "CREATE_ENCOUNTER",
-      resourceId: id,
-      timestamp: Date.now(),
-    });
+    const identity = await ctx.auth.getUserIdentity();
+    if (identity?.email) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", identity.email!.toLowerCase()))
+        .unique();
+      if (user) {
+        await ctx.db.insert("auditLogs", {
+          userId: user._id,
+          userName: user.name,
+          action: "CREATE_ENCOUNTER",
+          patientId: args.patientId,
+          timestamp: Date.now(),
+        });
+      }
+    }
     return id;
   },
 });
@@ -198,8 +208,6 @@ export const updateVitals = mutation({
  */
 export const getERStats = query({
   handler: async (ctx) => {
-    const now = Date.now();
-
     // 1. Get all active patients
     const active = await ctx.db
       .query("encounters")
@@ -237,6 +245,26 @@ export const getERStats = query({
   },
 });
 
+export const getComplaintStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const encounters = await ctx.db.query("encounters").collect();
+    
+    // 📊 Aggregate and Count
+    const counts: Record<string, number> = {};
+    encounters.forEach((e) => {
+      const complaint = e.chiefComplaint || "Unspecified";
+      counts[complaint] = (counts[complaint] || 0) + 1;
+    });
+
+    // 🏆 Sort and format for the chart
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5); // Top 5
+  },
+});
+
 export const getByPatient = query({
   args: { patientId: v.id("patients") },
   handler: async (ctx, args) => {
@@ -245,6 +273,54 @@ export const getByPatient = query({
       .withIndex("by_patient", (q) => q.eq("patientId", args.patientId)) // Ensure you have this index in schema!
       .order("desc")
       .collect();
+  },
+});
+
+export const getPatientTimeline = query({
+  args: { encounterId: v.id("encounters"), patientId: v.id("patients") },
+  handler: async (ctx, args) => {
+    const vitals = await ctx.db
+      .query("vitals")
+      .withIndex("by_encounter", (q) => q.eq("encounterId", args.encounterId))
+      .collect();
+
+    const faxes = await ctx.db
+      .query("faxes")
+      .filter((q) => q.eq(q.field("patientId"), args.patientId))
+      .collect();
+
+    const orders = await ctx.db
+      .query("orders")
+      .withIndex("by_encounter", (q) => q.eq("encounterId", args.encounterId))
+      .collect();
+
+    // 1. Map to a unified structure
+    const rawEvents = [
+      ...vitals.map((v) => ({
+        type: "VITALS",
+        time: v.recordedAt,
+        title: "Vitals Recorded",
+        description: `HR: ${v.hr}, BP: ${v.bp}, O2: ${v.spO2}%`,
+      })),
+      ...faxes.map((f) => ({
+        type: "DOCUMENT",
+        time: f.timestamp,
+        title: "Clinical Document Linked",
+        description: `${f.from}: ${f.subject}`,
+      })),
+      ...orders.map((o) => ({
+        type: "ORDER",
+        time: o.orderedAt,
+        title: `${o.type === "LAB" ? "Lab" : "Imaging"} Order Placed`,
+        description: `${o.testName} — ${o.priority}${o.status !== "PENDING" ? ` (${o.status})` : ""}`,
+      })),
+    ];
+
+    // 2. Filter out any potential undefined timestamps and sort
+    // We use a non-null assertion or check to satisfy the TS compiler
+    return rawEvents
+      .filter((event) => event.time !== undefined)
+      .sort((a, b) => (b.time as number) - (a.time as number));
   },
 });
 
@@ -527,7 +603,7 @@ export const getByPatientWithInsurance = query({
 
 export const runCOBDiscovery = mutation({
   args: { patientId: v.id("patients") },
-  handler: async (ctx, args) => {
+  handler: async () => {
     // This simulates searching a state database for secondary coverage
     const hasSecondary = Math.random() > 0.7; // 30% chance they have secondary
     

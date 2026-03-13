@@ -20,7 +20,7 @@ export default function PatientTimeline({ encounterId }: { encounterId: Id<"enco
   };
 
   return (
-    <div className="relative space-y-8 before:absolute before:inset-0 before:ml-4 before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-slate-200 before:via-slate-200 before:to-transparent">
+    <div className="relative space-y-8 before:absolute before:inset-0 before:ml-4 before:-translate-x-px before:h-full before:w-0.5 before:bg-linear-to-b before:from-slate-200 before:via-slate-200 before:to-transparent">
       {events.map((event, idx) => (
         <div key={idx} className="relative flex items-center justify-between md:justify-start">
           {/* Dot/Icon container */}

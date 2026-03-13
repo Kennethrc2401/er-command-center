@@ -28,10 +28,14 @@ import ClinicalAnalytics from "@/components/ClinicalAnalytics";
 import SimulateShift from "@/components/Training/SimulateShift";
 import ExportReportButton from "@/components/exportReportButton";
 import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
-import { Input } from "@/components/ui/input";
 import { usePrivacyMode } from "@/lib/hooks/usePrivacyMode";
 import TriageHandoffModal from "@/components/handoffs/TriageHandoffModal";
 import VitalsUpdate from "@/components/clinical/VitalsUpdate";
+import ERAnalytics from "@/components/clinical/ERAnalytics";
+import GlobalSearch from "@/components/clinical/GlobalSearch";
+import MorningReport from "@/components/clinical/MorningReport";
+
+const BED_PREFERENCE_KEY = "triage-bed-matrix-compact";
 
 export default function Page() {
   return (
@@ -71,6 +75,10 @@ export default function Page() {
 function ERDashboardContent() {
   const [searchTerm, setSearchTerm] = useState(""); 
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [isCompactBeds, setIsCompactBeds] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(BED_PREFERENCE_KEY) === "1";
+  });
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [selectedTriagePatient, setSelectedTriagePatient] = useState<Doc<"encounters"> | null>(null);
   const [vitalsEncounter, setVitalsEncounter] = useState<Doc<"encounters"> | null>(null);
@@ -86,6 +94,14 @@ function ERDashboardContent() {
   const totalBeds = 20;
   const occupiedBeds = activeEncounters?.filter(e => e.location && e.location.startsWith("Bed")).length ?? 0;
   const availableBeds = totalBeds - occupiedBeds;
+  const bedGridClasses = isCompactBeds
+    ? "grid-cols-[repeat(auto-fit,minmax(112px,1fr))] gap-2 sm:gap-3"
+    : "grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-3 sm:gap-4";
+
+  // Persist user-selected bed density mode.
+  useEffect(() => {
+    window.localStorage.setItem(BED_PREFERENCE_KEY, isCompactBeds ? "1" : "0");
+  }, [isCompactBeds]);
 
   // Sync Timer
   useEffect(() => {
@@ -271,19 +287,34 @@ function ERDashboardContent() {
           </div>
         </section>
 
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-8 items-start">
+        {/* Main Content: Bed Matrix + Triage Queue */}
+        <div className="space-y-8">
         {/* 4. INTERACTIVE FLOOR PLAN */}
-        <section className="rounded-[2.5rem] border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/50 dark:border-slate-800 dark:bg-slate-900 dark:shadow-slate-950/40">
-          <div className="flex items-center justify-between mb-8">
+        <section className="rounded-[2.5rem] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/50 dark:border-slate-800 dark:bg-slate-900 dark:shadow-slate-950/40 sm:p-6">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 sm:mb-8">
             <div className="flex items-center gap-2">
               <BedDouble className="h-5 w-5 text-blue-600" />
               <h2 className="text-sm font-black uppercase tracking-widest text-slate-800 dark:text-slate-100">Real-Time Bed Matrix</h2>
             </div>
-            <button onClick={() => confirm("Execute Shift Reset?") && clearBeds()} className="flex items-center gap-2 rounded-lg p-2 text-[10px] font-black uppercase text-red-500 transition-all hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/40">
-              <Trash2 className="h-3.5 w-3.5" /> Shift Reset
-            </button>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <button
+                onClick={() => setIsCompactBeds((prev) => !prev)}
+                className={`rounded-lg border px-2.5 py-2 text-[9px] font-black uppercase tracking-widest transition-all sm:text-[10px] ${
+                  isCompactBeds
+                    ? "border-blue-600 bg-blue-600 text-white"
+                    : "border-slate-200 text-slate-600 hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:text-slate-300 dark:hover:border-blue-500/60 dark:hover:bg-blue-950/20"
+                }`}
+              >
+                {isCompactBeds ? "Dense View" : "Readable View"}
+              </button>
+              <button onClick={() => confirm("Execute Shift Reset?") && clearBeds()} className="flex items-center gap-2 rounded-lg p-2 text-[9px] font-black uppercase text-red-500 transition-all hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/40 sm:text-[10px]">
+                <Trash2 className="h-3.5 w-3.5" /> Shift Reset
+              </button>
+            </div>
           </div>
           
-          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-10 gap-4">
+          <div className={`grid ${bedGridClasses}`}>
             {Array.from({ length: 20 }).map((_, i) => {
               const bedId = `Bed ${i + 1}`;
               const occupant = activeEncounters?.find(e => e.location === bedId);
@@ -296,14 +327,16 @@ function ERDashboardContent() {
                     const p = activeEncounters?.find(e => e.patientName.toLowerCase().includes(name?.toLowerCase() || ""));
                     if (p) assignBed({ encounterId: p._id, location: bedId });
                   }
-                }} className={`relative h-24 rounded-2xl border-2 transition-all cursor-pointer flex flex-col items-center justify-center p-3 ${
+                }} className={`relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 transition-all ${
+                  isCompactBeds ? "min-h-24 p-2.5 pt-5" : "min-h-28 p-3 pt-6"
+                } ${
                   occupant ? "border-blue-600 bg-blue-50/30 shadow-md ring-2 ring-blue-500/10 dark:bg-blue-950/30 dark:ring-blue-400/20" : "border-dashed border-slate-200 hover:border-blue-300 hover:bg-blue-50/20 dark:border-slate-700 dark:hover:border-blue-500/60 dark:hover:bg-blue-950/20"
                 }`}>
-                  <span className="absolute top-2 left-3 text-[9px] font-black uppercase tracking-tighter text-slate-400 dark:text-slate-500">{bedId}</span>
+                  <span className={`absolute left-3 whitespace-nowrap font-black uppercase tracking-tighter text-slate-400 dark:text-slate-500 ${isCompactBeds ? "top-1.5 text-[8px]" : "top-2 text-[9px]"}`}>{bedId}</span>
                   {occupant ? (
-                    <div className="flex flex-col items-center gap-1.5 text-center">
+                    <div className={`flex w-full min-w-0 flex-col items-center text-center ${isCompactBeds ? "gap-1" : "gap-1.5"}`}>
                       <div
-                        className={`w-full truncate text-[11px] font-black uppercase leading-tight transition-all duration-300 ${
+                        className={`w-full min-w-0 truncate font-black uppercase leading-tight transition-all duration-300 ${isCompactBeds ? "text-[9px] sm:text-[10px]" : "text-[10px] sm:text-[11px]"} ${
                           isPrivate ? "text-slate-500 dark:text-slate-400" : "text-blue-900 dark:text-blue-200"
                         }`}
                       >
@@ -313,10 +346,10 @@ function ERDashboardContent() {
                             ? formatPatientName(occupant.patientName)
                             : occupant.patientName}
                       </div>
-                      <div className="text-[9px] text-slate-400 font-mono">
+                      <div className={`w-full min-w-0 truncate text-center font-mono text-slate-400 ${isCompactBeds ? "text-[8px]" : "text-[9px]"}`}>
                         MRN: {isPrivate ? "HIDDEN" : isDemoMode ? "• • • • •" : occupant.mrn}
                       </div>
-                      <Badge className={`text-[8px] font-black h-4 px-1 ${occupant.acuity === 1 ? 'bg-red-600 animate-pulse' : 'bg-blue-600'}`}>ESI {occupant.acuity}</Badge>
+                      <Badge className={`font-black ${isCompactBeds ? "h-3.5 px-1 text-[7px]" : "h-4 px-1 text-[8px]"} ${occupant.acuity === 1 ? 'bg-red-600 animate-pulse' : 'bg-blue-600'}`}>ESI {occupant.acuity}</Badge>
                     </div>
                   ) : <div className="h-2 w-2 rounded-full bg-slate-200 dark:bg-slate-700" />}
                 </div>
@@ -337,14 +370,11 @@ function ERDashboardContent() {
               </Badge>
             </div>
 
-            {/* Search bar for filtering encounters */}
-            {/* Additional filter options can be added here */}
             <div className="mt-4">
-              <Input 
-                placeholder="Search by patient name or MRN..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full rounded-full border-slate-200 bg-slate-100 px-4 py-2 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 md:w-1/2 lg:w-1/3"
+              <GlobalSearch
+                onQueryChange={setSearchTerm}
+                placeholder="Search by patient name, MRN, or order..."
+                className="max-w-none mx-0 md:w-2/3 lg:w-1/2"
               />
             </div>
           </CardHeader>
@@ -485,6 +515,14 @@ function ERDashboardContent() {
             </Table>
           </CardContent>
         </Card>
+        </div>{/* end left column */}
+
+        {/* ER Pulse Sidebar */}
+        <div className="space-y-6 xl:sticky xl:top-28">
+          <MorningReport />
+          <ERAnalytics />
+        </div>
+        </div>{/* end sidebar grid */}
 
         {vitalsEncounter && (
           <VitalsUpdate

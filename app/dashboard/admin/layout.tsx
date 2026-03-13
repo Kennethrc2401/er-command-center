@@ -6,10 +6,10 @@ import {
   LayoutDashboard, 
   ShieldCheck, 
   History, 
-  Settings, 
   ArrowLeft,
   BarChart4,
-  BriefcaseMedical
+  Users2,
+  ScrollText
 } from "lucide-react";
 import ShiftHandoffModal from "@/components/mgmt/ShiftHandoffModal";
 
@@ -18,7 +18,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const navItems = [
     { name: "Command Center", href: "/dashboard/admin", icon: LayoutDashboard },
+    { name: "Staff Management", href: "/dashboard/admin/staff", icon: Users2 },
     { name: "Identity Audit", href: "/dashboard/admin/audit", icon: ShieldCheck },
+    { name: "Security Audit", href: "/dashboard/admin/security", icon: ScrollText },
     { name: "Revenue Reports", href: "/dashboard/admin/revenue", icon: BarChart4 },
     { name: "Unit History", href: "/dashboard/admin/history", icon: History },
   ];
