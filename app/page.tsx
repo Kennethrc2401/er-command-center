@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { SignInButton, useAuth, useUser } from "@clerk/nextjs";
+import { SignInButton } from "@clerk/nextjs";
 import { 
   Monitor, 
   ShieldCheck, 
@@ -13,22 +13,14 @@ import {
   Loader2,
 } from "lucide-react";
 import Link from "next/link";
-import { useStaffSession } from "@/lib/hooks/useStaffSession";
+import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
 
 export default function LandingPage() {
-  const { isSignedIn } = useAuth();
-  const { user } = useUser();
-  const staffSession = useStaffSession();
+  const { actorName, isAdmin, isAuthenticated, isResolvingAuth } = useResolvedActor();
 
-  const isAuthenticated = Boolean(isSignedIn || staffSession.authenticated);
-  const isAdmin = isSignedIn
-    ? user?.publicMetadata?.role === "admin"
-    : staffSession.user?.role === "ADMIN";
-  const displayName = isSignedIn
-    ? user?.firstName || "Staff"
-    : staffSession.user?.name?.split(" ")[0] || "Staff";
+  const displayName = actorName.split(" ")[0] || "Staff";
 
-  if (!isSignedIn && staffSession.loading) {
+  if (isResolvingAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
         <div className="inline-flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-800 px-6 py-4 text-xs font-black uppercase tracking-[0.2em]">
@@ -41,7 +33,7 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      {isAuthenticated ? <PortalDashboard displayName={displayName} isAdmin={Boolean(isAdmin)} /> : <PublicLanding />}
+      {isAuthenticated ? <PortalDashboard displayName={displayName} isAdmin={isAdmin} /> : <PublicLanding />}
     </div>
   );
 }

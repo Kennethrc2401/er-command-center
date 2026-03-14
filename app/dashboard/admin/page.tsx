@@ -8,7 +8,7 @@ import Link from "next/link";
 // UI Components
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ShieldCheck, Activity, Lock, Eye } from "lucide-react";
+import { ShieldCheck, Activity, Lock, Eye, FolderCog } from "lucide-react";
 
 // Your Custom Components
 import UnitRevenueSummary from "@/components/mgmt/UnitRevenueSummary";
@@ -136,6 +136,13 @@ export default function AdminDashboard() {
               <Button className="group w-full gap-3 rounded-2xl border border-slate-200 bg-white py-7 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800">
                 <ShieldCheck className="h-4 w-4 text-emerald-600 group-hover:scale-110 transition-transform" />
                 Identity Audit Log (Full Unit)
+              </Button>
+            </Link>
+
+            <Link href="/dashboard/admin/documents" className="w-full">
+              <Button className="group w-full gap-3 rounded-2xl border border-slate-200 bg-white py-7 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800">
+                <FolderCog className="h-4 w-4 text-indigo-600 group-hover:scale-110 transition-transform" />
+                Document Retention Policy
               </Button>
             </Link>
 

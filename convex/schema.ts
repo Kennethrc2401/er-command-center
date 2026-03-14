@@ -18,6 +18,17 @@ export default defineSchema({
     medicalHistory: v.optional(v.array(v.string())),
     socialHistory: v.optional(v.string()),
     familyHistory: v.optional(v.string()),
+    phoneNumber: v.optional(v.string()),
+    emailAddress: v.optional(v.string()),
+    preferredLanguage: v.optional(v.string()),
+    addressLine1: v.optional(v.string()),
+    addressLine2: v.optional(v.string()),
+    city: v.optional(v.string()),
+    state: v.optional(v.string()),
+    postalCode: v.optional(v.string()),
+    emergencyContactName: v.optional(v.string()),
+    emergencyContactPhone: v.optional(v.string()),
+    emergencyContactRelation: v.optional(v.string()),
     // 🩺 Current Snapshot (The latest data)
     vitals: v.optional(
       v.object({
@@ -350,4 +361,107 @@ export default defineSchema({
     })
     .index("by_encounter", ["encounterId"])
     .index("by_status", ["status"]),
+    chartDocuments: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      category: v.union(
+        v.literal("LAB_RESULT"),
+        v.literal("EXTERNAL_RESULT"),
+        v.literal("RADIOLOGY_IMAGE"),
+        v.literal("LETTER"),
+        v.literal("BILLING"),
+        v.literal("MISC")
+      ),
+      fileName: v.string(),
+      title: v.optional(v.string()),
+      notes: v.optional(v.string()),
+      contentType: v.string(),
+      sizeBytes: v.number(),
+      storageId: v.id("_storage"),
+      uploadedBy: v.string(),
+      uploadedByRole: v.union(
+        v.literal("ADMIN"),
+        v.literal("DOCTOR"),
+        v.literal("NURSE"),
+        v.literal("CCMA"),
+        v.literal("UNKNOWN")
+      ),
+      uploadedAt: v.number(),
+      retentionPolicyDays: v.optional(v.number()),
+      expiresAt: v.optional(v.number()),
+      isArchived: v.optional(v.boolean()),
+      archivedAt: v.optional(v.number()),
+      archivedReason: v.optional(v.string()),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_patient", ["patientId"])
+      .index("by_encounter_category", ["encounterId", "category"]),
+    chartDocumentAuditLogs: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      documentId: v.optional(v.id("chartDocuments")),
+      action: v.union(
+        v.literal("UPLOAD"),
+        v.literal("VIEW"),
+        v.literal("DOWNLOAD"),
+        v.literal("DELETE"),
+        v.literal("RETENTION_ARCHIVE"),
+        v.literal("HARD_DELETE"),
+        v.literal("ACCESS_DENIED")
+      ),
+      actorName: v.string(),
+      actorRole: v.union(
+        v.literal("ADMIN"),
+        v.literal("DOCTOR"),
+        v.literal("NURSE"),
+        v.literal("CCMA"),
+        v.literal("UNKNOWN")
+      ),
+      fileName: v.optional(v.string()),
+      category: v.optional(v.union(
+        v.literal("LAB_RESULT"),
+        v.literal("EXTERNAL_RESULT"),
+        v.literal("RADIOLOGY_IMAGE"),
+        v.literal("LETTER"),
+        v.literal("BILLING"),
+        v.literal("MISC")
+      )),
+      note: v.optional(v.string()),
+      timestamp: v.number(),
+    })
+      .index("by_encounter_timestamp", ["encounterId", "timestamp"])
+      .index("by_document", ["documentId"]),
+    chartDocumentSettings: defineTable({
+      singletonKey: v.literal("default"),
+      miscRetentionDays: v.number(),
+      miscArchivePurgeGraceDays: v.number(),
+      retentionDaysByCategory: v.optional(v.object({
+        LAB_RESULT: v.number(),
+        EXTERNAL_RESULT: v.number(),
+        RADIOLOGY_IMAGE: v.number(),
+        LETTER: v.number(),
+        BILLING: v.number(),
+        MISC: v.number(),
+      })),
+      purgeGraceDaysByCategory: v.optional(v.object({
+        LAB_RESULT: v.number(),
+        EXTERNAL_RESULT: v.number(),
+        RADIOLOGY_IMAGE: v.number(),
+        LETTER: v.number(),
+        BILLING: v.number(),
+        MISC: v.number(),
+      })),
+      sweepIntervalHours: v.number(),
+      lastGlobalSweepAt: v.optional(v.number()),
+      updatedAt: v.number(),
+      updatedBy: v.optional(v.string()),
+      updatedByRole: v.optional(v.union(
+        v.literal("ADMIN"),
+        v.literal("DOCTOR"),
+        v.literal("NURSE"),
+        v.literal("CCMA"),
+        v.literal("UNKNOWN")
+      )),
+    })
+      .index("by_singleton_key", ["singletonKey"]),
   })

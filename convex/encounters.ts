@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { normalizePatientContactFields } from "./patientNormalization";
 
 /**
  * Shared Vitals Validator to ensure strict data integrity.
@@ -39,11 +40,36 @@ export const admitPatient = mutation({
     mrn: v.string(),
     dob: v.string(),
     gender: v.optional(v.string()), 
+    phoneNumber: v.optional(v.string()),
+    emailAddress: v.optional(v.string()),
+    preferredLanguage: v.optional(v.string()),
+    addressLine1: v.optional(v.string()),
+    addressLine2: v.optional(v.string()),
+    city: v.optional(v.string()),
+    state: v.optional(v.string()),
+    postalCode: v.optional(v.string()),
+    emergencyContactName: v.optional(v.string()),
+    emergencyContactPhone: v.optional(v.string()),
+    emergencyContactRelation: v.optional(v.string()),
     chiefComplaint: v.string(),
     acuity: v.number(),
     vitals: vitalsValidator,
   },
   handler: async (ctx, args) => {
+    const normalizedContact = normalizePatientContactFields({
+      phoneNumber: args.phoneNumber,
+      emailAddress: args.emailAddress,
+      preferredLanguage: args.preferredLanguage,
+      addressLine1: args.addressLine1,
+      addressLine2: args.addressLine2,
+      city: args.city,
+      state: args.state,
+      postalCode: args.postalCode,
+      emergencyContactName: args.emergencyContactName,
+      emergencyContactPhone: args.emergencyContactPhone,
+      emergencyContactRelation: args.emergencyContactRelation,
+    });
+
     // 1. Create the Patient Record
     const patientId = await ctx.db.insert("patients", {
       name: args.name,
@@ -53,6 +79,7 @@ export const admitPatient = mutation({
       allergies: [], // Initializing with empty array
       codeStatus: "Full Code", // Default code status
       searchVector: `${args.name} ${args.mrn}`, // Combine name and MRN for full-text search
+      ...normalizedContact,
     });
 
     // 2. Create the ER Encounter
@@ -333,6 +360,21 @@ export const getPatientTimeline = query({
       .withIndex("by_encounter", (q) => q.eq("encounterId", args.encounterId))
       .collect();
 
+    const clinicalNotes = await ctx.db
+      .query("clinicalNotes")
+      .withIndex("by_encounter", (q) => q.eq("encounterId", args.encounterId))
+      .collect();
+
+    const quickNotes = await ctx.db
+      .query("notes")
+      .withIndex("by_encounter", (q) => q.eq("encounterId", args.encounterId))
+      .collect();
+
+    const documentAuditLogs = await ctx.db
+      .query("chartDocumentAuditLogs")
+      .withIndex("by_encounter_timestamp", (q) => q.eq("encounterId", args.encounterId))
+      .collect();
+
     // 1. Map to a unified structure
     const rawEvents = [
       ...vitals.map((v) => ({
@@ -340,18 +382,45 @@ export const getPatientTimeline = query({
         time: v.recordedAt,
         title: "Vitals Recorded",
         description: `HR: ${v.hr}, BP: ${v.bp}, O2: ${v.spO2}%`,
+        priority: v.spO2 <= 92 || v.hr >= 120 ? "critical" : "normal",
       })),
       ...faxes.map((f) => ({
         type: "DOCUMENT",
         time: f.timestamp,
         title: "Clinical Document Linked",
-        description: `${f.from}: ${f.subject}`,
+        description: `${f.from ?? "External Source"}: ${f.subject ?? "Document received"}`,
+        priority: "normal",
       })),
       ...orders.map((o) => ({
         type: "ORDER",
         time: o.orderedAt,
         title: `${o.type === "LAB" ? "Lab" : "Imaging"} Order Placed`,
         description: `${o.testName} — ${o.priority}${o.status !== "PENDING" ? ` (${o.status})` : ""}`,
+        priority: o.priority === "STAT" ? "attention" : "normal",
+      })),
+      ...clinicalNotes.map((note) => ({
+        type: "NOTE",
+        time: note.signedAt,
+        title: `${note.type} Signed`,
+        description: `${note.authorName} documented ${note.type.toLowerCase()} details.`,
+        actor: note.authorName,
+        priority: "normal",
+      })),
+      ...quickNotes.map((note) => ({
+        type: "NOTE",
+        time: note._creationTime,
+        title: `${note.category} Note Logged`,
+        description: `${note.author}: ${note.content.slice(0, 120)}${note.content.length > 120 ? "..." : ""}`,
+        actor: note.author,
+        priority: note.isTemplate ? "attention" : "normal",
+      })),
+      ...documentAuditLogs.map((log) => ({
+        type: "AUDIT",
+        time: log.timestamp,
+        title: `Document ${log.action}`,
+        description: `${log.actorName} (${log.actorRole})${log.fileName ? ` • ${log.fileName}` : ""}${log.note ? ` • ${log.note}` : ""}`,
+        actor: log.actorName,
+        priority: log.action === "ACCESS_DENIED" || log.action === "DELETE" || log.action === "HARD_DELETE" ? "critical" : "attention",
       })),
     ];
 

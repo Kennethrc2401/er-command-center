@@ -20,7 +20,8 @@ import {
   Info,
   Search,
   ArrowLeftRight,
-  Zap
+  Zap,
+  FolderOpen
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -56,6 +57,7 @@ import IdentityVerificationModal from "@/components/insurance/identification/Ide
 import { toast } from "sonner";
 import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
 import { useStaffSession } from "@/lib/hooks/useStaffSession";
+import { normalizeActorRole } from "@/lib/auth/roles";
 import VitalsUpdate from "@/components/clinical/VitalsUpdate";
 import VitalsSparkline from "@/components/clinical/VitalsSparkline";
 import SBARGenerator from "@/components/clinical/SBARGenerator";
@@ -69,6 +71,8 @@ import RiskBadge from "@/components/clinical/RiskBadge";
 import AmbientScribe from "@/components/clinical/AmbientScribe";
 import TeleConsult from "@/components/appts/TeleConsult";
 import SignaturePad from "@/components/clinical/SignaturePad";
+import ChartDocumentsPanel from "@/components/clinical/ChartDocumentsPanel";
+import PatientInfoTab from "@/components/patient/PatientInfoTab";
 
 // DYNAMIC IMPORT: DischargeInlineComponent
 const DischargeInlineComponent = dynamic(
@@ -121,6 +125,16 @@ export default function PatientPage() {
   const signedInStaff = useQuery(
     api.users.getByEmail,
     staffEmail ? { email: staffEmail } : "skip"
+  );
+  const actorName =
+    signedInStaff?.name ||
+    staffSession.user?.name ||
+    user?.fullName ||
+    staffEmail ||
+    "Clinical Staff";
+  const actorRole = normalizeActorRole(
+    signedInStaff?.role ||
+    staffSession.user?.role
   );
   const teleConsultUserId =
     signedInStaff?._id ??
@@ -397,19 +411,21 @@ export default function PatientPage() {
           <CommandBar setTab={setActiveTab} />
           
           <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid h-auto group-data-[orientation=horizontal]/tabs:h-auto w-full grid-cols-5 gap-1 rounded-[2rem] border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-700 dark:bg-slate-900/80 lg:grid-cols-10">
+            <TabsList className="grid h-auto group-data-[orientation=horizontal]/tabs:h-auto w-full grid-cols-4 gap-1 rounded-[2rem] border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-700 dark:bg-slate-900/80 sm:grid-cols-6 lg:grid-cols-7">
               {[
                 { value: "vitals", icon: Activity, label: "Vitals", badge: 0 },
+                { value: "info", icon: Info, label: "Info", badge: 0 },
                 { value: "triage", icon: ClipboardCheck, label: "Triage", badge: 0 },
                 { value: "labs", icon: Beaker, label: "Labs", badge: pendingLabsCount },
                 { value: "imaging", icon: Scan, label: "Imaging", badge: 0 },
                 { value: "mar", icon: Pill, label: "MAR", badge: 0 },
                 { value: "notes", icon: FileText, label: "Notes", badge: 0 },
+                { value: "documents", icon: FolderOpen, label: "Documents", badge: 0 },
                 { value: "billing", icon: FileStack, label: "Billing", badge: 0 },
                 { value: "signature", icon: PenTool, label: "Signature", badge: 0 },
                 { value: "discharge", icon: Home, label: "Discharge", badge: 0 },
                 { value: "handoff", icon: ArrowLeftRight, label: "Handoff", badge: 0 },
-                              { value: "ekg",     icon: Zap,            label: "EKG",     badge: 0 },
+                { value: "ekg", icon: Zap, label: "EKG", badge: 0 },
               ].map((tab) => (
                 <TabsTrigger
                   key={tab.value}
@@ -437,6 +453,10 @@ export default function PatientPage() {
               ))}
             </TabsList>
 
+            <TabsContent value="info" className="space-y-6 animate-in fade-in-50 pt-4 outline-none">
+              <PatientInfoTab patientId={patientId} patient={patient} />
+            </TabsContent>
+
             {/* VITALS & ADMINISTRATIVE TAB */}
            <TabsContent value="vitals" className="space-y-6 animate-in fade-in-50 pt-4 outline-none">
             {/* TOP ROW: CLINICAL CORE */}
@@ -445,7 +465,7 @@ export default function PatientPage() {
                 <VitalSignsForm encounterId={activeEncounter._id} />
               </div>
               <div className="xl:col-span-2">
-                <VitalsTrend encounterId={activeEncounter._id} />
+                <VitalsTrend encounterId={activeEncounter._id} actorName={actorName} actorRole={actorRole} />
               </div>
             </div>
 
@@ -692,6 +712,25 @@ export default function PatientPage() {
                   </div>
                 <div className="lg:col-span-1"><SBARHandoff patient={{ ...patient, name: formatPatientName(patient.name), mrn: maskedMrn, dob: isDemoMode ? "" : patient.dob, allergies: isDemoMode ? [] : patient.allergies }} encounter={{ ...activeEncounter, chiefComplaint: displayedChiefComplaint }} gcs={gcsScore} criticalLabs={criticalLabs || []} /></div>
                </div>
+            </TabsContent>
+
+            <TabsContent value="documents" className="pt-4 space-y-6 animate-in fade-in-50">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-[10px] font-black uppercase italic tracking-[0.2em] text-slate-500 dark:text-slate-300">
+                    Chart Files and Outside Records
+                  </h3>
+                  <Badge variant="outline" className="text-[8px] font-black uppercase tracking-wide border-slate-200">
+                    Documents Hub
+                  </Badge>
+                </div>
+                <ChartDocumentsPanel
+                  encounterId={activeEncounter._id}
+                  patientId={patientId}
+                  uploadedBy={actorName}
+                  actorRole={actorRole}
+                />
+              </div>
             </TabsContent>
 
               <TabsContent value="billing" className="space-y-6 animate-in fade-in-50 pt-4">
@@ -943,7 +982,11 @@ export default function PatientPage() {
           </Card>
 
           <EKGMonitor bpm={activeEncounter.vitals.hr} isUnstable={isUnstable} />
-          <PatientCareSidebar patientId={patientId} encounterId={activeEncounter._id} />
+          <PatientCareSidebar
+            patientId={patientId}
+            encounterId={activeEncounter._id}
+            onOpenPatientInfo={() => setActiveTab("info")}
+          />
         </aside>
       </div>
 

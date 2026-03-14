@@ -22,6 +22,8 @@ import { LucideIcon } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import { usePrivacyMode } from "@/lib/hooks/usePrivacyMode";
 import NotificationBell from "@/components/clinical/NotificationBell";
+import { normalizeStaffRole } from "@/lib/auth/roles";
+import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
 
 interface NavLinkProps {
   href: string;
@@ -34,6 +36,7 @@ interface NavLinkProps {
 export default function Navbar() {
   const pathname = usePathname();
   const { user } = useUser();
+  const { isAdmin } = useResolvedActor();
   const primaryEmail = user?.primaryEmailAddress?.emailAddress;
   const ensureUserProfile = useMutation(api.users.ensureUserProfile);
   const provisionAttemptedRef = useRef(false);
@@ -41,7 +44,6 @@ export default function Navbar() {
     api.users.getByEmail,
     primaryEmail ? { email: primaryEmail } : "skip"
   );
-  const isAdmin = user?.publicMetadata?.role === "admin";
   const { isPrivate, togglePrivacy } = usePrivacyMode();
 
   useEffect(() => {
@@ -51,14 +53,7 @@ export default function Navbar() {
 
     provisionAttemptedRef.current = true;
 
-    const rawRole = typeof user.publicMetadata?.role === "string" ? user.publicMetadata.role.toUpperCase() : "";
-    const role =
-      rawRole === "ADMIN" ||
-      rawRole === "DOCTOR" ||
-      rawRole === "NURSE" ||
-      rawRole === "CCMA"
-        ? rawRole
-        : "NURSE";
+    const role = normalizeStaffRole(user.publicMetadata?.role, "NURSE");
 
     void ensureUserProfile({
       email: primaryEmail,

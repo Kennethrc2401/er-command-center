@@ -15,11 +15,33 @@ interface NewPatientModalProps {
   trigger?: React.ReactNode;
 }
 
+function formatPhoneInput(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 10);
+
+  if (digits.length < 4) return digits;
+  if (digits.length < 7) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+function formatPostalInput(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 9);
+  if (digits.length <= 5) return digits;
+  return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+}
+
+function normalizeStateInput(value: string) {
+  return value.replace(/[^a-z]/gi, "").toUpperCase().slice(0, 2);
+}
+
 export default function NewPatientModal({ trigger }: NewPatientModalProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, setIsPending] = useState(false);
   const admit = useMutation(api.encounters.admitPatient);
   const [complaint, setComplaint] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [postalCode, setPostalCode] = useState("");
+  const [stateCode, setStateCode] = useState("");
+  const [emergencyContactPhone, setEmergencyContactPhone] = useState("");
 
   const COMMON_COMPLAINTS = ["Chest Pain", "SOB", "Abdominal Pain", "Fall/Injury", "Fever"];
 
@@ -35,6 +57,17 @@ export default function NewPatientModal({ trigger }: NewPatientModalProps) {
         mrn: `MRN-${Math.floor(1000 + Math.random() * 9000)}`, 
         dob: formData.get("dob") as string,
         gender: formData.get("gender") as string,
+        phoneNumber: phoneNumber.trim() || undefined,
+        emailAddress: (formData.get("emailAddress") as string)?.trim() || undefined,
+        preferredLanguage: (formData.get("preferredLanguage") as string)?.trim() || undefined,
+        addressLine1: (formData.get("addressLine1") as string)?.trim() || undefined,
+        addressLine2: (formData.get("addressLine2") as string)?.trim() || undefined,
+        city: (formData.get("city") as string)?.trim() || undefined,
+        state: stateCode || undefined,
+        postalCode: postalCode || undefined,
+        emergencyContactName: (formData.get("emergencyContactName") as string)?.trim() || undefined,
+        emergencyContactPhone: emergencyContactPhone.trim() || undefined,
+        emergencyContactRelation: (formData.get("emergencyContactRelation") as string)?.trim() || undefined,
         chiefComplaint: complaint, // Use state-controlled complaint
         acuity: Number(formData.get("acuity")),
         // CAPTURING INITIAL VITALS
@@ -48,6 +81,10 @@ export default function NewPatientModal({ trigger }: NewPatientModalProps) {
       
       toast.success("Patient admitted with baseline vitals.");
       setComplaint(""); // Reset local state
+      setPhoneNumber("");
+      setPostalCode("");
+      setStateCode("");
+      setEmergencyContactPhone("");
       setIsOpen(false);
     } catch (error) {
       console.error("Admissions error:", error);
@@ -67,7 +104,7 @@ export default function NewPatientModal({ trigger }: NewPatientModalProps) {
         )}
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-125">
+      <DialogContent className="sm:max-w-125 max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl font-bold">ER Intake & Triage</DialogTitle>
         </DialogHeader>
@@ -100,6 +137,98 @@ export default function NewPatientModal({ trigger }: NewPatientModalProps) {
                 <option value="Other" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">Other</option>
                 <option value="Unknown" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">Unknown</option>
               </select>
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/50">
+            <Label className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300">
+              Optional Contact And Demographics
+            </Label>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="phoneNumber">Phone Number</Label>
+                <Input
+                  id="phoneNumber"
+                  name="phoneNumber"
+                  placeholder="(555) 123-4567"
+                  value={phoneNumber}
+                  onChange={(event) => setPhoneNumber(formatPhoneInput(event.target.value))}
+                  disabled={isPending}
+                  inputMode="tel"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="emailAddress">Email</Label>
+                <Input id="emailAddress" name="emailAddress" type="email" placeholder="name@example.com" disabled={isPending} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="preferredLanguage">Preferred Language</Label>
+                <Input id="preferredLanguage" name="preferredLanguage" placeholder="English" disabled={isPending} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="addressLine1">Address Line 1</Label>
+                <Input id="addressLine1" name="addressLine1" placeholder="123 Main St" disabled={isPending} />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <Label htmlFor="addressLine2">Address Line 2</Label>
+                <Input id="addressLine2" name="addressLine2" placeholder="Apt, suite, unit (optional)" disabled={isPending} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="city">City</Label>
+                <Input id="city" name="city" placeholder="Seattle" disabled={isPending} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="state">State</Label>
+                <Input
+                  id="state"
+                  name="state"
+                  placeholder="WA"
+                  value={stateCode}
+                  onChange={(event) => setStateCode(normalizeStateInput(event.target.value))}
+                  disabled={isPending}
+                  maxLength={2}
+                />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <Label htmlFor="postalCode">Postal Code</Label>
+                <Input
+                  id="postalCode"
+                  name="postalCode"
+                  placeholder="98101"
+                  value={postalCode}
+                  onChange={(event) => setPostalCode(formatPostalInput(event.target.value))}
+                  disabled={isPending}
+                  inputMode="numeric"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/50">
+            <Label className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300">
+              Optional Emergency Contact
+            </Label>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="space-y-1">
+                <Label htmlFor="emergencyContactName">Name</Label>
+                <Input id="emergencyContactName" name="emergencyContactName" placeholder="Jane Doe" disabled={isPending} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="emergencyContactPhone">Phone</Label>
+                <Input
+                  id="emergencyContactPhone"
+                  name="emergencyContactPhone"
+                  placeholder="(555) 123-4567"
+                  value={emergencyContactPhone}
+                  onChange={(event) => setEmergencyContactPhone(formatPhoneInput(event.target.value))}
+                  disabled={isPending}
+                  inputMode="tel"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="emergencyContactRelation">Relationship</Label>
+                <Input id="emergencyContactRelation" name="emergencyContactRelation" placeholder="Spouse" disabled={isPending} />
+              </div>
             </div>
           </div>
 

@@ -393,14 +393,14 @@ export default function EKGMonitor({ bpm, isUnstable = false }: EKGProps) {
       </div>
 
       {/* ── Analytics strip ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-4 sm:grid-cols-8 divide-x divide-slate-800/80 border-t border-slate-800 bg-slate-900">
+      <div className="grid grid-cols-4 lg:grid-cols-8 divide-x divide-slate-800/80 border-t border-slate-800 bg-slate-900">
         {stats.map(({ label, value, unit, warn }) => (
-          <div key={label} className="flex flex-col items-center py-2 px-1 gap-0.5">
-            <span className="text-[8px] font-bold uppercase tracking-widest text-slate-600">{label}</span>
-            <span className={`text-sm font-black tabular-nums leading-tight ${warn ? "text-red-400" : "text-slate-200"}`}>
+          <div key={label} className="flex min-h-15 flex-col items-center justify-center px-1.5 py-2 gap-0.5 overflow-visible">
+            <span className="text-[8px] font-bold uppercase tracking-widest text-slate-600 leading-normal whitespace-nowrap">{label}</span>
+            <span className={`text-sm font-black tabular-nums leading-normal whitespace-nowrap ${warn ? "text-red-400" : "text-slate-200"}`}>
               {value}
             </span>
-            <span className="text-[8px] text-slate-600 leading-tight">{unit}</span>
+            <span className="text-[8px] text-slate-600 leading-normal whitespace-nowrap">{unit}</span>
           </div>
         ))}
       </div>

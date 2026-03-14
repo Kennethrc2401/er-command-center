@@ -9,7 +9,8 @@ import {
   ArrowLeft,
   BarChart4,
   Users2,
-  ScrollText
+  ScrollText,
+  FolderCog
 } from "lucide-react";
 import ShiftHandoffModal from "@/components/mgmt/ShiftHandoffModal";
 
@@ -21,6 +22,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { name: "Staff Management", href: "/dashboard/admin/staff", icon: Users2 },
     { name: "Identity Audit", href: "/dashboard/admin/audit", icon: ShieldCheck },
     { name: "Security Audit", href: "/dashboard/admin/security", icon: ScrollText },
+    { name: "Documents Policy", href: "/dashboard/admin/documents", icon: FolderCog },
     { name: "Revenue Reports", href: "/dashboard/admin/revenue", icon: BarChart4 },
     { name: "Unit History", href: "/dashboard/admin/history", icon: History },
   ];

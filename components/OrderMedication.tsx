@@ -66,16 +66,21 @@ export default function OrderMedication({ encounterId, patientId, patientAllergi
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="gap-2 border-blue-200 text-blue-700 hover:bg-blue-50 transition-all">
+        <Button
+          variant="outline"
+          className="gap-2 border-blue-200 text-blue-700 hover:bg-blue-50 transition-all dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-200 dark:hover:bg-blue-900/40"
+        >
           <PlusCircle className="h-4 w-4" /> New Medication Order
         </Button>
       </DialogTrigger>
       
-      <DialogContent className="sm:max-w-[425px] border-t-4 border-t-blue-600">
+      <DialogContent className="sm:max-w-106.25 border-t-4 border-t-blue-600 dark:border-slate-700 dark:border-t-blue-500">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-slate-900">
-            <PenTool className="h-5 w-5 text-blue-600" />
-            Computerized Provider Order Entry (CPOE)
+          <DialogTitle className="flex items-center gap-2 text-slate-900 dark:text-slate-100">
+            <PenTool className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            <span className="rounded-md bg-blue-50 px-2 py-1 text-[13px] font-black tracking-tight text-blue-800 dark:bg-blue-500/20 dark:text-blue-100">
+              Computerized Provider Order Entry (CPOE)
+            </span>
           </DialogTitle>
         </DialogHeader>
         
@@ -138,10 +143,10 @@ export default function OrderMedication({ encounterId, patientId, patientAllergi
           </div>
 
           {/* Electronic Signature Block */}
-          <div className="mt-2 bg-slate-50 p-3 rounded-lg border border-dashed border-slate-300">
-            <p className="text-[9px] uppercase font-black text-slate-400 mb-1 tracking-tighter">Legal Attestation & Signature</p>
-            <p className="text-sm font-serif italic text-slate-800">Sophia Amanda Ramirez, MD</p>
-            <p className="text-[9px] text-slate-400 mt-1">
+          <div className="mt-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 dark:border-blue-400/40 dark:bg-blue-950/30">
+            <p className="mb-1 text-[9px] font-black uppercase tracking-tighter text-slate-500 dark:text-blue-200">Legal Attestation & Signature</p>
+            <p className="text-sm font-serif italic text-slate-800 dark:text-slate-100">Sophia Amanda Ramirez, MD</p>
+            <p className="mt-1 text-[9px] text-slate-500 dark:text-blue-200/90">
               Time: {new Date().toLocaleTimeString()} | ID: SAR-2026-CCMA
             </p>
           </div>

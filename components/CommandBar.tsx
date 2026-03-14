@@ -7,7 +7,7 @@ import { DialogTitle } from "@/components/ui/dialog";
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { 
   Search, Activity, Beaker, LayoutDashboard,
-  FileText, Home, ShieldCheck
+  FileText, Home, Info, ShieldCheck, FolderOpen
 } from "lucide-react";
 
 export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: string) => void }) {
@@ -40,7 +40,7 @@ export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: strin
       open={open} 
       onOpenChange={setOpen} 
       label="Global Command Menu"
-      className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] max-w-[90vw] bg-white rounded-[2rem] border shadow-2xl z-50 overflow-hidden animate-in zoom-in-95"
+      className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-100 max-w-[90vw] bg-white rounded-[2rem] border shadow-2xl z-50 overflow-hidden animate-in zoom-in-95"
     >
       <VisuallyHidden.Root>
         <DialogTitle>Global Command Menu</DialogTitle>
@@ -58,7 +58,7 @@ export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: strin
         </span>
       </div>
 
-      <Command.List className="p-2 max-h-[300px] overflow-y-auto">
+      <Command.List className="p-2 max-h-75 overflow-y-auto">
         <Command.Empty className="p-4 text-center text-[10px] font-black uppercase text-slate-400">
           No clinical actions found.
         </Command.Empty>
@@ -76,11 +76,17 @@ export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: strin
         </Command.Group>
 
         <Command.Group heading="Patient View" className="px-2 py-2 text-[9px] font-black uppercase text-slate-400 tracking-widest">
+          <Command.Item onSelect={() => runCommand(() => setTab("info"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
+            <Info className="h-4 w-4 text-cyan-600" /> Open Patient Info
+          </Command.Item>
           <Command.Item onSelect={() => runCommand(() => setTab("vitals"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
             <Activity className="h-4 w-4 text-emerald-500" /> Go to Vitals Trend
           </Command.Item>
           <Command.Item onSelect={() => runCommand(() => setTab("labs"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
             <Beaker className="h-4 w-4 text-blue-500" /> View Lab Results
+          </Command.Item>
+          <Command.Item onSelect={() => runCommand(() => setTab("documents"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
+            <FolderOpen className="h-4 w-4 text-indigo-500" /> Open Documents Hub
           </Command.Item>
           <Command.Item onSelect={() => runCommand(() => setTab("discharge"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
             <Home className="h-4 w-4 text-emerald-600" /> Prepare Discharge

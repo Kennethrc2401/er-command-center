@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { normalizePatientContactFields } from "./patientNormalization";
 
 /**
  * Fetch a single patient by ID.
@@ -37,12 +38,79 @@ export const updateDemographics = mutation({
   args: {
     patientId: v.id("patients"),
     name: v.optional(v.string()),
+    dob: v.optional(v.string()),
     gender: v.optional(v.string()),
     allergies: v.optional(v.array(v.string())),
+    phoneNumber: v.optional(v.string()),
+    emailAddress: v.optional(v.string()),
+    preferredLanguage: v.optional(v.string()),
+    addressLine1: v.optional(v.string()),
+    addressLine2: v.optional(v.string()),
+    city: v.optional(v.string()),
+    state: v.optional(v.string()),
+    postalCode: v.optional(v.string()),
+    emergencyContactName: v.optional(v.string()),
+    emergencyContactPhone: v.optional(v.string()),
+    emergencyContactRelation: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { patientId, ...updates } = args;
-    await ctx.db.patch(patientId, updates);
+    const patient = await ctx.db.get(args.patientId);
+    if (!patient) {
+      throw new Error("Patient not found");
+    }
+
+    const normalizedContact = normalizePatientContactFields({
+      phoneNumber: args.phoneNumber,
+      emailAddress: args.emailAddress,
+      preferredLanguage: args.preferredLanguage,
+      addressLine1: args.addressLine1,
+      addressLine2: args.addressLine2,
+      city: args.city,
+      state: args.state,
+      postalCode: args.postalCode,
+      emergencyContactName: args.emergencyContactName,
+      emergencyContactPhone: args.emergencyContactPhone,
+      emergencyContactRelation: args.emergencyContactRelation,
+    });
+
+    const updates: Record<string, unknown> = {};
+
+    if (args.name !== undefined) {
+      const trimmedName = args.name.trim();
+      if (trimmedName.length > 0) {
+        updates.name = trimmedName;
+      }
+    }
+
+    if (args.dob !== undefined) {
+      updates.dob = args.dob.trim();
+    }
+
+    if (args.gender !== undefined) {
+      const trimmedGender = args.gender.trim();
+      updates.gender = trimmedGender.length > 0 ? trimmedGender : patient.gender;
+    }
+
+    if (args.allergies !== undefined) {
+      updates.allergies = args.allergies;
+    }
+
+    updates.phoneNumber = normalizedContact.phoneNumber;
+    updates.emailAddress = normalizedContact.emailAddress;
+    updates.preferredLanguage = normalizedContact.preferredLanguage;
+    updates.addressLine1 = normalizedContact.addressLine1;
+    updates.addressLine2 = normalizedContact.addressLine2;
+    updates.city = normalizedContact.city;
+    updates.state = normalizedContact.state;
+    updates.postalCode = normalizedContact.postalCode;
+    updates.emergencyContactName = normalizedContact.emergencyContactName;
+    updates.emergencyContactPhone = normalizedContact.emergencyContactPhone;
+    updates.emergencyContactRelation = normalizedContact.emergencyContactRelation;
+
+    const nextName = typeof updates.name === "string" ? updates.name : patient.name;
+    updates.searchVector = `${nextName} ${patient.mrn}`.trim();
+
+    await ctx.db.patch(args.patientId, updates);
   },
 });
 

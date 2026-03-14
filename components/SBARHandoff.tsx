@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { ClipboardCopy, MessageSquare, AlertTriangle, Activity, CheckCircle2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 // Define strict types for the SBAR data
 interface SBARProps {
@@ -31,6 +31,79 @@ interface SBARProps {
 export default function SBARHandoff({ patient, encounter, gcs, criticalLabs }: SBARProps) {
   const [aiRecommendation, setAiRecommendation] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isCopying, setIsCopying] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const sbarCopyText = useMemo(() => {
+    const allergyText = patient.allergies.length > 0 ? patient.allergies.join(", ") : "No known allergies";
+    const criticalLabText = criticalLabs.length > 0 ? criticalLabs.map((lab) => lab.testName).join(", ") : "None reported";
+    const recommendationText =
+      aiRecommendation ||
+      "Continue monitoring q4h vitals and reassess for worsening respiratory or neurologic status.";
+
+    return [
+      "SBAR CLINICAL HANDOFF",
+      `Patient: ${patient.name}`,
+      `MRN: ${patient.mrn}`,
+      `DOB: ${patient.dob || "N/A"}`,
+      "",
+      "S - Situation",
+      `Chief complaint: ${encounter.chiefComplaint || "N/A"}`,
+      `Current vitals: BP ${encounter.vitals.bp ?? "N/A"}, HR ${encounter.vitals.hr ?? "N/A"}, SpO2 ${encounter.vitals.spO2 ?? "N/A"}%`,
+      "",
+      "B - Background",
+      `Code status: ${patient.codeStatus ?? "Full Code"}`,
+      `Allergies: ${allergyText}`,
+      `Critical labs: ${criticalLabText}`,
+      "",
+      "A - Assessment",
+      `GCS: ${gcs ?? "Not documented"}`,
+      "Escalation risks: Monitor oxygenation, hemodynamics, and lab follow-up.",
+      "",
+      "R - Recommendation",
+      recommendationText,
+      "",
+      `Generated: ${new Date().toLocaleString()}`,
+    ].join("\n");
+  }, [patient, encounter, gcs, criticalLabs, aiRecommendation]);
+
+  const copyToClipboard = async (text: string) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.opacity = "0";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+
+    const success = document.execCommand("copy");
+    document.body.removeChild(textArea);
+
+    if (!success) {
+      throw new Error("Clipboard copy failed");
+    }
+  };
+
+  const handleCopy = async () => {
+    if (isCopying) return;
+
+    setIsCopying(true);
+    try {
+      await copyToClipboard(sbarCopyText);
+      setCopied(true);
+      toast.success("SBAR handoff copied to clipboard.");
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Unable to copy SBAR handoff.");
+    } finally {
+      setIsCopying(false);
+    }
+  };
 
   const generateRecommendation = () => {
     setIsGenerating(true);
@@ -53,8 +126,8 @@ export default function SBARHandoff({ patient, encounter, gcs, criticalLabs }: S
         <CardTitle className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-blue-500" /> Clinical SBAR Handoff
         </CardTitle>
-        <Button variant="ghost" size="sm" onClick={() => {/* copy logic */}} className="h-7 text-[9px] font-black uppercase text-blue-600">
-          <ClipboardCopy className="h-3.5 w-3.5 mr-1" /> Copy
+        <Button variant="ghost" size="sm" onClick={handleCopy} disabled={isCopying} className="h-7 text-[9px] font-black uppercase text-blue-600">
+          <ClipboardCopy className="h-3.5 w-3.5 mr-1" /> {copied ? "Copied" : isCopying ? "Copying" : "Copy"}
         </Button>
       </CardHeader>
       
@@ -76,7 +149,7 @@ export default function SBARHandoff({ patient, encounter, gcs, criticalLabs }: S
               {aiRecommendation ? "Regenerate" : "AI Suggest"}
             </Button>
           </div>
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 min-h-[60px]">
+          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 min-h-15">
              <p className="text-xs font-medium text-slate-600 italic leading-relaxed">
                {aiRecommendation || "Select 'AI Suggest' to generate a clinical recommendation based on current data."}
              </p>
