@@ -1,35 +1,52 @@
 "use client";
 
 import React from "react";
-import { SignedIn, SignedOut, useUser } from "@clerk/nextjs";
-import { SignInButton } from "@clerk/nextjs";
+import { SignInButton, useAuth, useUser } from "@clerk/nextjs";
 import { 
   Monitor, 
   ShieldCheck, 
   UserPlus, 
   ArrowRight,
   Stethoscope,
-  GraduationCap
+  GraduationCap,
+  KeyRound,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
+import { useStaffSession } from "@/lib/hooks/useStaffSession";
 
 export default function LandingPage() {
+  const { isSignedIn } = useAuth();
+  const { user } = useUser();
+  const staffSession = useStaffSession();
+
+  const isAuthenticated = Boolean(isSignedIn || staffSession.authenticated);
+  const isAdmin = isSignedIn
+    ? user?.publicMetadata?.role === "admin"
+    : staffSession.user?.role === "ADMIN";
+  const displayName = isSignedIn
+    ? user?.firstName || "Staff"
+    : staffSession.user?.name?.split(" ")[0] || "Staff";
+
+  if (!isSignedIn && staffSession.loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
+        <div className="inline-flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-800 px-6 py-4 text-xs font-black uppercase tracking-[0.2em]">
+          <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+          Checking Access
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <SignedIn>
-        <PortalDashboard />
-      </SignedIn>
-
-      <SignedOut>
-        <PublicLanding />
-      </SignedOut>
+      {isAuthenticated ? <PortalDashboard displayName={displayName} isAdmin={Boolean(isAdmin)} /> : <PublicLanding />}
     </div>
   );
 }
 
-function PortalDashboard() {
-  const { user } = useUser();
-  const isAdmin = user?.publicMetadata?.role === "admin";
+function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmin: boolean }) {
 
   const portals = [
     {
@@ -77,7 +94,7 @@ function PortalDashboard() {
     <main className="max-w-6xl mx-auto px-6 py-20 space-y-12">
       <div className="space-y-2">
         <h1 className="text-5xl font-black italic uppercase tracking-tighter text-slate-900 dark:text-slate-100">
-          Welcome back, <span className="text-blue-600">{user?.firstName || "Staff"}</span>
+          Welcome back, <span className="text-blue-600">{displayName}</span>
         </h1>
         <p className="text-xs font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">
           Nexus ER Ecosystem • Unit 4B • {new Date().toLocaleDateString()}
@@ -149,11 +166,21 @@ function PublicLanding() {
           </p>
         </div>
 
-        <SignInButton mode="modal">
-          <button className="px-12 py-5 bg-white text-slate-900 rounded-2xl font-black uppercase text-xs tracking-[0.2em] hover:bg-blue-500 hover:text-white transition-all shadow-2xl active:scale-95">
-            Authenticate to Enter
-          </button>
-        </SignInButton>
+        <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <Link
+            href="/staff-login"
+            className="inline-flex items-center gap-2 px-10 py-5 bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-[0.2em] hover:bg-blue-400 transition-all shadow-2xl active:scale-95"
+          >
+            <KeyRound className="h-4 w-4" />
+            Staff Login
+          </Link>
+
+          <SignInButton mode="modal">
+            <button className="px-10 py-5 bg-white text-slate-900 rounded-2xl font-black uppercase text-xs tracking-[0.2em] hover:bg-slate-200 transition-all shadow-2xl active:scale-95">
+              Clerk Login
+            </button>
+          </SignInButton>
+        </div>
         
         <div className="pt-10 border-t border-slate-800 flex items-center justify-center gap-8 opacity-40">
            <span className="text-[9px] font-black uppercase tracking-widest">HIPAA Compliant</span>

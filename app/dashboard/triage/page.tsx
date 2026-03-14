@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Authenticated, Unauthenticated, AuthLoading, useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -18,7 +18,6 @@ import {
   Monitor,
   MapPin
 } from "lucide-react";
-import { SignInButton } from "@clerk/nextjs";
 import NewPatientModal from "@/components/NewPatientModal";
 import TriageStats from "@/components/TriageStats";
 
@@ -34,23 +33,44 @@ import VitalsUpdate from "@/components/clinical/VitalsUpdate";
 import ERAnalytics from "@/components/clinical/ERAnalytics";
 import GlobalSearch from "@/components/clinical/GlobalSearch";
 import MorningReport from "@/components/clinical/MorningReport";
+import { useAuth } from "@clerk/nextjs";
+import { useStaffSession } from "@/lib/hooks/useStaffSession";
+import { toast } from "sonner";
 
 const BED_PREFERENCE_KEY = "triage-bed-matrix-compact";
+const TOTAL_BEDS = 20;
+const BED_LOCATION_PATTERN = /^bed\s+(\d+)$/i;
+
+function normalizeBedLocation(location?: string): string | null {
+  if (!location) return null;
+  const trimmed = location.trim();
+  if (!trimmed) return null;
+
+  const match = BED_LOCATION_PATTERN.exec(trimmed);
+  if (!match) return null;
+
+  const bedNumber = Number(match[1]);
+  if (!Number.isInteger(bedNumber) || bedNumber < 1 || bedNumber > TOTAL_BEDS) {
+    return null;
+  }
+
+  return `Bed ${bedNumber}`;
+}
 
 export default function Page() {
+  const { isSignedIn } = useAuth();
+  const staffSession = useStaffSession();
+  const isAuthenticated = Boolean(isSignedIn || staffSession.authenticated);
+
   return (
     <>
-      <AuthLoading>
+      {!isSignedIn && staffSession.loading ? (
         <div className="flex h-[80vh] items-center justify-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
         </div>
-      </AuthLoading>
-
-      <Authenticated>
+      ) : isAuthenticated ? (
         <ERDashboardContent />
-      </Authenticated>
-
-      <Unauthenticated>
+      ) : (
         <div className="flex h-[80vh] flex-col items-center justify-center space-y-6 p-6 text-center">
           <div className="rounded-full bg-slate-100 p-6 text-slate-400 dark:bg-slate-900 dark:text-slate-500">
             <Lock className="h-12 w-12" />
@@ -61,13 +81,14 @@ export default function Page() {
               This system contains Protected Health Information (PHI). Please sign in to access the Command Center.
             </p>
           </div>
-          <SignInButton mode="modal">
-            <button className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-blue-700 transition-all shadow-xl shadow-blue-100">
-              Staff Login
-            </button>
-          </SignInButton>
+          <Link
+            href="/staff-login"
+            className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-blue-700 transition-all shadow-xl shadow-blue-100"
+          >
+            Staff Login
+          </Link>
         </div>
-      </Unauthenticated>
+      )}
     </>
   );
 }
@@ -90,13 +111,42 @@ function ERDashboardContent() {
 
   const assignBed = useMutation(api.encounters.assignBed);
   const clearBeds = useMutation(api.encounters.clearAllBeds);
+
+  const notifyBedAssignmentError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : "Unable to assign bed right now.";
+    toast.error(message);
+  };
   
-  const totalBeds = 20;
-  const occupiedBeds = activeEncounters?.filter(e => e.location && e.location.startsWith("Bed")).length ?? 0;
-  const availableBeds = totalBeds - occupiedBeds;
+  const totalBeds = TOTAL_BEDS;
+  const allBedIds = useMemo(
+    () => Array.from({ length: totalBeds }, (_, index) => `Bed ${index + 1}`),
+    [totalBeds]
+  );
+  const occupiedBedSet = useMemo(() => {
+    const occupied = new Set<string>();
+    for (const encounter of activeEncounters ?? []) {
+      const normalized = normalizeBedLocation(encounter.location);
+      if (normalized) occupied.add(normalized);
+    }
+    return occupied;
+  }, [activeEncounters]);
+  const occupiedBeds = occupiedBedSet.size;
+  const availableBeds = Math.max(0, totalBeds - occupiedBeds);
   const bedGridClasses = isCompactBeds
     ? "grid-cols-[repeat(auto-fit,minmax(112px,1fr))] gap-2 sm:gap-3"
     : "grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-3 sm:gap-4";
+
+  const getAssignableBedsForEncounter = (encounterId: Id<"encounters">, currentLocation?: string) => {
+    const currentBed = normalizeBedLocation(currentLocation);
+    return allBedIds.filter((bedId) => {
+      if (bedId === currentBed) return true;
+      return !(activeEncounters ?? []).some(
+        (encounter) =>
+          encounter._id !== encounterId &&
+          normalizeBedLocation(encounter.location) === bedId
+      );
+    });
+  };
 
   // Persist user-selected bed density mode.
   useEffect(() => {
@@ -315,17 +365,21 @@ function ERDashboardContent() {
           </div>
           
           <div className={`grid ${bedGridClasses}`}>
-            {Array.from({ length: 20 }).map((_, i) => {
+            {Array.from({ length: totalBeds }).map((_, i) => {
               const bedId = `Bed ${i + 1}`;
-              const occupant = activeEncounters?.find(e => e.location === bedId);
+              const occupant = activeEncounters?.find((e) => normalizeBedLocation(e.location) === bedId);
               return (
                 <div key={bedId} onClick={() => {
                   if (occupant) {
-                    if (confirm(`Vacate ${bedId}?`)) assignBed({ encounterId: occupant._id, location: "" });
+                    if (confirm(`Vacate ${bedId}?`)) {
+                      void assignBed({ encounterId: occupant._id, location: "" });
+                    }
                   } else {
                     const name = prompt(`Assign patient to ${bedId}:`);
                     const p = activeEncounters?.find(e => e.patientName.toLowerCase().includes(name?.toLowerCase() || ""));
-                    if (p) assignBed({ encounterId: p._id, location: bedId });
+                    if (p) {
+                      void assignBed({ encounterId: p._id, location: bedId }).catch(notifyBedAssignmentError);
+                    }
                   }
                 }} className={`relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 transition-all ${
                   isCompactBeds ? "min-h-24 p-2.5 pt-5" : "min-h-28 p-3 pt-6"
@@ -376,6 +430,13 @@ function ERDashboardContent() {
                 placeholder="Search by patient name, MRN, or order..."
                 className="max-w-none mx-0 md:w-2/3 lg:w-1/2"
               />
+              <p className="mt-2 text-[10px] font-bold text-slate-400 dark:text-slate-600 uppercase tracking-[0.2em]">
+                Press{" "}
+                <kbd className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-300 shadow-sm mx-0.5">Ctrl</kbd>
+                +
+                <kbd className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-300 shadow-sm mx-0.5">/</kbd>
+                {" "}for quick command
+              </p>
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -397,6 +458,9 @@ function ERDashboardContent() {
                   const isHrSpiked = e.vitals.previousHr && e.vitals.hr >= e.vitals.previousHr * 1.2;
                   const isHighRisk = isHighRiskComplaint(e.chiefComplaint ?? "");
                   const needsImmediateAttention = e.status === "waiting" && isHighRisk;
+                  const currentBed = normalizeBedLocation(e.location);
+                  const assignableBeds = getAssignableBedsForEncounter(e._id, e.location);
+                  const showNoBedsAvailable = !currentBed && assignableBeds.length === 0;
 
                   return (
                     <TableRow key={e._id} className={`h-24 transition-all duration-700 group ${
@@ -441,15 +505,32 @@ function ERDashboardContent() {
                           </div>
                         </div>
                         <div className="mt-1.5 flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              const b = prompt(`Assign location:`, e.location || "");
-                              if (b !== null) assignBed({ encounterId: e._id, location: b });
-                            }}
-                            className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[9px] font-black uppercase text-blue-600 transition-all hover:bg-blue-600 hover:text-white dark:border-blue-700/40 dark:bg-blue-950/30 dark:text-blue-300"
-                          >
-                            {e.location || "+ Assign Bed"}
-                          </button>
+                          {showNoBedsAvailable ? (
+                            <select
+                              disabled
+                              value=""
+                              className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[9px] font-black uppercase text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                            >
+                              <option value="">No beds available</option>
+                            </select>
+                          ) : (
+                            <select
+                              value={currentBed ?? ""}
+                              onChange={(event) => {
+                                const nextBed = event.target.value;
+                                void assignBed({ encounterId: e._id, location: nextBed }).catch(notifyBedAssignmentError);
+                              }}
+                              className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[9px] font-black uppercase text-blue-700 transition-all hover:border-blue-300 dark:border-blue-700/40 dark:bg-blue-950/30 dark:text-blue-300"
+                              aria-label={`Assign bed for ${e.patientName}`}
+                            >
+                              <option value="">No bed assigned</option>
+                              {assignableBeds.map((bedId) => (
+                                <option key={bedId} value={bedId}>
+                                  {bedId === currentBed ? `${bedId} (Current)` : bedId}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </div>
                       </TableCell>
 

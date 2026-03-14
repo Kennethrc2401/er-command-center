@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Search, Beaker, Command, ArrowRight } from "lucide-react";
+import { Search, Beaker, ArrowRight } from "lucide-react";
 
 interface GlobalSearchProps {
   onQueryChange?: (value: string) => void;
@@ -34,8 +34,10 @@ export default function GlobalSearch({
           placeholder={placeholder}
           className="w-full bg-white border-2 border-slate-100 p-5 pl-14 rounded-[2rem] font-bold text-slate-900 focus:border-blue-500 outline-none transition-all shadow-xl"
         />
-        <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-1 text-slate-300 font-black text-[10px] uppercase">
-          <Command className="h-3 w-3" /> K
+        <div className="absolute right-6 top-1/2 -translate-y-1/2 hidden sm:flex items-center gap-0.5 text-slate-300 font-black text-[10px] uppercase">
+          <kbd className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[9px] font-black text-slate-400">Ctrl</kbd>
+          <span className="text-slate-300">+</span>
+          <kbd className="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[9px] font-black text-slate-400">/</kbd>
         </div>
       </div>
 

@@ -11,6 +11,25 @@ const vitalsValidator = v.object({
   spO2: v.number(),
 });
 
+const TOTAL_BEDS = 20;
+const BED_LOCATION_PATTERN = /^bed\s+(\d+)$/i;
+
+function normalizeBedLocation(location?: string): string | null {
+  if (!location) return null;
+  const trimmed = location.trim();
+  if (!trimmed) return null;
+
+  const match = BED_LOCATION_PATTERN.exec(trimmed);
+  if (!match) return null;
+
+  const bedNumber = Number(match[1]);
+  if (!Number.isInteger(bedNumber) || bedNumber < 1 || bedNumber > TOTAL_BEDS) {
+    return null;
+  }
+
+  return `Bed ${bedNumber}`;
+}
+
 /**
  * Registers a new patient and starts an encounter simultaneously.
  */
@@ -350,9 +369,30 @@ export const assignBed = mutation({
     location: v.string(),
   },
   handler: async (ctx, args) => {
+    const nextLocation = args.location.trim();
+    const requestedBed = normalizeBedLocation(nextLocation);
+
+    if (requestedBed) {
+      const activeEncounters = await ctx.db
+        .query("encounters")
+        .withIndex("by_status")
+        .filter((q) => q.neq(q.field("status"), "discharged"))
+        .collect();
+
+      const occupiedByOther = activeEncounters.find(
+        (encounter) =>
+          encounter._id !== args.encounterId &&
+          normalizeBedLocation(encounter.location) === requestedBed
+      );
+
+      if (occupiedByOther) {
+        throw new Error(`${requestedBed} is already occupied.`);
+      }
+    }
+
     await ctx.db.patch(args.encounterId, { 
-      location: args.location,
-      status: "treating" // Auto-move to treating when bed is assigned
+      location: requestedBed ?? nextLocation,
+      ...(nextLocation ? { status: "treating" } : {}),
     });
   },
 });

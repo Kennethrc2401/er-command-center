@@ -51,6 +51,7 @@ export default defineSchema({
   users: defineTable({
     name: v.string(),
     email: v.string(),
+    username: v.optional(v.string()),
     role: v.union(
       v.literal("ADMIN"), 
       v.literal("DOCTOR"), 
@@ -61,9 +62,25 @@ export default defineSchema({
     department: v.string(),
     status: v.union(v.literal("ACTIVE"), v.literal("INACTIVE")),
     npiNumber: v.optional(v.string()), // Required for doctors
+    passwordHash: v.optional(v.string()),
+    officeKeyHash: v.optional(v.string()),
+    credentialUpdatedAt: v.optional(v.number()),
+    failedLoginAttempts: v.optional(v.number()),
+    lastFailedLoginAt: v.optional(v.number()),
+    lockedUntil: v.optional(v.number()),
   })
   .index("by_email", ["email"])
+  .index("by_username", ["username"])
   .index("by_role", ["role"]),
+  staffLoginThrottles: defineTable({
+    key: v.string(),
+    attemptCount: v.number(),
+    windowStartedAt: v.number(),
+    blockedUntil: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+  .index("by_key", ["key"])
+  .index("by_updatedAt", ["updatedAt"]),
   encounters: defineTable({
     patientId: v.id("patients"),
     patientName: v.optional(v.string()),

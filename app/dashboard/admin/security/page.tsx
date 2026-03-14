@@ -2,6 +2,7 @@
 
 import { ScrollText } from "lucide-react";
 import AuditLogViewer from "@/components/admin/AuditLogViewer";
+import SecurityDiagnostics from "@/components/admin/SecurityDiagnostics";
 
 export default function SecurityAuditPage() {
   return (
@@ -21,6 +22,8 @@ export default function SecurityAuditPage() {
           </div>
         </div>
       </header>
+
+      <SecurityDiagnostics />
 
       <AuditLogViewer />
     </div>

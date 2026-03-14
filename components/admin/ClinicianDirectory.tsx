@@ -21,31 +21,46 @@ type UserStatus = (typeof STATUS_OPTIONS)[number];
 type UserFormState = {
   name: string;
   email: string;
+  username: string;
   role: UserRole;
   credentials: string;
   department: string;
   status: UserStatus;
   npiNumber: string;
+  password: string;
+  officeKey: string;
+  newPassword: string;
+  newOfficeKey: string;
 };
 
 const EMPTY_FORM: UserFormState = {
   name: "",
   email: "",
+  username: "",
   role: "DOCTOR",
   credentials: "",
   department: "",
   status: "ACTIVE",
   npiNumber: "",
+  password: "",
+  officeKey: "",
+  newPassword: "",
+  newOfficeKey: "",
 };
 
 const formFromUser = (user: Doc<"users">): UserFormState => ({
   name: user.name,
   email: user.email,
+  username: user.username ?? "",
   role: user.role,
   credentials: user.credentials,
   department: user.department,
   status: user.status,
   npiNumber: user.npiNumber ?? "",
+  password: "",
+  officeKey: "",
+  newPassword: "",
+  newOfficeKey: "",
 });
 
 const getErrorMessage = (error: unknown) => {
@@ -75,10 +90,13 @@ export default function ClinicianDirectory() {
       await createUser({
         name: createForm.name.trim(),
         email: createForm.email.trim(),
+        username: createForm.username.trim(),
         role: createForm.role,
         credentials: createForm.credentials.trim(),
         department: createForm.department.trim(),
         npiNumber: createForm.npiNumber.trim() || undefined,
+        password: createForm.password,
+        officeKey: createForm.officeKey,
       });
       toast.success("User created.");
       setCreateForm(EMPTY_FORM);
@@ -106,15 +124,19 @@ export default function ClinicianDirectory() {
         id: editingUserId,
         name: editForm.name.trim(),
         email: editForm.email.trim(),
+        username: editForm.username.trim(),
         role: editForm.role,
         credentials: editForm.credentials.trim(),
         department: editForm.department.trim(),
         status: editForm.status,
         npiNumber: editForm.npiNumber.trim() || undefined,
+        newPassword: editForm.newPassword.trim() || undefined,
+        newOfficeKey: editForm.newOfficeKey.trim() || undefined,
       });
       toast.success("User updated.");
       setIsEditOpen(false);
       setEditingUserId(null);
+      setEditForm(EMPTY_FORM);
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -179,6 +201,16 @@ export default function ClinicianDirectory() {
                   />
                 </div>
                 <div className="space-y-1.5">
+                  <Label htmlFor="new-username">Username</Label>
+                  <Input
+                    id="new-username"
+                    value={createForm.username}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, username: e.target.value }))}
+                    required
+                    disabled={createPending}
+                  />
+                </div>
+                <div className="space-y-1.5">
                   <Label htmlFor="new-role">Role</Label>
                   <select
                     id="new-role"
@@ -211,6 +243,30 @@ export default function ClinicianDirectory() {
                     id="new-department"
                     value={createForm.department}
                     onChange={(e) => setCreateForm((prev) => ({ ...prev, department: e.target.value }))}
+                    required
+                    disabled={createPending}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="new-password">Password</Label>
+                  <Input
+                    id="new-password"
+                    type="password"
+                    minLength={8}
+                    value={createForm.password}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, password: e.target.value }))}
+                    required
+                    disabled={createPending}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="new-office-key">Office Key</Label>
+                  <Input
+                    id="new-office-key"
+                    type="password"
+                    minLength={4}
+                    value={createForm.officeKey}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, officeKey: e.target.value }))}
                     required
                     disabled={createPending}
                   />
@@ -263,6 +319,7 @@ export default function ClinicianDirectory() {
                     <div>
                       <p className="text-sm font-black text-slate-900">{user.name}, {user.credentials}</p>
                       <p className="text-[10px] font-medium text-slate-400">{user.email}</p>
+                      <p className="text-[10px] font-medium text-blue-500">@{user.username ?? "not-set"}</p>
                     </div>
                   </div>
                 </td>
@@ -364,6 +421,16 @@ export default function ClinicianDirectory() {
                 />
               </div>
               <div className="space-y-1.5">
+                <Label htmlFor="edit-username">Username</Label>
+                <Input
+                  id="edit-username"
+                  value={editForm.username}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, username: e.target.value }))}
+                  required
+                  disabled={editPending}
+                />
+              </div>
+              <div className="space-y-1.5">
                 <Label htmlFor="edit-role">Role</Label>
                 <select
                   id="edit-role"
@@ -421,6 +488,28 @@ export default function ClinicianDirectory() {
                   id="edit-npi"
                   value={editForm.npiNumber}
                   onChange={(e) => setEditForm((prev) => ({ ...prev, npiNumber: e.target.value }))}
+                  disabled={editPending}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-new-password">Set New Password (Optional)</Label>
+                <Input
+                  id="edit-new-password"
+                  type="password"
+                  minLength={8}
+                  value={editForm.newPassword}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, newPassword: e.target.value }))}
+                  disabled={editPending}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-new-office-key">Set New Office Key (Optional)</Label>
+                <Input
+                  id="edit-new-office-key"
+                  type="password"
+                  minLength={4}
+                  value={editForm.newOfficeKey}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, newOfficeKey: e.target.value }))}
                   disabled={editPending}
                 />
               </div>

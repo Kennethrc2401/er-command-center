@@ -12,7 +12,8 @@ import {
   MapPin,
   Shield,
   ShieldOff,
-  FileText
+  FileText,
+  Bell
 } from "lucide-react";
 import NewPatientModal from "./NewPatientModal";
 import { LucideIcon } from "lucide-react";
@@ -101,6 +102,12 @@ export default function Navbar() {
             {isPrivate ? <Shield className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
             <span className="hidden lg:inline">{isPrivate ? "Privacy Active" : "Privacy Off"}</span>
           </button>
+
+        {/* 🔔 NOTIFICATIONS */}
+        <button className="relative p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:bg-slate-100 transition-all dark:bg-slate-900 dark:border-slate-800 dark:hover:bg-slate-800">
+          <Bell className="h-4 w-4" />
+          <span className="absolute top-1.5 right-1.5 h-2 w-2 bg-red-500 rounded-full border-2 border-white dark:border-slate-950" />
+        </button>
 
         <ThemeToggle />
 

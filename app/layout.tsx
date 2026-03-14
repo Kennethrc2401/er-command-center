@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "@/components/ProvidersTemp";
 import AuthUIWrapper from "@/components/auth/AuthUIWrapper";
 import { Toaster } from "@/components/ui/sonner";
+import CommandBar from "@/components/CommandBar";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -29,6 +30,9 @@ export default function RootLayout({
               {children}
             </AuthUIWrapper>
             
+            {/* Global command palette — Ctrl+/ on Windows, Cmd+K on Mac */}
+            <CommandBar />
+
             <Toaster position="top-right" richColors closeButton />
           </div>
         </Providers>
