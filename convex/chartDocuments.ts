@@ -100,10 +100,21 @@ function validateRange(value: number, min: number, max: number, label: string) {
 }
 
 async function getChartDocumentSettings(ctx: QueryCtx | MutationCtx) {
-  return await ctx.db
-    .query("chartDocumentSettings")
-    .withIndex("by_singleton_key", (q) => q.eq("singletonKey", SETTINGS_SINGLETON_KEY))
-    .first();
+  try {
+    return await ctx.db
+      .query("chartDocumentSettings")
+      .withIndex("by_singleton_key", (q) => q.eq("singletonKey", SETTINGS_SINGLETON_KEY))
+      .first();
+  } catch {
+    // Backward-compatible fallback for deployments where this table/index
+    // has not been provisioned yet.
+    try {
+      const rows = await ctx.db.query("chartDocumentSettings").collect();
+      return rows.find((row) => row.singletonKey === SETTINGS_SINGLETON_KEY) ?? rows[0] ?? null;
+    } catch {
+      return null;
+    }
+  }
 }
 
 function buildRetentionDaysByCategory(settings?: Doc<"chartDocumentSettings"> | null) {
