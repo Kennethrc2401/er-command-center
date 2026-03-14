@@ -57,6 +57,10 @@ export default function DischargeSummary({ patient, encounter, onClose }: Discha
     year: 'numeric'
   });
 
+  const signatureSignedAt = encounter.signatureTimestamp
+    ? new Date(encounter.signatureTimestamp).toLocaleString()
+    : "Unknown time";
+
   return (
     <div className="fixed inset-0 bg-white z-500 flex flex-col overflow-y-auto">
       {/* 🛠️ NAVIGATION BAR (Hidden on Print) */}
@@ -184,7 +188,7 @@ export default function DischargeSummary({ patient, encounter, onClose }: Discha
                 <div className="space-y-1">
                   <img src={encounter.patientSignature} alt="Patient Signature" className="h-12 w-auto grayscale" />
                   <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
-                    Digitally Signed on {new Date(encounter.signatureTimestamp ?? Date.now()).toLocaleString()}
+                    Digitally Signed on {signatureSignedAt}
                   </p>
                   <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
                     Consent to Treat and HIPAA Acknowledgement Recorded

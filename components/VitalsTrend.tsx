@@ -86,7 +86,7 @@ export default function VitalsTrend({ encounterId }: { encounterId: Id<"encounte
   if (formattedData.length === 0) return (
     <Card className="border-slate-200 shadow-sm overflow-hidden">
       <CardHeader className="pb-2 bg-slate-50/50 border-b">
-        <CardTitle className="text-[11px] font-black uppercase tracking-widest flex items-center gap-2 text-slate-400">
+        <CardTitle className="text-[11px] font-black uppercase tracking-widest flex items-center gap-2 text-slate-600 dark:text-slate-300">
           <Activity className="h-4 w-4" />
           Clinical Hemodynamics
         </CardTitle>
@@ -107,7 +107,7 @@ export default function VitalsTrend({ encounterId }: { encounterId: Id<"encounte
     <Card className="border-slate-200 shadow-sm overflow-hidden">
       <CardHeader className="pb-2 bg-slate-50/50 border-b">
         <CardTitle className="text-[11px] font-black uppercase tracking-widest flex items-center justify-between w-full">
-          <div className="flex items-center gap-2 text-slate-500">
+          <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
             <Activity className="h-4 w-4 text-red-500" />
             Clinical Hemodynamics
           </div>
