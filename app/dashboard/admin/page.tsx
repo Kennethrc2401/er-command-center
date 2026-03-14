@@ -16,6 +16,7 @@ import DashboardStats from "@/components/DashboardStats";
 import RevenuePayerMix from "@/components/mgmt/RevenuePayerMix";
 import ShiftHandoffModal from "@/components/mgmt/ShiftHandoffModal";
 import SurgeAlertBanner from "@/components/alerts/SurgeAlertBanner";
+import VolumeHeatmap from "@/components/clinical/VolumeHeatmap";
 
 export default function AdminDashboard() {
   const stats = useQuery(api.encounters.getERStats);
@@ -76,6 +77,17 @@ export default function AdminDashboard() {
           
           {/* Payer Mix Visual (Fixed Nesting) */}
           <RevenuePayerMix payerData={payerMix} />
+
+          {/* Executive Workflow View */}
+          <section className="space-y-3">
+            <div className="flex items-center gap-2 px-1">
+              <div className="h-1 w-6 rounded-full bg-orange-500" />
+              <h3 className="text-[10px] font-black uppercase italic tracking-[0.2em] text-slate-400 dark:text-slate-500">
+                Executive Workflow View
+              </h3>
+            </div>
+            <VolumeHeatmap />
+          </section>
         </div>
 
         {/* REVENUE CYCLE TASKS (1/3) */}

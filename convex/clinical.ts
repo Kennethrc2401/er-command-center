@@ -2,6 +2,38 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 
+function calculateNEWS2(vitals: {
+  hr: number;
+  spO2: number;
+  temp: number;
+  bp: string;
+}) {
+  let score = 0;
+  const systolicBp = Number.parseInt(vitals.bp.split("/")[0] ?? "0", 10);
+
+  // 1. SpO2
+  if (vitals.spO2 <= 91) score += 3;
+  else if (vitals.spO2 <= 93) score += 2;
+  else if (vitals.spO2 <= 95) score += 1;
+
+  // 2. Temperature (F)
+  if (vitals.temp <= 95) score += 3;
+  else if (vitals.temp >= 102.2) score += 3;
+  else if (vitals.temp >= 100.4 || vitals.temp <= 96.8) score += 1;
+
+  // 3. Heart rate
+  if (vitals.hr <= 40 || vitals.hr >= 131) score += 3;
+  else if (vitals.hr >= 111 || vitals.hr <= 50) score += 2;
+  else if (vitals.hr >= 91) score += 1;
+
+  // 4. Systolic BP
+  if (systolicBp <= 90 || systolicBp >= 220) score += 3;
+  else if (systolicBp <= 100) score += 2;
+  else if (systolicBp <= 110) score += 1;
+
+  return { score };
+}
+
 export const globalClinicalSearch = query({
   args: { searchTerm: v.string() },
   handler: async (ctx, args) => {
@@ -34,10 +66,11 @@ export const getMorningReport = query({
     ]);
 
     // 🚨 1. Identify Critical Patients (O2 < 90 or high HR)
-    const criticalPatients = encounters.filter(e => 
-      (e.vitals?.spO2 && e.vitals.spO2 < 90) || 
-      (e.vitals?.hr && e.vitals.hr > 130)
-    ).length;
+    const criticalPatients = encounters.filter(e => {
+      if (!e.vitals) return false;
+      const { score } = calculateNEWS2(e.vitals);
+      return score >= 5;
+    }).length;
 
     // 🧪 2. Count STAT Backlog
     const pendingStatOrders = orders.filter(o => 

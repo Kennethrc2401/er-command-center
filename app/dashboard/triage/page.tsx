@@ -36,6 +36,7 @@ import MorningReport from "@/components/clinical/MorningReport";
 import { useAuth } from "@clerk/nextjs";
 import { useStaffSession } from "@/lib/hooks/useStaffSession";
 import { toast } from "sonner";
+import { calculateNEWS2 } from "@/lib/helpers/news2";
 
 const BED_PREFERENCE_KEY = "triage-bed-matrix-compact";
 const TOTAL_BEDS = 20;
@@ -447,6 +448,7 @@ function ERDashboardContent() {
                   <TableHead className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500">Patient Details</TableHead>
                   <TableHead className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500">Wait/Tasks</TableHead>
                   <TableHead className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500">Live Vitals</TableHead>
+                  <TableHead className="w-28 text-center text-[10px] font-black uppercase text-slate-400 dark:text-slate-500">Risk</TableHead>
                   <TableHead className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500">Clinical Phase</TableHead>
                   <TableHead className="pr-8 text-right text-[10px] font-black uppercase text-slate-400 dark:text-slate-500">Actions</TableHead>
                 </TableRow>
@@ -455,6 +457,8 @@ function ERDashboardContent() {
                 {filteredEncounters?.map((e) => {
                   const waitTime = Math.floor((currentTime - e._creationTime) / 60000);
                   const isCriticalVitals = (e.vitals.spO2 < 92 && e.vitals.spO2 > 0) || e.vitals.hr > 120;
+                  const news2 = calculateNEWS2(e.vitals);
+                  const hasEscalatedRisk = news2.score >= 5;
                   const isHrSpiked = e.vitals.previousHr && e.vitals.hr >= e.vitals.previousHr * 1.2;
                   const isHighRisk = isHighRiskComplaint(e.chiefComplaint ?? "");
                   const needsImmediateAttention = e.status === "waiting" && isHighRisk;
@@ -469,6 +473,10 @@ function ERDashboardContent() {
                         : e.acuity === 1 || isCriticalVitals 
                           ? "bg-red-50/40 hover:bg-red-50 border-l-12 border-l-red-600 dark:bg-red-950/20 dark:hover:bg-red-950/30"
                           : "hover:bg-slate-50/50 border-l-12 border-l-transparent dark:hover:bg-slate-800/30"
+                    } ${
+                      hasEscalatedRisk
+                        ? "shadow-[0_0_0_1px_rgba(239,68,68,0.16),0_0_14px_rgba(239,68,68,0.09)] dark:shadow-[0_0_0_1px_rgba(248,113,113,0.22),0_0_16px_rgba(248,113,113,0.12)]"
+                        : ""
                     }`}>
                       <TableCell className="text-center">
                         <div className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center shadow-sm mx-auto transition-transform group-hover:scale-110 ${
@@ -552,6 +560,17 @@ function ERDashboardContent() {
                           <VitalLabel label="BP" value={e.vitals.bp || "---/--"} />
                           <VitalLabel label="O2" value={e.vitals.spO2} alert={e.vitals.spO2 < 93} suffix="%" />
                           <VitalLabel label="T" value={e.vitals.temp} alert={e.vitals.temp > 100.4} suffix="°" />
+                        </div>
+                      </TableCell>
+
+                      <TableCell className="text-center">
+                        <div className={`mx-auto inline-flex min-w-16 flex-col items-center rounded-xl border px-2 py-1 ${
+                          hasEscalatedRisk
+                            ? "border-red-200 bg-red-50 dark:border-red-500/40 dark:bg-red-950/30"
+                            : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                        }`}>
+                          <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">NEWS2</span>
+                          <span className={`text-lg font-black ${news2.color}`}>{news2.score}</span>
                         </div>
                       </TableCell>
 
