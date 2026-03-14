@@ -108,11 +108,11 @@ export default function TriageHandoffModal({ encounter, onClose }: { encounter: 
               <select 
                 value={bed}
                 onChange={(e) => setBed(e.target.value)}
-                className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl font-bold text-slate-900 outline-none focus:border-blue-500 transition-all"
+                className="w-full rounded-xl border-2 border-slate-100 bg-slate-50 p-3 font-bold text-slate-900 outline-none transition-all focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
               >
-                <option value="">Select Bed...</option>
+                <option value="" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">Select Bed...</option>
                 {Array.from({ length: 20 }).map((_, i) => (
-                  <option key={i} value={`Bed ${i+1}`}>Bed {i+1}</option>
+                  <option key={i} value={`Bed ${i+1}`} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">Bed {i+1}</option>
                 ))}
               </select>
             </div>

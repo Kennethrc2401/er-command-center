@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, SignOutButton } from "@clerk/nextjs";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import { useEffect, useRef } from "react";
 import { 
   Activity, 
   LayoutDashboard, 
@@ -12,13 +15,13 @@ import {
   MapPin,
   Shield,
   ShieldOff,
-  FileText,
-  Bell
+  FileText
 } from "lucide-react";
 import NewPatientModal from "./NewPatientModal";
 import { LucideIcon } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import { usePrivacyMode } from "@/lib/hooks/usePrivacyMode";
+import NotificationBell from "@/components/clinical/NotificationBell";
 
 interface NavLinkProps {
   href: string;
@@ -31,8 +34,43 @@ interface NavLinkProps {
 export default function Navbar() {
   const pathname = usePathname();
   const { user } = useUser();
+  const primaryEmail = user?.primaryEmailAddress?.emailAddress;
+  const ensureUserProfile = useMutation(api.users.ensureUserProfile);
+  const provisionAttemptedRef = useRef(false);
+  const convexUser = useQuery(
+    api.users.getByEmail,
+    primaryEmail ? { email: primaryEmail } : "skip"
+  );
   const isAdmin = user?.publicMetadata?.role === "admin";
   const { isPrivate, togglePrivacy } = usePrivacyMode();
+
+  useEffect(() => {
+    if (!user || !primaryEmail) return;
+    if (convexUser === undefined || convexUser) return;
+    if (provisionAttemptedRef.current) return;
+
+    provisionAttemptedRef.current = true;
+
+    const rawRole = typeof user.publicMetadata?.role === "string" ? user.publicMetadata.role.toUpperCase() : "";
+    const role =
+      rawRole === "ADMIN" ||
+      rawRole === "DOCTOR" ||
+      rawRole === "NURSE" ||
+      rawRole === "CCMA"
+        ? rawRole
+        : "NURSE";
+
+    void ensureUserProfile({
+      email: primaryEmail,
+      name: [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || primaryEmail,
+      username: user.username ?? undefined,
+      role,
+      credentials: role === "DOCTOR" ? "MD" : role === "CCMA" ? "CCMA" : role === "ADMIN" ? "Admin" : "RN",
+      department: "Emergency Medicine",
+    }).catch(() => {
+      provisionAttemptedRef.current = false;
+    });
+  }, [convexUser, ensureUserProfile, primaryEmail, user]);
 
   if (pathname === "/kiosk") return null;
 
@@ -104,10 +142,7 @@ export default function Navbar() {
           </button>
 
         {/* 🔔 NOTIFICATIONS */}
-        <button className="relative p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:bg-slate-100 transition-all dark:bg-slate-900 dark:border-slate-800 dark:hover:bg-slate-800">
-          <Bell className="h-4 w-4" />
-          <span className="absolute top-1.5 right-1.5 h-2 w-2 bg-red-500 rounded-full border-2 border-white dark:border-slate-950" />
-        </button>
+        <NotificationBell userId={convexUser?._id} />
 
         <ThemeToggle />
 

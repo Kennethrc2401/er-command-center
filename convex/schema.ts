@@ -116,6 +116,10 @@ export default defineSchema({
         coPay: v.number(),
       })
     ),
+    patientSignature: v.optional(v.string()),
+    signatureTimestamp: v.optional(v.number()),
+    consentToTreatSignedAt: v.optional(v.number()),
+    hipaaAcknowledgedAt: v.optional(v.number()),
   })
     .index("by_status", ["status"])
     .index("by_patient", ["patientId"]),
@@ -132,7 +136,19 @@ export default defineSchema({
     adminTime: v.optional(v.number()),
     adminBy: v.optional(v.string()),
   }).index("by_encounter", ["encounterId"]),
-
+  
+  notifications: defineTable({
+    userId: v.optional(v.id("users")), // null if global/broadcast
+    title: v.string(),
+    message: v.string(),
+    type: v.union(v.literal("STAT_ORDER"), v.literal("CRITICAL_VITAL"), v.literal("SYSTEM")),
+    isRead: v.boolean(),
+    timestamp: v.number(),
+    patientId: v.optional(v.id("patients")),
+  })
+  .index("by_user", ["userId", "isRead"])
+  .index("by_timestamp", ["timestamp"]),
+  
   clinicalNotes: defineTable({
     encounterId: v.id("encounters"),
     content: v.string(),
@@ -323,4 +339,15 @@ export default defineSchema({
       patientId: v.optional(v.id("patients")),
     }).index("by_faxNumber", ["faxNumber"])
       .index("by_status", ["status"]),
+    teleConsults: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      specialty: v.string(), // e.g., "Neurology", "Cardiology"
+      status: v.union(v.literal("REQUESTED"), v.literal("ACTIVE"), v.literal("COMPLETED")),
+      roomName: v.string(), // The unique video room ID
+      requestedBy: v.id("users"),
+      requestedAt: v.number(),
+    })
+    .index("by_encounter", ["encounterId"])
+    .index("by_status", ["status"]),
   })

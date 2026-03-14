@@ -124,15 +124,15 @@ export default function OrderMedication({ encounterId, patientId, patientAllergi
             <div className="space-y-2">
               <label className="text-xs font-black uppercase text-slate-500 tracking-wider">Route</label>
               <select 
-                className="w-full h-10 px-3 border rounded-md text-sm bg-slate-50/50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="h-10 w-full rounded-md border bg-slate-50/50 px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                 value={route}
                 onChange={(e) => setRoute(e.target.value)}
               >
-                <option value="PO">PO (Oral)</option>
-                <option value="IV">IV</option>
-                <option value="IM">IM</option>
-                <option value="SubQ">SubQ</option>
-                <option value="PR">PR (Rectal)</option>
+                <option value="PO" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">PO (Oral)</option>
+                <option value="IV" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">IV</option>
+                <option value="IM" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">IM</option>
+                <option value="SubQ" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">SubQ</option>
+                <option value="PR" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">PR (Rectal)</option>
               </select>
             </div>
           </div>

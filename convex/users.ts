@@ -103,6 +103,89 @@ export const listAll = query({
   },
 });
 
+export const getByEmail = query({
+  args: {
+    email: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const normalizedEmail = normalizeEmail(args.email);
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+      .first();
+
+    if (!user) return null;
+
+    return {
+      _id: user._id,
+      name: user.name,
+      role: user.role,
+      status: user.status,
+    };
+  },
+});
+
+export const ensureUserProfile = mutation({
+  args: {
+    email: v.string(),
+    name: v.optional(v.string()),
+    role: v.optional(userRoleValidator),
+    username: v.optional(v.string()),
+    credentials: v.optional(v.string()),
+    department: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const normalizedEmail = normalizeEmail(args.email);
+
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+      .first();
+
+    if (existing) {
+      return {
+        _id: existing._id,
+        created: false,
+      };
+    }
+
+    const requestedUsername = normalizeOptionalString(args.username);
+    let normalizedUsername: string | undefined;
+
+    if (requestedUsername) {
+      const candidate = normalizeUsername(requestedUsername);
+      const usernameOwner = await ctx.db
+        .query("users")
+        .withIndex("by_username", (q) => q.eq("username", candidate))
+        .first();
+
+      if (!usernameOwner) {
+        normalizedUsername = candidate;
+      }
+    }
+
+    const inferredName = normalizeOptionalString(args.name) ?? normalizedEmail.split("@")[0] ?? "Staff Member";
+    const userId = await ctx.db.insert("users", {
+      name: inferredName,
+      email: normalizedEmail,
+      username: normalizedUsername,
+      role: args.role ?? "NURSE",
+      credentials: normalizeOptionalString(args.credentials) ?? "Clinical Staff",
+      department: normalizeOptionalString(args.department) ?? "Emergency Medicine",
+      status: "ACTIVE",
+      failedLoginAttempts: 0,
+      lastFailedLoginAt: 0,
+      lockedUntil: 0,
+    });
+
+    return {
+      _id: userId,
+      created: true,
+    };
+  },
+});
+
 export const getLockedStaffAccounts = query({
   args: {},
   handler: async (ctx) => {

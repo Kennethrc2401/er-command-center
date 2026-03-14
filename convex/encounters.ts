@@ -221,6 +221,26 @@ export const updateVitals = mutation({
   },
 });
 
+export const saveSignature = mutation({
+  args: {
+    encounterId: v.id("encounters"),
+    patientSignature: v.string(),
+    signatureTimestamp: v.optional(v.number()),
+    consentToTreat: v.optional(v.boolean()),
+    hipaaAcknowledged: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const signatureTimestamp = args.signatureTimestamp ?? Date.now();
+
+    await ctx.db.patch(args.encounterId, {
+      patientSignature: args.patientSignature,
+      signatureTimestamp,
+      ...(args.consentToTreat ? { consentToTreatSignedAt: signatureTimestamp } : {}),
+      ...(args.hipaaAcknowledged ? { hipaaAcknowledgedAt: signatureTimestamp } : {}),
+    });
+  },
+});
+
 /**
  * General ER statistics for the Command Center.
  * This resolves the "Could not find public function" error.

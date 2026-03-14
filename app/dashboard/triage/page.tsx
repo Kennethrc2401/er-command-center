@@ -519,7 +519,7 @@ function ERDashboardContent() {
                               value=""
                               className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[9px] font-black uppercase text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
                             >
-                              <option value="">No beds available</option>
+                              <option value="" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">No beds available</option>
                             </select>
                           ) : (
                             <select
@@ -528,12 +528,12 @@ function ERDashboardContent() {
                                 const nextBed = event.target.value;
                                 void assignBed({ encounterId: e._id, location: nextBed }).catch(notifyBedAssignmentError);
                               }}
-                              className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[9px] font-black uppercase text-blue-700 transition-all hover:border-blue-300 dark:border-blue-700/40 dark:bg-blue-950/30 dark:text-blue-300"
+                              className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[9px] font-black uppercase text-blue-700 transition-all hover:border-blue-300 dark:border-blue-500/60 dark:bg-slate-900 dark:text-blue-200"
                               aria-label={`Assign bed for ${e.patientName}`}
                             >
-                              <option value="">No bed assigned</option>
+                              <option value="" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">No bed assigned</option>
                               {assignableBeds.map((bedId) => (
-                                <option key={bedId} value={bedId}>
+                                <option key={bedId} value={bedId} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
                                   {bedId === currentBed ? `${bedId} (Current)` : bedId}
                                 </option>
                               ))}

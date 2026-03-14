@@ -5,6 +5,7 @@ import { api } from "@/convex/_generated/api";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Doc, Id } from "@/convex/_generated/dataModel";
+import { useUser } from "@clerk/nextjs";
 
 // UI Components
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,7 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { 
-  Activity, Pill, History, Beaker, FileText, ClipboardCheck, Loader2, Printer, Scan, Home, AlertCircle,
+  Activity, Pill, History, Beaker, FileText, ClipboardCheck, Loader2, Printer, Scan, Home, AlertCircle, PenTool,
   FileStack,
   ShieldCheck,
   Download,
@@ -53,6 +54,7 @@ import InsuranceFinancials from "@/components/insurance/InsuranceFinancials";
 import IdentityVerificationModal from "@/components/insurance/identification/IdentityVerificationModal";
 import { toast } from "sonner";
 import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
+import { useStaffSession } from "@/lib/hooks/useStaffSession";
 import VitalsUpdate from "@/components/clinical/VitalsUpdate";
 import VitalsSparkline from "@/components/clinical/VitalsSparkline";
 import SBARGenerator from "@/components/clinical/SBARGenerator";
@@ -60,9 +62,12 @@ import DischargeSummaryOverlay from "@/components/clinical/DischargeSummary";
 import MedicationOrder from "@/components/clinical/MedicationOrder";
 import ProtocolLibrary from "@/components/clinical/ProtocolLibrary";
 import OrderEntry from "@/components/clinical/OrderEntry";
+import PatientEducation from "@/components/clinical/PatientEducation";
 import { PROTOCOL_LIBRARY } from "@/lib/hooks/protocols";
 import RiskBadge from "@/components/clinical/RiskBadge";
 import AmbientScribe from "@/components/clinical/AmbientScribe";
+import TeleConsult from "@/components/appts/TeleConsult";
+import SignaturePad from "@/components/clinical/SignaturePad";
 
 // DYNAMIC IMPORT: DischargeInlineComponent
 const DischargeInlineComponent = dynamic(
@@ -90,6 +95,9 @@ interface DetailedEncounter extends Omit<Doc<"encounters">, "insurance"> {
 export default function PatientPage() {
   const params = useParams();
   const patientId = params.id as Id<"patients">;
+  const { user } = useUser();
+  const staffSession = useStaffSession();
+  const staffEmail = user?.primaryEmailAddress?.emailAddress;
   const runDiscovery = useMutation(api.insurance.discoverSecondaryCoverage);
   const [isSearching, setIsSearching] = useState(false);
   const [activeTab, setActiveTab] = useState("vitals");
@@ -109,6 +117,22 @@ export default function PatientPage() {
   
   // Use the new JOINED query we discussed
   const encounters = useQuery(api.encounters.getByPatientWithInsurance, { patientId });
+  const signedInStaff = useQuery(
+    api.users.getByEmail,
+    staffEmail ? { email: staffEmail } : "skip"
+  );
+  const teleConsultUserId =
+    signedInStaff?._id ??
+    (staffSession.user?.userId as Id<"users"> | undefined);
+  const isResolvingTeleConsultIdentity = !teleConsultUserId && staffSession.loading;
+  const clerkLookupState = !staffEmail
+    ? "No Clerk email"
+    : signedInStaff?._id
+      ? "Matched"
+      : "No users record";
+  const staffSessionState = staffSession.user?.userId
+    ? "Session userId present"
+    : "No staff session user";
   
   // Find the active encounter safely
   const activeEncounter = (encounters?.find(e => e.status !== "discharged") || encounters?.[0]) as DetailedEncounter | undefined;
@@ -151,6 +175,19 @@ export default function PatientPage() {
     }));
   const hasUrgentTimelineEvents = urgentRecentTimelineCount > 0;
   const protocolCount = PROTOCOL_LIBRARY.length;
+  const isLegalConsentComplete = Boolean(
+    activeEncounter?.patientSignature?.trim() &&
+      activeEncounter?.consentToTreatSignedAt &&
+      activeEncounter?.hipaaAcknowledgedAt
+  );
+  const legalSignedAt =
+    activeEncounter?.signatureTimestamp ??
+    activeEncounter?.consentToTreatSignedAt ??
+    activeEncounter?.hipaaAcknowledgedAt;
+  const signatureStatusTooltip =
+    isLegalConsentComplete && legalSignedAt
+      ? `Signed ${new Date(legalSignedAt).toLocaleString()}`
+      : "Awaiting legal consent completion";
 
   // --- 3. LOADING & ERROR STATES ---
   if (!patient || !encounters) {
@@ -359,7 +396,7 @@ export default function PatientPage() {
           <CommandBar setTab={setActiveTab} />
           
           <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="flex h-auto w-full flex-wrap gap-1.5 overflow-x-auto rounded-[2rem] border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-700 dark:bg-slate-900/80 md:flex-nowrap">
+            <TabsList className="grid! h-auto! w-full! grid-cols-2! items-stretch! justify-stretch! gap-1.5 overflow-hidden rounded-[2rem] border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-700 dark:bg-slate-900/80 sm:grid-cols-3! lg:grid-cols-5! 2xl:grid-cols-10!">
               {[
                 { value: "vitals", icon: Activity, label: "Vitals", badge: 0 },
                 { value: "triage", icon: ClipboardCheck, label: "Triage", badge: 0 },
@@ -368,19 +405,32 @@ export default function PatientPage() {
                 { value: "mar", icon: Pill, label: "MAR", badge: 0 },
                 { value: "notes", icon: FileText, label: "Notes", badge: 0 },
                 { value: "billing", icon: FileStack, label: "Billing", badge: 0 },
+                { value: "signature", icon: PenTool, label: "Signature", badge: 0 },
                 { value: "discharge", icon: Home, label: "Discharge", badge: 0 },
                 { value: "handoff", icon: ArrowLeftRight, label: "Handoff", badge: 0 },
               ].map((tab) => (
                 <TabsTrigger
                   key={tab.value}
                   value={tab.value}
-                  className="min-w-25 flex-1 rounded-[1.5rem] py-3 text-[10px] font-black uppercase italic tracking-widest transition-all data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm dark:text-slate-300 dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-blue-400 md:min-w-0"
+                  className="h-auto! w-full! flex-none! flex-wrap! whitespace-normal! rounded-4xl px-2 py-2.5 text-[9px] font-black uppercase italic tracking-wide leading-tight transition-all data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm dark:text-slate-300 dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-blue-400 sm:text-[10px]"
                 >
-                  <tab.icon className="size-3.5 mr-2 shrink-0" /> 
-                  <span className="truncate">{tab.label}</span>
-                  {tab.badge > 0 && (
+                  <tab.icon className="size-3.5 shrink-0" /> 
+                  <span className="text-center">{tab.label}</span>
+                  {tab.value === "signature" ? (
+                    <span
+                      title={signatureStatusTooltip}
+                      aria-label={signatureStatusTooltip}
+                      className={`mt-0.5 hidden rounded-full px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide md:inline-flex md:basis-full md:justify-center md:mx-auto md:max-w-max ${
+                        isLegalConsentComplete
+                          ? "bg-emerald-600 text-white dark:bg-emerald-500"
+                          : "bg-slate-300 text-slate-700 dark:bg-slate-700 dark:text-slate-200"
+                      }`}
+                    >
+                      {isLegalConsentComplete ? "SIGNED" : "PENDING"}
+                    </span>
+                  ) : tab.badge > 0 ? (
                     <span className="ml-1.5 px-1.5 py-0.5 bg-blue-600 text-white text-[8px] rounded-full animate-pulse">{tab.badge}</span>
-                  )}
+                  ) : null}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -502,6 +552,30 @@ export default function PatientPage() {
                     encounterId={activeEncounter._id}
                     suggestedOrders={suggestedTriageOrders}
                   />
+                  {teleConsultUserId ? (
+                    <TeleConsult
+                      encounterId={activeEncounter._id}
+                      patientId={patientId}
+                      userId={teleConsultUserId}
+                    />
+                  ) : isResolvingTeleConsultIdentity ? (
+                    <Card className="rounded-[2rem] border border-slate-200 bg-slate-100/60 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/50">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300">
+                        Resolving staff identity for tele-consult...
+                      </p>
+                    </Card>
+                  ) : (
+                    <Card className="rounded-[2rem] border border-slate-200 bg-slate-100/60 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/50">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300">
+                        Tele-Consult unavailable: resolve staff identity to page specialist.
+                      </p>
+                      <div className="mt-3 space-y-1 rounded-xl border border-slate-200 bg-white/70 p-2 dark:border-slate-700 dark:bg-slate-800/50">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Identity Diagnostics</p>
+                        <p className="text-[9px] font-bold text-slate-500 dark:text-slate-300">Clerk Lookup: {clerkLookupState}</p>
+                        <p className="text-[9px] font-bold text-slate-500 dark:text-slate-300">Staff Session: {staffSessionState}</p>
+                      </div>
+                    </Card>
+                  )}
                 </div>
               </div>
             </TabsContent>
@@ -556,7 +630,8 @@ export default function PatientPage() {
                           vitals: activeEncounter.vitals,
                         }}
                         orders={scribeOrders}
-                      />
+                          encounterId={activeEncounter._id}
+                        />
 
                       <div className="flex justify-end">
                         <Button
@@ -668,6 +743,17 @@ export default function PatientPage() {
                 </div>
               </TabsContent>
 
+              <TabsContent value="signature" className="pt-4 space-y-6 animate-in fade-in-50">
+                <div className="mx-auto max-w-3xl space-y-4">
+                  <div className="rounded-3xl border border-slate-200 bg-slate-100/50 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300">
+                      Legal Consent Capture: Consent to Treat + HIPAA Acknowledgement
+                    </p>
+                  </div>
+                  <SignaturePad encounterId={activeEncounter._id} />
+                </div>
+              </TabsContent>
+
             <TabsContent value="handoff" className="pt-4 space-y-6 animate-in fade-in-50">
               <div className="max-w-2xl mx-auto">
                 <SBARGenerator
@@ -708,7 +794,19 @@ export default function PatientPage() {
                </div>
                <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
                   <div className="xl:col-span-8 space-y-6"><FollowUpCard appt={{ followUpDate: activeEncounter.estimatedDischargeTime ? new Date(activeEncounter.estimatedDischargeTime).toISOString().split('T')[0] : undefined, provider: "", specialty: "", time: "", address: "" }} /><DischargeInlineComponent encounterId={activeEncounter._id} /></div>
-                  <div className="xl:col-span-4"><EducationTracker encounterId={activeEncounter._id} /></div>
+                  <div className="xl:col-span-4 space-y-6">
+                    <EducationTracker encounterId={activeEncounter._id} />
+                    <PatientEducation
+                      encounter={{
+                        _id: activeEncounter._id,
+                        chiefComplaint: displayedChiefComplaint,
+                      }}
+                      patient={{
+                        name: formatPatientName(patient.name),
+                        mrn: maskedMrn,
+                      }}
+                    />
+                  </div>
                </div>
             </TabsContent>
           </Tabs>
@@ -807,6 +905,10 @@ export default function PatientPage() {
             chiefComplaint: displayedChiefComplaint,
             vitals: activeEncounter.vitals,
             _id: activeEncounter._id,
+            patientSignature: activeEncounter.patientSignature,
+            signatureTimestamp: activeEncounter.signatureTimestamp,
+            consentToTreatSignedAt: activeEncounter.consentToTreatSignedAt,
+            hipaaAcknowledgedAt: activeEncounter.hipaaAcknowledgedAt,
           }}
           onClose={() => setShowDischarge(false)}
         />

@@ -90,15 +90,15 @@ export default function NewPatientModal({ trigger }: NewPatientModalProps) {
                 id="gender"
                 name="gender"
                 defaultValue=""
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 required
                 disabled={isPending}
               >
-                <option value="" disabled>Select...</option>
-                <option value="Male">Male</option>
-                <option value="Female">Female</option>
-                <option value="Other">Other</option>
-                <option value="Unknown">Unknown</option>
+                <option value="" disabled className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">Select...</option>
+                <option value="Male" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">Male</option>
+                <option value="Female" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">Female</option>
+                <option value="Other" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">Other</option>
+                <option value="Unknown" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">Unknown</option>
               </select>
             </div>
           </div>
@@ -111,14 +111,14 @@ export default function NewPatientModal({ trigger }: NewPatientModalProps) {
                 id="acuity"
                 name="acuity"
                 defaultValue="3"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 disabled={isPending}
               >
-                <option value="1">1 - Resuscitation</option>
-                <option value="2">2 - Emergent</option>
-                <option value="3">3 - Urgent</option>
-                <option value="4">4 - Less Urgent</option>
-                <option value="5">5 - Non-Urgent</option>
+                <option value="1" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">1 - Resuscitation</option>
+                <option value="2" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">2 - Emergent</option>
+                <option value="3" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">3 - Urgent</option>
+                <option value="4" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">4 - Less Urgent</option>
+                <option value="5" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">5 - Non-Urgent</option>
               </select>
             </div>
 

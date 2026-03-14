@@ -216,11 +216,11 @@ export default function ClinicianDirectory() {
                     id="new-role"
                     value={createForm.role}
                     onChange={(e) => setCreateForm((prev) => ({ ...prev, role: e.target.value as UserRole }))}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
                     disabled={createPending}
                   >
                     {ROLE_OPTIONS.map((role) => (
-                      <option key={role} value={role}>
+                      <option key={role} value={role} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
                         {role}
                       </option>
                     ))}
@@ -436,11 +436,11 @@ export default function ClinicianDirectory() {
                   id="edit-role"
                   value={editForm.role}
                   onChange={(e) => setEditForm((prev) => ({ ...prev, role: e.target.value as UserRole }))}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
                   disabled={editPending}
                 >
                   {ROLE_OPTIONS.map((role) => (
-                    <option key={role} value={role}>
+                    <option key={role} value={role} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
                       {role}
                     </option>
                   ))}
@@ -452,11 +452,11 @@ export default function ClinicianDirectory() {
                   id="edit-status"
                   value={editForm.status}
                   onChange={(e) => setEditForm((prev) => ({ ...prev, status: e.target.value as UserStatus }))}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
                   disabled={editPending}
                 >
                   {STATUS_OPTIONS.map((status) => (
-                    <option key={status} value={status}>
+                    <option key={status} value={status} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
                       {status}
                     </option>
                   ))}

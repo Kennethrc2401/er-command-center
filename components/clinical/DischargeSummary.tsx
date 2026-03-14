@@ -2,6 +2,9 @@
 
 import { Printer, ArrowLeft, ShieldCheck, Calendar } from "lucide-react";
 import { toast } from "sonner";
+import type { Id } from "@/convex/_generated/dataModel";
+import SignaturePad from "@/components/clinical/SignaturePad";
+import PatientEducation from "@/components/clinical/PatientEducation";
 
 interface DischargeSummaryPatient {
   name: string;
@@ -18,7 +21,11 @@ interface DischargeSummaryEncounter {
     spO2: string | number;
     temp: string | number;
   };
-  _id: string;
+  _id: Id<"encounters">;
+  patientSignature?: string;
+  signatureTimestamp?: number;
+  consentToTreatSignedAt?: number;
+  hipaaAcknowledgedAt?: number;
 }
 
 interface DischargeSummaryProps {
@@ -28,7 +35,18 @@ interface DischargeSummaryProps {
 }
 
 export default function DischargeSummary({ patient, encounter, onClose }: DischargeSummaryProps) {
+  const hasSavedLegalConsent = Boolean(
+    encounter.patientSignature?.trim() &&
+      encounter.consentToTreatSignedAt &&
+      encounter.hipaaAcknowledgedAt
+  );
+
   const handlePrint = () => {
+    if (!hasSavedLegalConsent) {
+      toast.error("Capture signed Consent to Treat and HIPAA acknowledgement before printing.");
+      return;
+    }
+
     window.print();
     toast.success("Sending to printer...");
   };
@@ -48,7 +66,13 @@ export default function DischargeSummary({ patient, encounter, onClose }: Discha
         </button>
         <button 
           onClick={handlePrint}
-          className="bg-blue-600 text-white px-6 py-3 rounded-2xl flex items-center gap-2 font-black uppercase text-[10px] tracking-widest shadow-lg hover:bg-blue-700 transition-all"
+          disabled={!hasSavedLegalConsent}
+          className={`px-6 py-3 rounded-2xl flex items-center gap-2 font-black uppercase text-[10px] tracking-widest shadow-lg transition-all ${
+            hasSavedLegalConsent
+              ? "bg-blue-600 text-white hover:bg-blue-700"
+              : "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none"
+          }`}
+          title={hasSavedLegalConsent ? "Print discharge papers" : "Signed legal consents required before printing"}
         >
           <Printer className="h-4 w-4" /> Print Discharge Papers
         </button>
@@ -130,6 +154,24 @@ export default function DischargeSummary({ patient, encounter, onClose }: Discha
           </table>
         </section>
 
+        <section>
+          <PatientEducation
+            encounter={{
+              _id: encounter._id,
+              chiefComplaint: encounter.chiefComplaint,
+            }}
+            patient={{
+              name: patient.name,
+              mrn: patient.mrn,
+            }}
+          />
+        </section>
+
+        {/* SIGNATURE CAPTURE (UI ONLY) */}
+        <section className="print:hidden">
+          <SignaturePad encounterId={encounter._id} />
+        </section>
+
         {/* FOOTER / LEGAL DISCLOSURE */}
         <footer className="pt-12 text-[9px] text-slate-400 leading-relaxed space-y-4">
           <p className="italic">
@@ -137,11 +179,30 @@ export default function DischargeSummary({ patient, encounter, onClose }: Discha
             This summary is not a substitute for professional medical advice. Always consult your physician for changes in health status.
           </p>
           <div className="flex justify-between items-end border-t pt-8">
-            <div className="space-y-1">
-              <div className="h-12 w-48 border-b border-slate-300 italic text-slate-300 pt-4">Electronically Signed By</div>
-              <p className="font-black uppercase tracking-widest">Attending Physician, Nexus Health ER</p>
+            <div className="space-y-4">
+              {encounter.patientSignature ? (
+                <div className="space-y-1">
+                  <img src={encounter.patientSignature} alt="Patient Signature" className="h-12 w-auto grayscale" />
+                  <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
+                    Digitally Signed on {new Date(encounter.signatureTimestamp ?? Date.now()).toLocaleString()}
+                  </p>
+                  <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
+                    Consent to Treat and HIPAA Acknowledgement Recorded
+                  </p>
+                </div>
+              ) : (
+                <div className="h-12 w-48 border-b border-slate-200 italic text-slate-200 pt-4 text-[10px]">
+                  Awaiting Patient Signature
+                </div>
+              )}
+              <p className="font-black uppercase tracking-widest text-[9px]">Patient/Proxy Signature</p>
             </div>
-            <p className="font-bold uppercase tracking-widest">Document ID: {encounter._id.slice(0,8).toUpperCase()}</p>
+
+            <div className="text-right">
+              <p className="font-black uppercase tracking-widest">Attending Physician, Nexus Health</p>
+              <p className="text-[9px] text-slate-400 uppercase font-bold">NPI: 1234567890</p>
+              <p className="mt-2 font-bold uppercase tracking-widest">Document ID: {encounter._id.slice(0,8).toUpperCase()}</p>
+            </div>
           </div>
         </footer>
       </main>
