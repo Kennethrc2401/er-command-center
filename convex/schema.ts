@@ -92,6 +92,20 @@ export default defineSchema({
   })
   .index("by_key", ["key"])
   .index("by_updatedAt", ["updatedAt"]),
+  staffPasskeys: defineTable({
+    userId: v.id("users"),
+    credentialId: v.string(),
+    publicKey: v.string(),
+    counter: v.number(),
+    transports: v.optional(v.array(v.string())),
+    deviceType: v.optional(v.string()),
+    backedUp: v.optional(v.boolean()),
+    name: v.optional(v.string()),
+    createdAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+  })
+  .index("by_user", ["userId"])
+  .index("by_credential_id", ["credentialId"]),
   encounters: defineTable({
     patientId: v.id("patients"),
     patientName: v.optional(v.string()),

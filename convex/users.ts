@@ -425,6 +425,95 @@ export const unlockStaffAccount = mutation({
   },
 });
 
+export const getStaffAuthUserByUsername = query({
+  args: {
+    username: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const normalizedUsername = normalizeUsername(args.username);
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", normalizedUsername))
+      .first();
+
+    if (!user) return null;
+
+    return {
+      userId: user._id,
+      name: user.name,
+      username: user.username ?? normalizedUsername,
+      role: user.role,
+      status: user.status,
+      lockedUntil: user.lockedUntil ?? 0,
+    };
+  },
+});
+
+export const getStaffAuthUserById = query({
+  args: {
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return null;
+
+    return {
+      userId: user._id,
+      name: user.name,
+      username: user.username ?? "",
+      role: user.role,
+      status: user.status,
+      lockedUntil: user.lockedUntil ?? 0,
+    };
+  },
+});
+
+export const recordStaffLoginFailure = mutation({
+  args: {
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user || user.status !== "ACTIVE") {
+      return {
+        locked: false,
+        retryAfterMinutes: 0,
+      };
+    }
+
+    const now = Date.now();
+    const failedAttempts = (user.failedLoginAttempts ?? 0) + 1;
+    const shouldLock = failedAttempts >= MAX_FAILED_LOGIN_ATTEMPTS;
+
+    await ctx.db.patch(user._id, {
+      failedLoginAttempts: shouldLock ? 0 : failedAttempts,
+      lastFailedLoginAt: now,
+      lockedUntil: shouldLock ? now + STAFF_LOCKOUT_DURATION_MS : 0,
+    });
+
+    return {
+      locked: shouldLock,
+      retryAfterMinutes: shouldLock ? Math.max(1, Math.ceil(STAFF_LOCKOUT_DURATION_MS / 60000)) : 0,
+    };
+  },
+});
+
+export const recordStaffLoginSuccess = mutation({
+  args: {
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return;
+
+    await ctx.db.patch(user._id, {
+      failedLoginAttempts: 0,
+      lastFailedLoginAt: 0,
+      lockedUntil: 0,
+    });
+  },
+});
+
 export const consumeStaffIpRateLimit = mutation({
   args: {
     key: v.string(),

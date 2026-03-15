@@ -28,6 +28,7 @@ import type * as medications from "../medications.js";
 import type * as notes from "../notes.js";
 import type * as notifications from "../notifications.js";
 import type * as orders from "../orders.js";
+import type * as passkeys from "../passkeys.js";
 import type * as patientNormalization from "../patientNormalization.js";
 import type * as patients from "../patients.js";
 import type * as seed from "../seed.js";
@@ -65,6 +66,7 @@ declare const fullApi: ApiFromModules<{
   notes: typeof notes;
   notifications: typeof notifications;
   orders: typeof orders;
+  passkeys: typeof passkeys;
   patientNormalization: typeof patientNormalization;
   patients: typeof patients;
   seed: typeof seed;

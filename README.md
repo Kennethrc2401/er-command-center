@@ -44,6 +44,13 @@ Install dependencies: npm install
 
 Environment Variables: Create a .env.local with your NEXT_PUBLIC_CONVEX_URL and Clerk credentials.
 
+Passkey Environment Variables (for Windows Hello / Face ID / Touch ID):
+- `PASSKEY_RP_NAME` (optional, default: `Nexus ER Triage`)
+- `PASSKEY_RP_ID` (recommended in production, your domain only, e.g. `app.yourhospital.org`)
+- `PASSKEY_ALLOWED_ORIGINS` (recommended in production, comma-separated full origins, e.g. `https://app.yourhospital.org`)
+- `STAFF_PASSKEY_CHALLENGE_SECRET` (required for production, long random secret)
+- `STAFF_AUTH_SESSION_SECRET` (required for production, long random secret)
+
 Launch the System: npm run dev
 
 🛡️ Disclaimer & Privacy

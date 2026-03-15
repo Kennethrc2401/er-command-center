@@ -3,14 +3,17 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { AlertTriangle, KeyRound, Loader2, Lock, UserRound } from "lucide-react";
 
 export default function StaffLoginPage() {
   const router = useRouter();
   const [tab, setTab] = useState<"login" | "reset">("login");
   const [pending, setPending] = useState(false);
+  const [passkeyPending, setPasskeyPending] = useState<"login" | "register" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const passkeySupported = typeof window !== "undefined" && typeof window.PublicKeyCredential !== "undefined";
 
   const [loginForm, setLoginForm] = useState({
     username: "",
@@ -98,6 +101,140 @@ export default function StaffLoginPage() {
       setError("Unable to reset password right now. Please try again.");
     } finally {
       setPending(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    if (!passkeySupported) {
+      setError("Passkeys are not supported on this browser or device.");
+      return;
+    }
+
+    const username = loginForm.username.trim();
+    if (!username) {
+      setError("Enter your username before using passkey sign-in.");
+      return;
+    }
+
+    setPasskeyPending("login");
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const optionsResponse = await fetch("/api/staff-auth/passkey/login/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username }),
+      });
+
+      const optionsData = (await optionsResponse.json()) as {
+        error?: string;
+        options?: Parameters<typeof startAuthentication>[0]["optionsJSON"];
+      };
+
+      if (!optionsResponse.ok || !optionsData.options) {
+        setError(optionsData.error ?? "Unable to start passkey sign-in.");
+        return;
+      }
+
+      const assertion = await startAuthentication({
+        optionsJSON: optionsData.options,
+      });
+
+      const verifyResponse = await fetch("/api/staff-auth/passkey/login/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username, response: assertion }),
+      });
+
+      const verifyData = (await verifyResponse.json()) as { error?: string };
+      if (!verifyResponse.ok) {
+        setError(verifyData.error ?? "Passkey sign-in failed.");
+        return;
+      }
+
+      setSuccess("Passkey verified. Redirecting to triage dashboard...");
+      router.push("/dashboard/triage");
+      router.refresh();
+    } catch (err) {
+      if (err instanceof Error && err.name === "NotAllowedError") {
+        setError("Passkey prompt was canceled or timed out.");
+      } else {
+        setError("Unable to complete passkey sign-in right now.");
+      }
+    } finally {
+      setPasskeyPending(null);
+    }
+  };
+
+  const handleRegisterPasskey = async () => {
+    if (!passkeySupported) {
+      setError("Passkeys are not supported on this browser or device.");
+      return;
+    }
+
+    const username = loginForm.username.trim();
+    const password = loginForm.password.trim();
+    const officeKey = loginForm.officeKey.trim();
+
+    if (!username || !password || !officeKey) {
+      setError("Enter username, password, and office key before creating a passkey.");
+      return;
+    }
+
+    setPasskeyPending("register");
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const optionsResponse = await fetch("/api/staff-auth/passkey/register/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username, password, officeKey }),
+      });
+
+      const optionsData = (await optionsResponse.json()) as {
+        error?: string;
+        options?: Parameters<typeof startRegistration>[0]["optionsJSON"];
+      };
+
+      if (!optionsResponse.ok || !optionsData.options) {
+        setError(optionsData.error ?? "Unable to start passkey registration.");
+        return;
+      }
+
+      const registration = await startRegistration({
+        optionsJSON: optionsData.options,
+      });
+
+      const verifyResponse = await fetch("/api/staff-auth/passkey/register/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          response: registration,
+          passkeyName: "Current Device",
+        }),
+      });
+
+      const verifyData = (await verifyResponse.json()) as { error?: string };
+      if (!verifyResponse.ok) {
+        setError(verifyData.error ?? "Passkey registration failed.");
+        return;
+      }
+
+      setSuccess("Passkey saved. You can now sign in with your passkey.");
+    } catch (err) {
+      if (err instanceof Error && err.name === "NotAllowedError") {
+        setError("Passkey registration was canceled or timed out.");
+      } else {
+        setError("Unable to register passkey right now.");
+      }
+    } finally {
+      setPasskeyPending(null);
     }
   };
 
@@ -211,6 +348,33 @@ export default function StaffLoginPage() {
                   {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   {pending ? "Signing In" : "Access Triage Dashboard"}
                 </button>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => void handlePasskeyLogin()}
+                    disabled={!passkeySupported || pending || passkeyPending !== null}
+                    className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-blue-500/40 bg-blue-500/10 text-[10px] font-black uppercase tracking-[0.16em] text-blue-200 transition-all hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {passkeyPending === "login" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    {passkeyPending === "login" ? "Waiting For Passkey" : "Sign In With Passkey"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRegisterPasskey()}
+                    disabled={!passkeySupported || pending || passkeyPending !== null}
+                    className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-200 transition-all hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {passkeyPending === "register" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    {passkeyPending === "register" ? "Registering Passkey" : "Create Device Passkey"}
+                  </button>
+                </div>
+
+                {!passkeySupported && (
+                  <p className="text-[11px] font-semibold text-amber-300">
+                    Passkeys are unavailable in this browser. Use password and office key on this device.
+                  </p>
+                )}
               </form>
             ) : (
               <form className="space-y-4" onSubmit={handleReset}>
