@@ -489,41 +489,51 @@ export const getThroughputBoard = query({
       .filter((q) => q.neq(q.field("status"), "discharged"))
       .collect();
 
-    const board = await Promise.all(
-      activeEncounters.map(async (encounter) => {
-        const state = await getEncounterOperationalState(ctx, encounter);
+    const board = (
+      await Promise.all(
+        activeEncounters.map(async (encounter) => {
+          try {
+            const state = await getEncounterOperationalState(ctx, encounter);
 
-        return {
-          _id: encounter._id,
-          patientId: encounter.patientId,
-          patientName: state.patient?.name ?? encounter.patientName ?? "Unknown Patient",
-          mrn: state.patient?.mrn ?? "N/A",
-          acuity: encounter.acuity,
-          chiefComplaint: encounter.chiefComplaint,
-          status: encounter.status,
-          location: normalizeBedLocation(encounter.location) ?? encounter.location ?? "Waiting",
-          assignedProvider: encounter.assignedProvider ?? "",
-          flowOwner: encounter.flowOwner ?? "",
-          flowStage: state.stage,
-          flowStageUpdatedAt: encounter.flowStageUpdatedAt ?? encounter._creationTime,
-          dispositionPlan: encounter.dispositionPlan ?? "undecided",
-          delayReason: state.delayReason,
-          delayNote: encounter.delayNote ?? "",
-          estimatedDischargeTime: encounter.estimatedDischargeTime,
-          pendingLabCount: state.pendingLabCount,
-          pendingImagingCount: state.pendingImagingCount,
-          criticalLabCount: state.criticalLabCount,
-          hasActiveConsult: state.hasActiveConsult,
-          ageMinutes: Math.max(0, Math.floor((now - encounter._creationTime) / 60000)),
-          stageAgeMinutes: Math.max(
-            0,
-            Math.floor((now - (encounter.flowStageUpdatedAt ?? encounter._creationTime)) / 60000)
-          ),
-          columnKey: state.columnKey,
-          isBlocked: state.columnKey === "blocked",
-        };
-      })
-    );
+            return {
+              _id: encounter._id,
+              patientId: encounter.patientId,
+              patientName: state.patient?.name ?? encounter.patientName ?? "Unknown Patient",
+              mrn: state.patient?.mrn ?? "N/A",
+              acuity: typeof encounter.acuity === "number" ? encounter.acuity : 5,
+              chiefComplaint: encounter.chiefComplaint ?? "Unspecified",
+              status: encounter.status ?? "waiting",
+              location: normalizeBedLocation(encounter.location) ?? encounter.location ?? "Waiting",
+              assignedProvider: encounter.assignedProvider ?? "",
+              flowOwner: encounter.flowOwner ?? "",
+              flowStage: state.stage,
+              flowStageUpdatedAt: encounter.flowStageUpdatedAt ?? encounter._creationTime,
+              dispositionPlan: encounter.dispositionPlan ?? "undecided",
+              delayReason: state.delayReason,
+              delayNote: encounter.delayNote ?? "",
+              estimatedDischargeTime: encounter.estimatedDischargeTime,
+              pendingLabCount: state.pendingLabCount,
+              pendingImagingCount: state.pendingImagingCount,
+              criticalLabCount: state.criticalLabCount,
+              hasActiveConsult: state.hasActiveConsult,
+              ageMinutes: Math.max(0, Math.floor((now - encounter._creationTime) / 60000)),
+              stageAgeMinutes: Math.max(
+                0,
+                Math.floor((now - (encounter.flowStageUpdatedAt ?? encounter._creationTime)) / 60000)
+              ),
+              columnKey: state.columnKey,
+              isBlocked: state.columnKey === "blocked",
+            };
+          } catch (error) {
+            console.error("Skipping malformed encounter in getThroughputBoard", {
+              encounterId: encounter._id,
+              error,
+            });
+            return null;
+          }
+        })
+      )
+    ).filter((row): row is NonNullable<typeof row> => row !== null);
 
     return board.sort((left, right) => {
       if (left.columnKey !== right.columnKey) {
