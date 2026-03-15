@@ -5,6 +5,7 @@ import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { ShieldCheck, ShieldAlert, Loader2, Search, CreditCard } from "lucide-react";
 import { toast } from "sonner";
+import type { Id } from "@/convex/_generated/dataModel";
 
 // Define the shape of the insurance prop based on your new schema
 interface InsuranceData {
@@ -19,15 +20,10 @@ export default function InsuranceBadge({
     encounterId, 
     insurance 
   }: { 
-    encounterId: string, 
+    encounterId: Id<"encounters">, 
     insurance?: InsuranceData | null 
   }) {
-    // const verify = useMutation(api.encounters.verifyInsuranceByEncounter);
-    // TODO: Implement verifyInsuranceByEncounter mutation in convex/encounters.ts
-    const verify = async ({ encounterId }: { encounterId: string }) => {
-      // Placeholder until backend mutation is created
-      return "Verified";
-    };
+    const verify = useMutation(api.insurance.verifyInsuranceByEncounter);
     const [loading, setLoading] = useState(false);
 
     const handleVerify = async () => {
@@ -61,7 +57,7 @@ export default function InsuranceBadge({
           duration: 5000,
         });
       }
-    } catch (error) {
+    } catch {
       setLoading(false);
       toast.error("System Error", { 
         description: "Gateway Timeout: Clearinghouse (Availity/Change Healthcare) unreachable." 

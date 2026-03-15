@@ -3,7 +3,9 @@ export type ProtocolCategory =
   | "Respiratory"
   | "Neurological"
   | "General"
-  | "Pediatrics";
+  | "Pediatrics"
+  | "Trauma"
+  | "Behavioral";
 
 export type ProtocolTag =
   | "Critical"
@@ -16,7 +18,8 @@ export type ProtocolTag =
   | "Infectious"
   | "Metabolic"
   | "Toxicology"
-  | "Peds";
+  | "Peds"
+  | "Psych";
 
 export interface Protocol {
   id: string;
@@ -166,6 +169,32 @@ export const PROTOCOL_LIBRARY: Protocol[] = [
       "Reverse anticoagulation promptly when indicated",
       "Maintain head-of-bed elevation and avoid hypotension/hypoxia",
       "Escalate to neurosurgery for concerning imaging or decline"
+    ]
+  },
+  {
+    id: "trauma-activation",
+    title: "Trauma Activation",
+    category: "Trauma",
+    tags: ["Critical", "Time-Sensitive", "Trauma", "Consult"],
+    steps: [
+      "Trigger trauma team activation and assign recorder roles",
+      "Perform primary survey with immediate airway and hemorrhage control",
+      "Prepare blood products, type and screen, and trauma imaging",
+      "Trend blood pressure, mental status, and response to resuscitation",
+      "Escalate to OR or transfer pathway immediately if unstable injuries are suspected"
+    ]
+  },
+  {
+    id: "behavioral-health-hold",
+    title: "Behavioral Health Safety Hold",
+    category: "Behavioral",
+    tags: ["Critical", "Consult", "Psych"],
+    steps: [
+      "Initiate constant observation or sitter coverage per policy",
+      "Secure belongings and remove ligature or sharps hazards",
+      "Complete medical clearance orders and suicide risk screening",
+      "Notify behavioral health and social work teams",
+      "Document de-escalation strategy, triggers, and safe handoff plan"
     ]
   },
   {

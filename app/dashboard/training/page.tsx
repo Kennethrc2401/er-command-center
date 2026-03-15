@@ -5,6 +5,7 @@ import ReferenceSidebar from "../../../components/Training/ReferenceSidebar";
 import { GraduationCap, BookOpen, ChevronRight, Activity, Sparkles } from "lucide-react";
 import EsiWizard from "@/components/Training/EsiWizard";
 import SimulateShift from "@/components/Training/SimulateShift";
+import WorkflowAnalytics from "@/components/Training/WorkflowAnalytics";
 
 const quickProtocols = [
   {
@@ -110,6 +111,8 @@ export default function TrainingPage() {
             </div>
           </div>
         </section>
+
+        <WorkflowAnalytics />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:gap-8 xl:gap-10">
           <aside className="order-2 min-w-0 space-y-4 lg:order-1 lg:col-span-3 lg:space-y-6">

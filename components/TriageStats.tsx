@@ -1,8 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import { AlertCircle, Activity, Users, BedDouble, AlertTriangle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 
 interface TriageStatsProps {
   level1: number;
@@ -48,12 +46,18 @@ export default function TriageStats({ level1, level2, level3, availableBeds, tot
         </div>
 
         {/* Dynamic Bed Card */}
-        <div className={`p-4 rounded-xl border-2 ${isOverloaded ? "bg-red-50 border-red-500" : "bg-white border-slate-100"}`}>
-          <p className="text-xs font-bold uppercase text-slate-400">Available Beds</p>
-          <h2 className="text-4xl font-black mt-2">{availableBeds < 0 ? 0 : availableBeds}</h2>
-          <div className="mt-2 w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+        <div className={`rounded-xl border-2 p-4 shadow-lg transition-colors ${
+          isOverloaded
+            ? "border-red-500 bg-red-50 dark:bg-red-950/30"
+            : "border-slate-100 bg-white dark:border-slate-700 dark:bg-slate-900"
+        }`}>
+          <p className="text-xs font-bold uppercase text-slate-400 dark:text-slate-400">Available Beds</p>
+          <h2 className={`mt-2 text-4xl font-black ${isOverloaded ? "text-red-600 dark:text-red-400" : "text-slate-900 dark:text-slate-100"}`}>
+            {availableBeds < 0 ? 0 : availableBeds}
+          </h2>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
             <div 
-              className="bg-blue-600 h-full transition-all duration-500" 
+              className={`h-full transition-all duration-500 ${isOverloaded ? "bg-red-500" : "bg-blue-600 dark:bg-blue-500"}`}
               style={{ width: `${occupancyRate}%` }} 
             />
           </div>

@@ -1,6 +1,7 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { normalizePatientContactFields } from "./patientNormalization";
+import type { Doc } from "./_generated/dataModel";
 
 /**
  * Shared Vitals Validator to ensure strict data integrity.
@@ -14,6 +15,82 @@ const vitalsValidator = v.object({
 
 const TOTAL_BEDS = 20;
 const BED_LOCATION_PATTERN = /^bed\s+(\d+)$/i;
+const THROUGHPUT_SHIFT_WINDOW_MS = 12 * 60 * 60 * 1000;
+const transportStatusValidator = v.optional(v.union(
+  v.literal("not_requested"),
+  v.literal("requested"),
+  v.literal("in_progress"),
+  v.literal("completed")
+));
+const roomTurnoverStatusValidator = v.optional(v.union(
+  v.literal("not_started"),
+  v.literal("cleaning"),
+  v.literal("ready")
+));
+
+const throughputStageValidator = v.union(
+  v.literal("triage"),
+  v.literal("awaiting_bed"),
+  v.literal("bedded"),
+  v.literal("provider_assigned"),
+  v.literal("workup_pending"),
+  v.literal("consult_pending"),
+  v.literal("discharge_ready"),
+  v.literal("admit_ready"),
+  v.literal("boarded")
+);
+
+const dispositionPlanValidator = v.union(
+  v.literal("undecided"),
+  v.literal("discharge"),
+  v.literal("admit"),
+  v.literal("observation"),
+  v.literal("transfer")
+);
+
+const delayReasonValidator = v.union(
+  v.literal("none"),
+  v.literal("awaiting_bed"),
+  v.literal("awaiting_provider"),
+  v.literal("awaiting_labs"),
+  v.literal("awaiting_imaging"),
+  v.literal("awaiting_consult"),
+  v.literal("awaiting_transport"),
+  v.literal("awaiting_inpatient_bed"),
+  v.literal("awaiting_discharge_paperwork"),
+  v.literal("insurance_hold"),
+  v.literal("registration_hold"),
+  v.literal("other")
+);
+
+type ThroughputStage =
+  | "triage"
+  | "awaiting_bed"
+  | "bedded"
+  | "provider_assigned"
+  | "workup_pending"
+  | "consult_pending"
+  | "discharge_ready"
+  | "admit_ready"
+  | "boarded";
+
+type DelayReason =
+  | "none"
+  | "awaiting_bed"
+  | "awaiting_provider"
+  | "awaiting_labs"
+  | "awaiting_imaging"
+  | "awaiting_consult"
+  | "awaiting_transport"
+  | "awaiting_inpatient_bed"
+  | "awaiting_discharge_paperwork"
+  | "insurance_hold"
+  | "registration_hold"
+  | "other";
+
+type ThroughputColumnKey = "frontDoor" | "workup" | "disposition" | "blocked";
+
+const DEFAULT_DELAY_REASON: DelayReason = "none";
 
 function normalizeBedLocation(location?: string): string | null {
   if (!location) return null;
@@ -29,6 +106,91 @@ function normalizeBedLocation(location?: string): string | null {
   }
 
   return `Bed ${bedNumber}`;
+}
+
+function averageMinutes(samples: number[]): number | null {
+  if (samples.length === 0) return null;
+  const total = samples.reduce((sum, value) => sum + value, 0);
+  return Math.round(total / samples.length);
+}
+
+function deriveThroughputStage(
+  encounter: Doc<"encounters">,
+  options: {
+    pendingLabCount: number;
+    pendingImagingCount: number;
+    hasActiveConsult: boolean;
+  }
+): ThroughputStage {
+  if (encounter.flowStage) {
+    return encounter.flowStage;
+  }
+
+  const hasBed = Boolean(normalizeBedLocation(encounter.location));
+  const hasAssignedProvider = Boolean(encounter.assignedProvider?.trim());
+  const activeDisposition = encounter.dispositionPlan ?? "undecided";
+  const hasPendingWorkup = options.pendingLabCount > 0 || options.pendingImagingCount > 0;
+
+  if (encounter.status === "triage") return "triage";
+  if (!hasBed) return "awaiting_bed";
+  if (encounter.status === "observed") return activeDisposition === "discharge" ? "discharge_ready" : "boarded";
+  if (activeDisposition === "admit" && encounter.readyForAdmissionAt) return "admit_ready";
+  if (activeDisposition === "discharge" && encounter.readyForDischargeAt) return "discharge_ready";
+  if (!hasAssignedProvider) return "bedded";
+  if (options.hasActiveConsult) return "consult_pending";
+  if (hasPendingWorkup) return "workup_pending";
+  return "provider_assigned";
+}
+
+function getThroughputColumnKey(stage: ThroughputStage, delayReason: DelayReason): ThroughputColumnKey {
+  if (stage === "boarded" || delayReason !== DEFAULT_DELAY_REASON) return "blocked";
+  if (stage === "triage" || stage === "awaiting_bed") return "frontDoor";
+  if (stage === "discharge_ready" || stage === "admit_ready") return "disposition";
+  return "workup";
+}
+
+async function getEncounterOperationalState(
+  ctx: QueryCtx | MutationCtx,
+  encounter: Doc<"encounters">
+) {
+  const [patient, labResults, imagingOrders, consults] = await Promise.all([
+    ctx.db.get(encounter.patientId),
+    ctx.db
+      .query("labResults")
+      .withIndex("by_encounter", (q) => q.eq("encounterId", encounter._id))
+      .collect(),
+    ctx.db
+      .query("imagingOrders")
+      .withIndex("by_encounter", (q) => q.eq("encounterId", encounter._id))
+      .collect(),
+    ctx.db
+      .query("teleConsults")
+      .withIndex("by_encounter", (q) => q.eq("encounterId", encounter._id))
+      .collect(),
+  ]);
+
+  const pendingLabCount = labResults.filter((lab) => lab.status === "pending").length;
+  const criticalLabCount = labResults.filter((lab) => lab.isAbnormal && !lab.acknowledgedAt).length;
+  const pendingImagingCount = imagingOrders.filter((order) => order.status !== "Resulted").length;
+  const hasActiveConsult = consults.some((consult) => consult.status === "REQUESTED" || consult.status === "ACTIVE");
+  const stage = deriveThroughputStage(encounter, {
+    pendingLabCount,
+    pendingImagingCount,
+    hasActiveConsult,
+  });
+  const delayReason = encounter.delayReason ?? DEFAULT_DELAY_REASON;
+  const columnKey = getThroughputColumnKey(stage, delayReason);
+
+  return {
+    patient,
+    pendingLabCount,
+    pendingImagingCount,
+    criticalLabCount,
+    hasActiveConsult,
+    stage,
+    delayReason,
+    columnKey,
+  };
 }
 
 /**
@@ -225,9 +387,13 @@ export const dischargePatient = mutation({
     summary: v.string(),
   },
   handler: async (ctx, args) => {
+    const encounter = await ctx.db.get(args.encounterId);
+    if (!encounter) throw new Error("Encounter not found");
+
     return await ctx.db.patch(args.encounterId, {
       status: "discharged",
       dischargeSummary: args.summary,
+      dispositionPlan: encounter.dispositionPlan ?? "discharge",
       dischargedAt: Date.now(),
     });
   },
@@ -274,12 +440,14 @@ export const saveSignature = mutation({
  */
 export const getERStats = query({
   handler: async (ctx) => {
-    // 1. Get all active patients
-    const active = await ctx.db
-      .query("encounters")
-      .withIndex("by_status")
-      .filter((q) => q.neq(q.field("status"), "discharged"))
-      .collect();
+    const [active, insuranceRows] = await Promise.all([
+      ctx.db
+        .query("encounters")
+        .withIndex("by_status")
+        .filter((q) => q.neq(q.field("status"), "discharged"))
+        .collect(),
+      ctx.db.query("insurance").collect(),
+    ]);
 
     // 🩺 THE "REALITY" FILTER:
     // A patient occupies a bed IF they have a status of 'in_treatment'/'admitted'
@@ -303,10 +471,179 @@ export const getERStats = query({
       highAcuity: active.filter((p) => (p.acuity ?? 5) <= 2).length,
       availableBeds, 
       boardingPatients: active.filter((p) => p.status === "observed").length,
-      pendingInsurance: 0, 
+      pendingInsurance: insuranceRows.filter((row) => row.status === "pending").length,
       status: physicalOccupancy >= TOTAL_CAPACITY ? "DIVERSION_RISK" : "NORMAL",
       dailyRevenue: 0, 
       collectionCount: 0,
+    };
+  },
+});
+
+export const getThroughputBoard = query({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const activeEncounters = await ctx.db
+      .query("encounters")
+      .withIndex("by_status")
+      .filter((q) => q.neq(q.field("status"), "discharged"))
+      .collect();
+
+    const board = await Promise.all(
+      activeEncounters.map(async (encounter) => {
+        const state = await getEncounterOperationalState(ctx, encounter);
+
+        return {
+          _id: encounter._id,
+          patientId: encounter.patientId,
+          patientName: state.patient?.name ?? encounter.patientName ?? "Unknown Patient",
+          mrn: state.patient?.mrn ?? "N/A",
+          acuity: encounter.acuity,
+          chiefComplaint: encounter.chiefComplaint,
+          status: encounter.status,
+          location: normalizeBedLocation(encounter.location) ?? encounter.location ?? "Waiting",
+          assignedProvider: encounter.assignedProvider ?? "",
+          flowOwner: encounter.flowOwner ?? "",
+          flowStage: state.stage,
+          flowStageUpdatedAt: encounter.flowStageUpdatedAt ?? encounter._creationTime,
+          dispositionPlan: encounter.dispositionPlan ?? "undecided",
+          delayReason: state.delayReason,
+          delayNote: encounter.delayNote ?? "",
+          estimatedDischargeTime: encounter.estimatedDischargeTime,
+          pendingLabCount: state.pendingLabCount,
+          pendingImagingCount: state.pendingImagingCount,
+          criticalLabCount: state.criticalLabCount,
+          hasActiveConsult: state.hasActiveConsult,
+          ageMinutes: Math.max(0, Math.floor((now - encounter._creationTime) / 60000)),
+          stageAgeMinutes: Math.max(
+            0,
+            Math.floor((now - (encounter.flowStageUpdatedAt ?? encounter._creationTime)) / 60000)
+          ),
+          columnKey: state.columnKey,
+          isBlocked: state.columnKey === "blocked",
+        };
+      })
+    );
+
+    return board.sort((left, right) => {
+      if (left.columnKey !== right.columnKey) {
+        return left.columnKey.localeCompare(right.columnKey);
+      }
+      if (left.acuity !== right.acuity) {
+        return left.acuity - right.acuity;
+      }
+      return right.ageMinutes - left.ageMinutes;
+    });
+  },
+});
+
+export const getThroughputMetrics = query({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const allEncounters = await ctx.db.query("encounters").collect();
+    const relevantEncounters = allEncounters.filter(
+      (encounter) =>
+        encounter.status !== "discharged" ||
+        (encounter.dischargedAt ?? 0) >= now - THROUGHPUT_SHIFT_WINDOW_MS
+    );
+    const activeEncounters = relevantEncounters.filter((encounter) => encounter.status !== "discharged");
+
+    const activeStates = await Promise.all(
+      activeEncounters.map(async (encounter) => ({
+        encounter,
+        ...(await getEncounterOperationalState(ctx, encounter)),
+      }))
+    );
+
+    const blockedCount = activeStates.filter(
+      ({ stage, delayReason }) => stage === "boarded" || delayReason !== DEFAULT_DELAY_REASON
+    ).length;
+    const readyDischargeCount = activeStates.filter(({ stage }) => stage === "discharge_ready").length;
+    const readyAdmissionCount = activeStates.filter(
+      ({ stage }) => stage === "admit_ready" || stage === "boarded"
+    ).length;
+
+    const columnCounts = activeStates.reduce<Record<ThroughputColumnKey, number>>(
+      (counts, state) => {
+        counts[state.columnKey] += 1;
+        return counts;
+      },
+      {
+        frontDoor: 0,
+        workup: 0,
+        disposition: 0,
+        blocked: 0,
+      }
+    );
+
+    const blockerCounts = activeStates.reduce<Record<DelayReason, number>>(
+      (counts, state) => {
+        counts[state.delayReason] += 1;
+        return counts;
+      },
+      {
+        none: 0,
+        awaiting_bed: 0,
+        awaiting_provider: 0,
+        awaiting_labs: 0,
+        awaiting_imaging: 0,
+        awaiting_consult: 0,
+        awaiting_transport: 0,
+        awaiting_inpatient_bed: 0,
+        awaiting_discharge_paperwork: 0,
+        insurance_hold: 0,
+        registration_hold: 0,
+        other: 0,
+      }
+    );
+
+    const doorToBedSamples = relevantEncounters
+      .filter((encounter) => encounter.bedAssignedAt)
+      .map((encounter) => Math.max(0, Math.round(((encounter.bedAssignedAt ?? 0) - encounter._creationTime) / 60000)));
+
+    const providerToDecisionSamples = relevantEncounters
+      .filter((encounter) => encounter.providerAssignedAt && encounter.dispositionDecisionAt)
+      .map((encounter) =>
+        Math.max(
+          0,
+          Math.round(((encounter.dispositionDecisionAt ?? 0) - (encounter.providerAssignedAt ?? 0)) / 60000)
+        )
+      );
+
+    const dischargeLagSamples = relevantEncounters
+      .filter((encounter) => encounter.readyForDischargeAt && encounter.dischargedAt)
+      .map((encounter) =>
+        Math.max(
+          0,
+          Math.round(((encounter.dischargedAt ?? 0) - (encounter.readyForDischargeAt ?? 0)) / 60000)
+        )
+      );
+
+    const boardingSamples = relevantEncounters
+      .filter((encounter) => encounter.readyForAdmissionAt)
+      .map((encounter) =>
+        Math.max(
+          0,
+          Math.round((((encounter.dischargedAt ?? now) - (encounter.readyForAdmissionAt ?? 0)) / 60000))
+        )
+      );
+
+    return {
+      activeCount: activeEncounters.length,
+      blockedCount,
+      readyDischargeCount,
+      readyAdmissionCount,
+      columnCounts,
+      blockerCounts: Object.entries(blockerCounts)
+        .filter(([reason, count]) => reason !== DEFAULT_DELAY_REASON && count > 0)
+        .sort((left, right) => right[1] - left[1])
+        .map(([reason, count]) => ({ reason, count })),
+      avgDoorToBedMinutes: averageMinutes(doorToBedSamples),
+      avgProviderToDecisionMinutes: averageMinutes(providerToDecisionSamples),
+      avgDischargeLagMinutes: averageMinutes(dischargeLagSamples),
+      avgBoardingMinutes: averageMinutes(boardingSamples),
+      windowHours: THROUGHPUT_SHIFT_WINDOW_MS / (60 * 60 * 1000),
     };
   },
 });
@@ -452,12 +789,110 @@ export const updateStatus = mutation({
   },
 });
 
+export const updateEncounterFlow = mutation({
+  args: {
+    encounterId: v.id("encounters"),
+    flowStage: v.optional(throughputStageValidator),
+    flowOwner: v.optional(v.string()),
+    assignedProvider: v.optional(v.string()),
+    dispositionPlan: v.optional(dispositionPlanValidator),
+    delayReason: v.optional(delayReasonValidator),
+    delayNote: v.optional(v.string()),
+    estimatedDischargeTime: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const encounter = await ctx.db.get(args.encounterId);
+    if (!encounter) throw new Error("Encounter not found");
+
+    const now = Date.now();
+    const patch: Partial<Doc<"encounters">> = {};
+
+    if (args.flowOwner !== undefined) {
+      patch.flowOwner = args.flowOwner.trim() || undefined;
+    }
+
+    if (args.assignedProvider !== undefined) {
+      const nextProvider = args.assignedProvider.trim();
+      patch.assignedProvider = nextProvider || undefined;
+
+      if (nextProvider && nextProvider !== encounter.assignedProvider) {
+        patch.providerAssignedAt = now;
+      }
+    }
+
+    if (args.dispositionPlan !== undefined) {
+      patch.dispositionPlan = args.dispositionPlan;
+
+      if (args.dispositionPlan !== (encounter.dispositionPlan ?? "undecided") && args.dispositionPlan !== "undecided") {
+        patch.dispositionDecisionAt = now;
+      }
+    }
+
+    if (args.delayReason !== undefined) {
+      patch.delayReason = args.delayReason;
+      if (args.delayReason === DEFAULT_DELAY_REASON) {
+        patch.delayNote = undefined;
+      }
+    }
+
+    if (args.delayNote !== undefined && (args.delayReason ?? encounter.delayReason ?? DEFAULT_DELAY_REASON) !== DEFAULT_DELAY_REASON) {
+      patch.delayNote = args.delayNote.trim() || undefined;
+    }
+
+    if (args.estimatedDischargeTime !== undefined) {
+      patch.estimatedDischargeTime = args.estimatedDischargeTime;
+    }
+
+    if (args.flowStage !== undefined) {
+      patch.flowStage = args.flowStage;
+      patch.flowStageUpdatedAt = now;
+
+      if (args.flowStage === "awaiting_bed" || args.flowStage === "triage") {
+        patch.status = args.flowStage === "triage" ? "triage" : "waiting";
+      }
+
+      if (
+        args.flowStage === "bedded" ||
+        args.flowStage === "provider_assigned" ||
+        args.flowStage === "workup_pending" ||
+        args.flowStage === "consult_pending" ||
+        args.flowStage === "discharge_ready"
+      ) {
+        patch.status = "treating";
+      }
+
+      if (args.flowStage === "admit_ready" || args.flowStage === "boarded") {
+        patch.status = "observed";
+      }
+
+      if (args.flowStage === "provider_assigned" && !encounter.providerAssignedAt) {
+        patch.providerAssignedAt = now;
+      }
+
+      if (args.flowStage === "discharge_ready" && !encounter.readyForDischargeAt) {
+        patch.readyForDischargeAt = now;
+      }
+
+      if ((args.flowStage === "admit_ready" || args.flowStage === "boarded") && !encounter.readyForAdmissionAt) {
+        patch.readyForAdmissionAt = now;
+      }
+    }
+
+    await ctx.db.patch(args.encounterId, patch);
+
+    return { updatedAt: now };
+  },
+});
+
 export const assignBed = mutation({
   args: {
     encounterId: v.id("encounters"),
     location: v.string(),
   },
   handler: async (ctx, args) => {
+    const encounter = await ctx.db.get(args.encounterId);
+    if (!encounter) throw new Error("Encounter not found");
+
     const nextLocation = args.location.trim();
     const requestedBed = normalizeBedLocation(nextLocation);
 
@@ -481,6 +916,8 @@ export const assignBed = mutation({
 
     await ctx.db.patch(args.encounterId, { 
       location: requestedBed ?? nextLocation,
+      ...(requestedBed && !encounter.bedAssignedAt ? { bedAssignedAt: Date.now() } : {}),
+      ...(requestedBed ? { flowStage: "bedded", flowStageUpdatedAt: Date.now() } : { flowStage: "awaiting_bed", flowStageUpdatedAt: Date.now() }),
       ...(nextLocation ? { status: "treating" } : {}),
     });
   },
@@ -770,5 +1207,73 @@ export const updateAcuity = mutation({
   args: { id: v.id("encounters"), acuity: v.number() },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.id, { acuity: args.acuity });
+  },
+});
+
+export const updateBoardingWorkflow = mutation({
+  args: {
+    encounterId: v.id("encounters"),
+    assignedInpatientUnit: v.optional(v.string()),
+    inpatientBedLabel: v.optional(v.string()),
+    transportStatus: transportStatusValidator,
+    roomTurnoverStatus: roomTurnoverStatusValidator,
+    markAdmitAccepted: v.optional(v.boolean()),
+    markInpatientBedRequested: v.optional(v.boolean()),
+    markInpatientBedAssigned: v.optional(v.boolean()),
+    markHandoffCompleted: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const encounter = await ctx.db.get(args.encounterId);
+    if (!encounter) throw new Error("Encounter not found");
+
+    const now = Date.now();
+    const patch: Partial<Doc<"encounters">> = {};
+
+    if (args.assignedInpatientUnit !== undefined) {
+      patch.assignedInpatientUnit = args.assignedInpatientUnit.trim() || undefined;
+    }
+
+    if (args.inpatientBedLabel !== undefined) {
+      patch.inpatientBedLabel = args.inpatientBedLabel.trim() || undefined;
+    }
+
+    if (args.transportStatus !== undefined) {
+      patch.transportStatus = args.transportStatus;
+      patch.transportUpdatedAt = now;
+    }
+
+    if (args.roomTurnoverStatus !== undefined) {
+      patch.roomTurnoverStatus = args.roomTurnoverStatus;
+      patch.roomTurnoverUpdatedAt = now;
+    }
+
+    if (args.markAdmitAccepted && !encounter.admitAcceptedAt) {
+      patch.admitAcceptedAt = now;
+      patch.dispositionPlan = encounter.dispositionPlan ?? "admit";
+      patch.flowStage = "admit_ready";
+      patch.flowStageUpdatedAt = now;
+    }
+
+    if (args.markInpatientBedRequested && !encounter.inpatientBedRequestedAt) {
+      patch.inpatientBedRequestedAt = now;
+      patch.delayReason = "awaiting_inpatient_bed";
+    }
+
+    if (args.markInpatientBedAssigned) {
+      patch.inpatientBedAssignedAt = now;
+      patch.delayReason = encounter.transportStatus === "completed" ? "none" : "awaiting_transport";
+      patch.flowStage = "boarded";
+      patch.flowStageUpdatedAt = now;
+    }
+
+    if (args.markHandoffCompleted) {
+      patch.handoffCompletedAt = now;
+      if ((args.transportStatus ?? encounter.transportStatus) === "completed") {
+        patch.delayReason = "none";
+      }
+    }
+
+    await ctx.db.patch(args.encounterId, patch);
+    return { updatedAt: now };
   },
 });

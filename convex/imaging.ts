@@ -21,7 +21,27 @@ export const updateStatus = mutation({
   handler: async (ctx, args) => {
     await ctx.db.patch(args.orderId, { 
       status: args.status,
-      report: args.report 
+      report: args.report,
+      ...(args.status === "Resulted" ? { resultedAt: Date.now() } : {}),
+    });
+  },
+});
+
+export const acknowledgeResult = mutation({
+  args: {
+    orderId: v.id("imagingOrders"),
+    staffName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const order = await ctx.db.get(args.orderId);
+    if (!order) throw new Error("Imaging order not found");
+    if (order.status !== "Resulted") {
+      throw new Error("Only resulted imaging studies can be acknowledged.");
+    }
+
+    await ctx.db.patch(args.orderId, {
+      acknowledgedBy: args.staffName,
+      acknowledgedAt: Date.now(),
     });
   },
 });

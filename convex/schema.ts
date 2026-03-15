@@ -117,6 +117,65 @@ export default defineSchema({
     disposition: v.optional(v.string()),
     followUp: v.optional(v.string()),
     assignedProvider: v.optional(v.string()),
+    flowOwner: v.optional(v.string()),
+    flowStage: v.optional(v.union(
+      v.literal("triage"),
+      v.literal("awaiting_bed"),
+      v.literal("bedded"),
+      v.literal("provider_assigned"),
+      v.literal("workup_pending"),
+      v.literal("consult_pending"),
+      v.literal("discharge_ready"),
+      v.literal("admit_ready"),
+      v.literal("boarded")
+    )),
+    flowStageUpdatedAt: v.optional(v.number()),
+    dispositionPlan: v.optional(v.union(
+      v.literal("undecided"),
+      v.literal("discharge"),
+      v.literal("admit"),
+      v.literal("observation"),
+      v.literal("transfer")
+    )),
+    delayReason: v.optional(v.union(
+      v.literal("none"),
+      v.literal("awaiting_bed"),
+      v.literal("awaiting_provider"),
+      v.literal("awaiting_labs"),
+      v.literal("awaiting_imaging"),
+      v.literal("awaiting_consult"),
+      v.literal("awaiting_transport"),
+      v.literal("awaiting_inpatient_bed"),
+      v.literal("awaiting_discharge_paperwork"),
+      v.literal("insurance_hold"),
+      v.literal("registration_hold"),
+      v.literal("other")
+    )),
+    delayNote: v.optional(v.string()),
+    bedAssignedAt: v.optional(v.number()),
+    providerAssignedAt: v.optional(v.number()),
+    dispositionDecisionAt: v.optional(v.number()),
+    readyForDischargeAt: v.optional(v.number()),
+    readyForAdmissionAt: v.optional(v.number()),
+    admitAcceptedAt: v.optional(v.number()),
+    inpatientBedRequestedAt: v.optional(v.number()),
+    inpatientBedAssignedAt: v.optional(v.number()),
+    assignedInpatientUnit: v.optional(v.string()),
+    inpatientBedLabel: v.optional(v.string()),
+    transportStatus: v.optional(v.union(
+      v.literal("not_requested"),
+      v.literal("requested"),
+      v.literal("in_progress"),
+      v.literal("completed")
+    )),
+    transportUpdatedAt: v.optional(v.number()),
+    handoffCompletedAt: v.optional(v.number()),
+    roomTurnoverStatus: v.optional(v.union(
+      v.literal("not_started"),
+      v.literal("cleaning"),
+      v.literal("ready")
+    )),
+    roomTurnoverUpdatedAt: v.optional(v.number()),
     estimatedDischargeTime: v.optional(v.number()),
     insurance: v.optional(
       v.object({
@@ -233,9 +292,13 @@ export default defineSchema({
     .index("by_patient", ["patientId"]),
    checklists: defineTable({
       encounterId: v.id("encounters"),
+    taskKey: v.optional(v.string()),
       item: v.string(),
       completed: v.boolean(),
       completedBy: v.optional(v.string()),
+    completedAt: v.optional(v.number()),
+    category: v.optional(v.union(v.literal("care"), v.literal("discharge"))),
+    required: v.optional(v.boolean()),
     }).index("by_encounter", ["encounterId"]),
 
     socialHistory: defineTable({
@@ -269,6 +332,9 @@ export default defineSchema({
       priority: v.string(),  // "STAT" or "Routine"
       report: v.optional(v.string()), // The radiologist's findings
       orderedAt: v.number(),
+      resultedAt: v.optional(v.number()),
+      acknowledgedBy: v.optional(v.string()),
+      acknowledgedAt: v.optional(v.number()),
     }).index("by_encounter", ["encounterId"]),
   orders: defineTable({
     encounterId: v.id("encounters"),
@@ -347,6 +413,13 @@ export default defineSchema({
       documentUrl: v.optional(v.string()), // Link to the PDF/Image
       timestamp: v.optional(v.number()),
       subject: v.optional(v.string()),     // e.g., "STAT MRI Result: DOE, J"
+      direction: v.optional(v.union(v.literal("inbound"), v.literal("outbound"))),
+      recipientName: v.optional(v.string()),
+      toFaxNumber: v.optional(v.string()),
+      encounterId: v.optional(v.id("encounters")),
+      sentBy: v.optional(v.string()),
+      sentAt: v.optional(v.number()),
+      coverMessage: v.optional(v.string()),
       patientId: v.optional(v.id("patients")),
     }).index("by_faxNumber", ["faxNumber"])
       .index("by_status", ["status"]),
@@ -358,9 +431,42 @@ export default defineSchema({
       roomName: v.string(), // The unique video room ID
       requestedBy: v.id("users"),
       requestedAt: v.number(),
+      acknowledgedBy: v.optional(v.string()),
+      acknowledgedAt: v.optional(v.number()),
+      callbackNote: v.optional(v.string()),
     })
     .index("by_encounter", ["encounterId"])
     .index("by_status", ["status"]),
+    protocolActivations: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      protocolId: v.string(),
+      title: v.string(),
+      activatedBy: v.string(),
+      status: v.union(v.literal("active"), v.literal("completed")),
+      notes: v.optional(v.string()),
+      source: v.union(v.literal("patient_chart"), v.literal("training")),
+      activatedAt: v.number(),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_protocol", ["protocolId"])
+      .index("by_activated_at", ["activatedAt"]),
+    kioskIntakes: defineTable({
+      patientId: v.id("patients"),
+      encounterId: v.id("encounters"),
+      patientName: v.string(),
+      chiefComplaint: v.string(),
+      symptomSummary: v.optional(v.string()),
+      painScore: v.optional(v.number()),
+      urgentFlags: v.array(v.string()),
+      priority: v.union(v.literal("routine"), v.literal("urgent")),
+      status: v.union(v.literal("new"), v.literal("acknowledged"), v.literal("roomed")),
+      checkedInAt: v.number(),
+      acknowledgedAt: v.optional(v.number()),
+      acknowledgedBy: v.optional(v.string()),
+    })
+      .index("by_status", ["status"])
+      .index("by_encounter", ["encounterId"]),
     chartDocuments: defineTable({
       encounterId: v.id("encounters"),
       patientId: v.id("patients"),

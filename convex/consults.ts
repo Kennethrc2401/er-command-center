@@ -52,6 +52,24 @@ export const complete = mutation({
   },
 });
 
+export const acknowledge = mutation({
+  args: {
+    id: v.id("teleConsults"),
+    staffName: v.string(),
+    callbackNote: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const consult = await ctx.db.get(args.id);
+    if (!consult) throw new Error("Consult not found");
+
+    await ctx.db.patch(args.id, {
+      acknowledgedBy: args.staffName,
+      acknowledgedAt: Date.now(),
+      callbackNote: args.callbackNote?.trim() || consult.callbackNote,
+    });
+  },
+});
+
 /**
  * 🔍 Fetch active consults for the current encounter
  */

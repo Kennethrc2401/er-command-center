@@ -33,6 +33,10 @@ import VitalsUpdate from "@/components/clinical/VitalsUpdate";
 import ERAnalytics from "@/components/clinical/ERAnalytics";
 import GlobalSearch from "@/components/clinical/GlobalSearch";
 import MorningReport from "@/components/clinical/MorningReport";
+import ThroughputControlTower from "@/components/clinical/ThroughputControlTower";
+import OperationalAlertsPanel from "@/components/clinical/OperationalAlertsPanel";
+import ProviderWorkloadPanel from "@/components/clinical/ProviderWorkloadPanel";
+import KioskHandoffQueue from "@/components/kiosk/KioskHandoffQueue";
 import { useAuth } from "@clerk/nextjs";
 import { useStaffSession } from "@/lib/hooks/useStaffSession";
 import { toast } from "sonner";
@@ -336,6 +340,14 @@ function ERDashboardContent() {
               />
             </div>
           </div>
+        </section>
+
+        <ThroughputControlTower isPrivate={isPrivate} isDemoMode={isDemoMode} />
+
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <OperationalAlertsPanel />
+          <ProviderWorkloadPanel />
+          <KioskHandoffQueue />
         </section>
 
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-8 items-start">

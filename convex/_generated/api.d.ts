@@ -22,6 +22,7 @@ import type * as encounters from "../encounters.js";
 import type * as faxes from "../faxes.js";
 import type * as imaging from "../imaging.js";
 import type * as insurance from "../insurance.js";
+import type * as kiosk from "../kiosk.js";
 import type * as labs from "../labs.js";
 import type * as medications from "../medications.js";
 import type * as notes from "../notes.js";
@@ -35,6 +36,7 @@ import type * as triage from "../triage.js";
 import type * as users from "../users.js";
 import type * as verifyInsurance from "../verifyInsurance.js";
 import type * as vitals from "../vitals.js";
+import type * as workflow from "../workflow.js";
 
 import type {
   ApiFromModules,
@@ -57,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   faxes: typeof faxes;
   imaging: typeof imaging;
   insurance: typeof insurance;
+  kiosk: typeof kiosk;
   labs: typeof labs;
   medications: typeof medications;
   notes: typeof notes;
@@ -70,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   users: typeof users;
   verifyInsurance: typeof verifyInsurance;
   vitals: typeof vitals;
+  workflow: typeof workflow;
 }>;
 
 /**
