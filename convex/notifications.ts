@@ -19,18 +19,22 @@ export const getActive = query({
     const applyTypeFilter = <T extends { type: string }>(rows: T[]) =>
       args.type ? rows.filter((row) => row.type === args.type) : rows;
 
+    const getGlobalUnread = async (limit: number) => {
+      const recent = await ctx.db
+        .query("notifications")
+        .withIndex("by_timestamp")
+        .order("desc")
+        .take(200);
+
+      return recent
+        .filter((row) => row.userId == null && !row.isRead)
+        .slice(0, limit);
+    };
+
     const includeGlobal = args.includeGlobal ?? true;
 
     if (!args.userId) {
-      const globalUnread = await ctx.db
-        .query("notifications")
-        .withIndex("by_timestamp")
-        .filter((q) => q.and(
-          q.eq(q.field("userId"), undefined),
-          q.eq(q.field("isRead"), false)
-        ))
-        .order("desc")
-        .take(25);
+      const globalUnread = await getGlobalUnread(25);
 
       return applyTypeFilter(globalUnread).slice(0, 10);
     }
@@ -42,15 +46,7 @@ export const getActive = query({
       .take(25);
 
     const globalUnread = includeGlobal
-      ? await ctx.db
-          .query("notifications")
-          .withIndex("by_timestamp")
-          .filter((q) => q.and(
-            q.eq(q.field("userId"), undefined),
-            q.eq(q.field("isRead"), false)
-          ))
-          .order("desc")
-          .take(25)
+      ? await getGlobalUnread(25)
       : [];
 
     return applyTypeFilter([...userUnread, ...globalUnread])
@@ -78,6 +74,16 @@ export const markAllRead = mutation({
     const applyTypeFilter = <T extends { type: string }>(rows: T[]) =>
       args.type ? rows.filter((row) => row.type === args.type) : rows;
 
+    const getGlobalUnread = async () => {
+      const recent = await ctx.db
+        .query("notifications")
+        .withIndex("by_timestamp")
+        .order("desc")
+        .take(500);
+
+      return recent.filter((row) => row.userId === undefined && !row.isRead);
+    };
+
     const userUnread = args.userId
       ? await ctx.db
           .query("notifications")
@@ -86,14 +92,7 @@ export const markAllRead = mutation({
       : [];
 
     const globalUnread = includeGlobal
-      ? await ctx.db
-          .query("notifications")
-          .withIndex("by_timestamp")
-          .filter((q) => q.and(
-            q.eq(q.field("userId"), undefined),
-            q.eq(q.field("isRead"), false)
-          ))
-          .collect()
+      ? await getGlobalUnread()
       : [];
 
     const unread = applyTypeFilter([...userUnread, ...globalUnread]);

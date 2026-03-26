@@ -229,7 +229,8 @@ export default defineSchema({
   }).index("by_encounter", ["encounterId"]),
   
   notifications: defineTable({
-    userId: v.optional(v.id("users")), // null if global/broadcast
+    // Keep null for backward compatibility with older notification rows.
+    userId: v.optional(v.union(v.id("users"), v.null())), // null/undefined => global/broadcast
     title: v.string(),
     message: v.string(),
     type: v.union(v.literal("STAT_ORDER"), v.literal("CRITICAL_VITAL"), v.literal("CRITICAL_LAB"), v.literal("SYSTEM")),
