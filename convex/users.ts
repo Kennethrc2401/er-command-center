@@ -6,7 +6,14 @@ const userRoleValidator = v.union(
   v.literal("ADMIN"),
   v.literal("DOCTOR"),
   v.literal("NURSE"),
-  v.literal("CCMA")
+  v.literal("CCMA"),
+  v.literal("SURGEON"),
+  v.literal("ANESTHESIOLOGIST"),
+  v.literal("PHARMACIST"),
+  v.literal("RESPIRATORY_THERAPIST"),
+  v.literal("RAD_TECH"),
+  v.literal("SCRUB_TECH"),
+  v.literal("UNIT_COORDINATOR")
 );
 
 const userStatusValidator = v.union(v.literal("ACTIVE"), v.literal("INACTIVE"));
@@ -34,9 +41,18 @@ const bytesToHex = (bytes: Uint8Array) =>
     .join("");
 
 const randomSalt = () => {
-  const salt = new Uint8Array(16);
-  crypto.getRandomValues(salt);
-  return bytesToHex(salt);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const salt = new Uint8Array(16);
+    crypto.getRandomValues(salt);
+    return bytesToHex(salt);
+  }
+
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replace(/-/g, "");
+  }
+
+  const fallback = `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  return fallback.slice(0, 32).padEnd(32, "0");
 };
 
 const hashSecret = async (rawValue: string, salt: string) => {
@@ -122,6 +138,47 @@ export const getByEmail = query({
       name: user.name,
       role: user.role,
       status: user.status,
+    };
+  },
+});
+
+export const checkCreateUserConflicts = query({
+  args: {
+    email: v.optional(v.string()),
+    username: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const email = normalizeOptionalString(args.email);
+    const username = normalizeOptionalString(args.username);
+
+    if (!email && !username) {
+      return {
+        emailExists: false,
+        usernameExists: false,
+      };
+    }
+
+    const normalizedEmail = email ? normalizeEmail(email) : undefined;
+    const normalizedUsername = username ? normalizeUsername(username) : undefined;
+
+    const [emailOwner, usernameOwner] = await Promise.all([
+      normalizedEmail
+        ? ctx.db
+            .query("users")
+            .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+            .first()
+        : Promise.resolve(null),
+      normalizedUsername
+        ? ctx.db
+            .query("users")
+            .withIndex("by_username", (q) => q.eq("username", normalizedUsername))
+            .first()
+        : Promise.resolve(null),
+    ]);
+
+    return {
+      emailExists: Boolean(emailOwner),
+      usernameExists: Boolean(usernameOwner),
     };
   },
 });
@@ -245,15 +302,34 @@ export const createUser = mutation({
     officeKey: v.string(),
   },
   handler: async (ctx, args) => {
+    const name = args.name.trim();
     const normalizedEmail = normalizeEmail(args.email);
     const normalizedUsername = normalizeUsername(args.username);
+    const credentials = args.credentials.trim();
+    const department = args.department.trim();
+
+    if (!name) {
+      return { ok: false as const, message: "Full name is required." };
+    }
+
+    if (!normalizedUsername) {
+      return { ok: false as const, message: "Username is required." };
+    }
+
+    if (!credentials) {
+      return { ok: false as const, message: "Credentials are required." };
+    }
+
+    if (!department) {
+      return { ok: false as const, message: "Department is required." };
+    }
 
     if (args.password.trim().length < 8) {
-      throw new Error("Password must be at least 8 characters.");
+      return { ok: false as const, message: "Password must be at least 8 characters." };
     }
 
     if (args.officeKey.trim().length < 4) {
-      throw new Error("Office key must be at least 4 characters.");
+      return { ok: false as const, message: "Office key must be at least 4 characters." };
     }
 
     const existingUser = await ctx.db
@@ -262,7 +338,7 @@ export const createUser = mutation({
       .first();
 
     if (existingUser) {
-      throw new Error("A user with this email already exists.");
+      return { ok: false as const, message: "A user with this email already exists." };
     }
 
     const existingUsername = await ctx.db
@@ -271,21 +347,29 @@ export const createUser = mutation({
       .first();
 
     if (existingUsername) {
-      throw new Error("A user with this username already exists.");
+      return { ok: false as const, message: "A user with this username already exists." };
     }
 
-    const [passwordHash, officeKeyHash] = await Promise.all([
-      createStoredHash(args.password.trim()),
-      createStoredHash(args.officeKey.trim()),
-    ]);
+    let passwordHash: string;
+    let officeKeyHash: string;
 
-    return await ctx.db.insert("users", {
-      name: args.name,
+    try {
+      [passwordHash, officeKeyHash] = await Promise.all([
+        createStoredHash(args.password.trim()),
+        createStoredHash(args.officeKey.trim()),
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown hashing error";
+      return { ok: false as const, message: `Unable to secure staff credentials: ${message}` };
+    }
+
+    const userId = await ctx.db.insert("users", {
+      name,
       email: normalizedEmail,
       username: normalizedUsername,
       role: args.role,
-      credentials: args.credentials,
-      department: args.department,
+      credentials,
+      department,
       passwordHash,
       officeKeyHash,
       credentialUpdatedAt: Date.now(),
@@ -295,6 +379,11 @@ export const createUser = mutation({
       npiNumber: normalizeOptionalString(args.npiNumber),
       status: "ACTIVE",
     });
+
+    return {
+      ok: true as const,
+      userId,
+    };
   },
 });
 
@@ -338,10 +427,10 @@ export const updateUser = mutation({
       name: string;
       email: string;
       username: string;
-      role: "ADMIN" | "DOCTOR" | "NURSE" | "CCMA";
+      role: typeof args.role;
       credentials: string;
       department: string;
-      status: "ACTIVE" | "INACTIVE";
+      status: typeof args.status;
       npiNumber?: string;
       passwordHash?: string;
       officeKeyHash?: string;

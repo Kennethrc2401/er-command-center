@@ -4,7 +4,18 @@ const decoder = new TextDecoder();
 export const STAFF_SESSION_COOKIE = "staff_session";
 export const STAFF_SESSION_TTL_MS = 1000 * 60 * 60 * 12; // 12 hours
 
-export type StaffRole = "ADMIN" | "DOCTOR" | "NURSE" | "CCMA";
+export type StaffRole =
+  | "ADMIN"
+  | "DOCTOR"
+  | "NURSE"
+  | "CCMA"
+  | "SURGEON"
+  | "ANESTHESIOLOGIST"
+  | "PHARMACIST"
+  | "RESPIRATORY_THERAPIST"
+  | "RAD_TECH"
+  | "SCRUB_TECH"
+  | "UNIT_COORDINATOR";
 
 export type StaffSessionPayload = {
   userId: string;

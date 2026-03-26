@@ -7,7 +7,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Fingerprint, LockKeyhole, PencilLine, ShieldAlert, TimerReset, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { normalizeStaffRole } from "@/lib/auth/roles";
+import { defaultCredentialsForRole, normalizeStaffRole } from "@/lib/auth/roles";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
 import { useStaffSession } from "@/lib/hooks/useStaffSession";
 
@@ -64,7 +64,7 @@ export default function SecurityDiagnostics() {
       name: [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || primaryEmail,
       username: user.username ?? undefined,
       role,
-      credentials: role === "DOCTOR" ? "MD" : role === "CCMA" ? "CCMA" : role === "ADMIN" ? "Admin" : "RN",
+      credentials: defaultCredentialsForRole(role),
       department: "Emergency Medicine",
     });
 

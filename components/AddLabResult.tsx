@@ -68,7 +68,7 @@ export default function AddLabResult({ encounterId }: { encounterId: Id<"encount
           <PlusCircle className="h-3.5 w-3.5" /> Post Result
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px] rounded-3xl">
+      <DialogContent className="sm:max-w-106.25 rounded-3xl">
         <DialogHeader>
           <DialogTitle className="text-sm font-black uppercase tracking-[0.2em] flex items-center gap-2">
             <FlaskConical className="h-4 w-4 text-indigo-600" /> POC Lab Entry

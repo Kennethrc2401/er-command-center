@@ -47,7 +47,19 @@ const DOCUMENT_CATEGORIES = [
 
 type DocumentCategory = (typeof DOCUMENT_CATEGORIES)[number];
 type FilterCategory = "ALL" | DocumentCategory;
-type StaffRole = "ADMIN" | "DOCTOR" | "NURSE" | "CCMA" | "UNKNOWN";
+type StaffRole =
+  | "ADMIN"
+  | "DOCTOR"
+  | "NURSE"
+  | "CCMA"
+  | "SURGEON"
+  | "ANESTHESIOLOGIST"
+  | "PHARMACIST"
+  | "RESPIRATORY_THERAPIST"
+  | "RAD_TECH"
+  | "SCRUB_TECH"
+  | "UNIT_COORDINATOR"
+  | "UNKNOWN";
 
 const CATEGORY_LABELS: Record<DocumentCategory, string> = {
   LAB_RESULT: "Lab Result",
@@ -140,7 +152,7 @@ export default function ChartDocumentsPanel({
 
   const totalCount = docs?.length ?? 0;
   const canUploadRole = actorRole !== "UNKNOWN";
-  const canDeleteRole = actorRole === "ADMIN" || actorRole === "DOCTOR" || actorRole === "NURSE";
+  const canDeleteRole = actorRole === "ADMIN" || actorRole === "DOCTOR" || actorRole === "NURSE" || actorRole === "SURGEON";
   const canUpload = !!selectedFile && !isUploading && canUploadRole;
 
   const categoryOptions = useMemo(() => DOCUMENT_CATEGORIES, []);

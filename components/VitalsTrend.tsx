@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Loader2, LineChart as ChartIcon } from "lucide-react";
 import { toast } from "sonner";
+import type { ActorRole } from "@/lib/auth/roles";
 
 // --- INTERFACES ---
 interface VitalsPoint {
@@ -34,8 +35,6 @@ interface TooltipProps {
   }>;
   label?: string;
 }
-
-type ActorRole = "ADMIN" | "DOCTOR" | "NURSE" | "CCMA" | "UNKNOWN";
 
 const ESCALATION_WINDOW_MS = 30 * 60 * 1000;
 

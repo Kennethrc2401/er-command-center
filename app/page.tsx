@@ -11,6 +11,7 @@ import {
   GraduationCap,
   KeyRound,
   Loader2,
+  ClipboardList,
 } from "lucide-react";
 import Link from "next/link";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
@@ -65,6 +66,14 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
       color: "bg-violet-600",
       role: "Staff Learning"
     },
+    {
+      title: "OR Scheduler",
+      desc: "Schedule, track, and update operative room case flow",
+      href: "/dashboard/or-scheduler",
+      icon: ClipboardList,
+      color: "bg-cyan-600",
+      role: "Perioperative"
+    },
     ...(isAdmin ? [{
       title: "Executive Suite",
       desc: "Revenue analytics and compliance audits",
@@ -79,6 +88,7 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
     "bg-blue-600": "#2563eb",
     "bg-emerald-500": "#10b981",
     "bg-violet-600": "#7c3aed",
+    "bg-cyan-600": "#0891b2",
     "bg-slate-900": "#0f172a"
   };
 

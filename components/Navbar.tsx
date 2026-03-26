@@ -15,14 +15,15 @@ import {
   MapPin,
   Shield,
   ShieldOff,
-  FileText
+  FileText,
+  ClipboardList
 } from "lucide-react";
 import NewPatientModal from "./NewPatientModal";
 import { LucideIcon } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import { usePrivacyMode } from "@/lib/hooks/usePrivacyMode";
 import NotificationBell from "@/components/clinical/NotificationBell";
-import { normalizeStaffRole } from "@/lib/auth/roles";
+import { defaultCredentialsForRole, normalizeStaffRole } from "@/lib/auth/roles";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
 
 interface NavLinkProps {
@@ -60,7 +61,7 @@ export default function Navbar() {
       name: [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || primaryEmail,
       username: user.username ?? undefined,
       role,
-      credentials: role === "DOCTOR" ? "MD" : role === "CCMA" ? "CCMA" : role === "ADMIN" ? "Admin" : "RN",
+      credentials: defaultCredentialsForRole(role),
       department: "Emergency Medicine",
     }).catch(() => {
       provisionAttemptedRef.current = false;
@@ -109,6 +110,12 @@ export default function Navbar() {
             icon={FileText}
             label="Faxes"
             active={pathname.includes("/faxes")}
+          />
+          <NavLink 
+            href="/dashboard/or-scheduler" 
+            icon={ClipboardList}
+            label="OR Scheduler"
+            active={pathname.includes("/or-scheduler")}
           />
 
           {isAdmin && (

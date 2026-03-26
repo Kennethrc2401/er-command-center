@@ -16,8 +16,29 @@ const staffRole = v.union(
   v.literal("DOCTOR"),
   v.literal("NURSE"),
   v.literal("CCMA"),
+  v.literal("SURGEON"),
+  v.literal("ANESTHESIOLOGIST"),
+  v.literal("PHARMACIST"),
+  v.literal("RESPIRATORY_THERAPIST"),
+  v.literal("RAD_TECH"),
+  v.literal("SCRUB_TECH"),
+  v.literal("UNIT_COORDINATOR"),
   v.literal("UNKNOWN")
 );
+
+type StaffRole =
+  | "ADMIN"
+  | "DOCTOR"
+  | "NURSE"
+  | "CCMA"
+  | "SURGEON"
+  | "ANESTHESIOLOGIST"
+  | "PHARMACIST"
+  | "RESPIRATORY_THERAPIST"
+  | "RAD_TECH"
+  | "SCRUB_TECH"
+  | "UNIT_COORDINATOR"
+  | "UNKNOWN";
 
 const accessAction = v.union(
   v.literal("VIEW"),
@@ -158,16 +179,16 @@ function hasAllowedExtension(fileName: string) {
   );
 }
 
-function canView(role: "ADMIN" | "DOCTOR" | "NURSE" | "CCMA" | "UNKNOWN") {
-  return role === "ADMIN" || role === "DOCTOR" || role === "NURSE" || role === "CCMA";
+function canView(role: StaffRole) {
+  return role !== "UNKNOWN";
 }
 
-function canUpload(role: "ADMIN" | "DOCTOR" | "NURSE" | "CCMA" | "UNKNOWN") {
-  return role === "ADMIN" || role === "DOCTOR" || role === "NURSE" || role === "CCMA";
+function canUpload(role: StaffRole) {
+  return role !== "UNKNOWN";
 }
 
-function canDelete(role: "ADMIN" | "DOCTOR" | "NURSE" | "CCMA" | "UNKNOWN") {
-  return role === "ADMIN" || role === "DOCTOR" || role === "NURSE";
+function canDelete(role: StaffRole) {
+  return role === "ADMIN" || role === "DOCTOR" || role === "NURSE" || role === "SURGEON";
 }
 
 async function writeAuditLog(
@@ -178,7 +199,7 @@ async function writeAuditLog(
     documentId?: Id<"chartDocuments">;
     action: "UPLOAD" | "VIEW" | "DOWNLOAD" | "DELETE" | "RETENTION_ARCHIVE" | "HARD_DELETE" | "ACCESS_DENIED";
     actorName: string;
-    actorRole: "ADMIN" | "DOCTOR" | "NURSE" | "CCMA" | "UNKNOWN";
+    actorRole: StaffRole;
     fileName?: string;
     category?: "LAB_RESULT" | "EXTERNAL_RESULT" | "RADIOLOGY_IMAGE" | "LETTER" | "BILLING" | "MISC";
     note?: string;
@@ -206,7 +227,7 @@ async function archiveAndPurgeDocuments(
     purgeGraceDaysByCategory: Record<DocumentCategory, number>;
     now: number;
     actorName: string;
-    actorRole: "ADMIN" | "DOCTOR" | "NURSE" | "CCMA" | "UNKNOWN";
+    actorRole: StaffRole;
   }
 ) {
   let archivedCount = 0;

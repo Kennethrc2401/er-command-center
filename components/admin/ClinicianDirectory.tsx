@@ -11,8 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { STAFF_ROLES } from "@/lib/auth/roles";
 
-const ROLE_OPTIONS = ["ADMIN", "DOCTOR", "NURSE", "CCMA"] as const;
+const ROLE_OPTIONS = STAFF_ROLES;
 const STATUS_OPTIONS = ["ACTIVE", "INACTIVE"] as const;
 
 type UserRole = (typeof ROLE_OPTIONS)[number];
@@ -65,6 +66,19 @@ const formFromUser = (user: Doc<"users">): UserFormState => ({
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
+
+  if (typeof error === "object" && error !== null) {
+    const candidate = error as {
+      message?: string;
+      data?: { message?: string };
+    };
+
+    if (candidate.data?.message) return candidate.data.message;
+    if (candidate.message) return candidate.message;
+  }
+
+  if (typeof error === "string") return error;
+
   return "Unexpected error. Please try again.";
 };
 
@@ -82,12 +96,24 @@ export default function ClinicianDirectory() {
   const [editingUserId, setEditingUserId] = useState<Id<"users"> | null>(null);
   const [createForm, setCreateForm] = useState<UserFormState>(EMPTY_FORM);
   const [editForm, setEditForm] = useState<UserFormState>(EMPTY_FORM);
+  const createConflicts = useQuery(
+    api.users.checkCreateUserConflicts,
+    createForm.email.trim() || createForm.username.trim()
+      ? {
+          email: createForm.email.trim() || undefined,
+          username: createForm.username.trim() || undefined,
+        }
+      : "skip"
+  );
+  const createEmailExists = createConflicts?.emailExists ?? false;
+  const createUsernameExists = createConflicts?.usernameExists ?? false;
+  const canSubmitCreate = !createPending && !createEmailExists && !createUsernameExists;
 
   const handleCreateSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setCreatePending(true);
     try {
-      await createUser({
+      const result = await createUser({
         name: createForm.name.trim(),
         email: createForm.email.trim(),
         username: createForm.username.trim(),
@@ -98,6 +124,12 @@ export default function ClinicianDirectory() {
         password: createForm.password,
         officeKey: createForm.officeKey,
       });
+
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+
       toast.success("User created.");
       setCreateForm(EMPTY_FORM);
       setIsCreateOpen(false);
@@ -199,6 +231,9 @@ export default function ClinicianDirectory() {
                     required
                     disabled={createPending}
                   />
+                  {createEmailExists && (
+                    <p className="text-[10px] font-bold text-red-600">Email already exists.</p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="new-username">Username</Label>
@@ -209,6 +244,9 @@ export default function ClinicianDirectory() {
                     required
                     disabled={createPending}
                   />
+                  {createUsernameExists && (
+                    <p className="text-[10px] font-bold text-red-600">Username already exists.</p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="new-role">Role</Label>
@@ -221,7 +259,7 @@ export default function ClinicianDirectory() {
                   >
                     {ROLE_OPTIONS.map((role) => (
                       <option key={role} value={role} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
-                        {role}
+                        {role.replace(/_/g, " ")}
                       </option>
                     ))}
                   </select>
@@ -282,7 +320,7 @@ export default function ClinicianDirectory() {
                 </div>
               </div>
 
-              <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={createPending}>
+              <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={!canSubmitCreate}>
                 {createPending ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -324,13 +362,9 @@ export default function ClinicianDirectory() {
                   </div>
                 </td>
                 <td className="p-6">
-                  <span
-                    className={`rounded-full px-3 py-1 text-[9px] font-black uppercase tracking-widest ${
-                      user.role === "ADMIN" ? "bg-purple-50 text-purple-600" : "bg-blue-50 text-blue-600"
-                    }`}
-                  >
-                    {user.role}
-                  </span>
+                  <Badge variant="secondary" className={roleBadgeClass(user.role)}>
+                    {user.role.replace(/_/g, " ")}
+                  </Badge>
                 </td>
                 <td className="p-6 text-xs font-bold text-slate-600">{user.department}</td>
                 <td className="p-6">
@@ -345,8 +379,8 @@ export default function ClinicianDirectory() {
                     {user.status}
                   </Badge>
                 </td>
-                <td className="p-6 text-right">
-                  <div className="inline-flex items-center gap-2">
+                <td className="p-6">
+                  <div className="flex justify-end gap-2">
                     <button
                       onClick={() => openEditDialog(user)}
                       className="p-2 text-slate-300 transition-colors hover:text-blue-600"
@@ -441,7 +475,7 @@ export default function ClinicianDirectory() {
                 >
                   {ROLE_OPTIONS.map((role) => (
                     <option key={role} value={role} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100">
-                      {role}
+                      {role.replace(/_/g, " ")}
                     </option>
                   ))}
                 </select>
@@ -530,4 +564,13 @@ export default function ClinicianDirectory() {
       </Dialog>
     </div>
   );
+}
+
+function roleBadgeClass(role: UserRole) {
+  if (role === "ADMIN") return "bg-purple-50 text-purple-600";
+  if (role === "DOCTOR" || role === "SURGEON" || role === "ANESTHESIOLOGIST") return "bg-blue-50 text-blue-700";
+  if (role === "PHARMACIST") return "bg-emerald-50 text-emerald-700";
+  if (role === "RESPIRATORY_THERAPIST" || role === "RAD_TECH" || role === "SCRUB_TECH") return "bg-amber-50 text-amber-700";
+  if (role === "UNIT_COORDINATOR") return "bg-slate-100 text-slate-700";
+  return "bg-cyan-50 text-cyan-700";
 }

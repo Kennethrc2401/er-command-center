@@ -51,7 +51,15 @@ export default function LabResults({ encounterId }: { encounterId: Id<"encounter
   }
 
   // 2. Critical Check
-  const hasCriticals = labsSafe.some((lab) => lab.isAbnormal);
+  const hasCriticals = labsSafe.some(
+    (lab) =>
+      lab.isAbnormal &&
+      lab.status === "final" &&
+      (lab.criticalStatus === undefined ||
+        lab.criticalStatus === "new" ||
+        lab.criticalStatus === "acknowledged" ||
+        lab.criticalStatus === "escalated")
+  );
 
   return (
     <div className="space-y-4">
@@ -101,7 +109,17 @@ export default function LabResults({ encounterId }: { encounterId: Id<"encounter
               pagedLabs.map((lab) => (
                 <TableRow key={lab._id} className="group hover:bg-slate-50/50 transition-colors border-b border-slate-50 last:border-0">
                   <TableCell className="pl-6 py-4">
-                    <span className="font-black text-slate-800 text-sm tracking-tight">{lab.testName}</span>
+                    <div className="space-y-1">
+                      <span className="font-black text-slate-800 text-sm tracking-tight">{lab.testName}</span>
+                      {lab.criticalStatus === "resolved" && (
+                        <p className="text-[10px] font-semibold text-emerald-700">
+                          Resolved by {lab.acknowledgedBy || "Clinical Staff"}
+                          {lab.criticalAcknowledgementNote
+                            ? `: ${lab.criticalAcknowledgementNote}`
+                            : ""}
+                        </p>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
@@ -120,14 +138,32 @@ export default function LabResults({ encounterId }: { encounterId: Id<"encounter
                     {lab.range}
                   </TableCell>
                   <TableCell className="pr-6 text-right">
-                    <Badge variant="outline" className={`text-[9px] uppercase font-black h-5 px-2 tracking-widest border-2 ${
-                      lab.status === 'final' 
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-100' 
-                        : 'bg-amber-50 text-amber-700 border-amber-100 animate-pulse'
-                    }`}>
-                      {lab.status === 'final' && <CheckCircle2 className="h-2.5 w-2.5 mr-1" />}
-                      {lab.status}
-                    </Badge>
+                    <div className="inline-flex flex-col items-end gap-1">
+                      <Badge variant="outline" className={`text-[9px] uppercase font-black h-5 px-2 tracking-widest border-2 ${
+                        lab.status === 'final' 
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-100' 
+                          : 'bg-amber-50 text-amber-700 border-amber-100 animate-pulse'
+                      }`}>
+                        {lab.status === 'final' && <CheckCircle2 className="h-2.5 w-2.5 mr-1" />}
+                        {lab.status}
+                      </Badge>
+                      {lab.isAbnormal && lab.status === "final" && lab.criticalStatus && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[8px] uppercase font-black h-5 px-2 tracking-wider border ${
+                            lab.criticalStatus === "resolved"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : lab.criticalStatus === "acknowledged"
+                                ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : lab.criticalStatus === "escalated"
+                                  ? "bg-red-50 text-red-700 border-red-200"
+                                  : "bg-rose-50 text-rose-700 border-rose-200"
+                          }`}
+                        >
+                          critical {lab.criticalStatus}
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))

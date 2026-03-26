@@ -13,4 +13,11 @@ crons.interval(
   }
 );
 
+crons.interval(
+  "critical_lab_escalation_sweep",
+  { minutes: 1 },
+  internal.labs.runCriticalLabEscalations,
+  {}
+);
+
 export default crons;

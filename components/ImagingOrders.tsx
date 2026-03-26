@@ -18,17 +18,19 @@ import PlaceImagingOrder from "./PlaceImagingOrder";
 import { toast } from "sonner";
 import ViewImagingReport from "./ViewImagingReport";
 
-export default function ImagingOrders({ encounterId }: { encounterId: Id<"encounters"> }) {
+export default function ImagingOrders({
+  encounterId,
+  actorName,
+}: {
+  encounterId: Id<"encounters">;
+  actorName?: string;
+}) {
   const orders = useQuery(api.imaging.getByEncounter, { encounterId });
-  const updateStatus = useMutation(api.imaging.updateStatus);
+  const finalizeSimulatedResult = useMutation(api.imaging.finalizeSimulatedResult);
 
-  const handleSimulateResult = async (orderId: Id<"imagingOrders">, studyName: string) => {
+  const handleSimulateResult = async (orderId: Id<"imagingOrders">) => {
     try {
-      await updateStatus({
-        orderId,
-        status: "Resulted",
-        report: `FINDINGS: Lungs are clear. No acute bony abnormality noted. Heart size and mediastinal contours are within normal limits.\n\nIMPRESSION: Negative ${studyName}.`
-      });
+      await finalizeSimulatedResult({ orderId });
       toast.success("Radiology Report Finalized");
     } catch (e) {
       toast.error("Simulation failed");
@@ -51,7 +53,7 @@ export default function ImagingOrders({ encounterId }: { encounterId: Id<"encoun
             <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">CPOE & PACS Integration</p>
           </div>
         </div>
-        <PlaceImagingOrder encounterId={encounterId} />
+        <PlaceImagingOrder encounterId={encounterId} orderedBy={actorName} />
       </div>
 
       {orders.length === 0 && (
@@ -108,7 +110,7 @@ export default function ImagingOrders({ encounterId }: { encounterId: Id<"encoun
                   <div className="flex gap-2">
                     {order.status !== 'Resulted' && (
                       <Button 
-                        onClick={() => handleSimulateResult(order._id, order.studyName)}
+                        onClick={() => handleSimulateResult(order._id)}
                         variant="outline" size="sm" 
                         className="h-7 text-[9px] font-black uppercase text-slate-400 border-slate-100 hover:bg-emerald-50 hover:text-emerald-600"
                       >
@@ -121,6 +123,8 @@ export default function ImagingOrders({ encounterId }: { encounterId: Id<"encoun
                         studyName={order.studyName}
                         modality={order.modality}
                         report={order.report}
+                        orderingPhysician={order.orderedBy}
+                        simulatedSeries={order.simulatedSeries}
                         resultedAt={order.orderedAt}
                       />
                     )}

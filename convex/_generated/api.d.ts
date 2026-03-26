@@ -27,6 +27,7 @@ import type * as labs from "../labs.js";
 import type * as medications from "../medications.js";
 import type * as notes from "../notes.js";
 import type * as notifications from "../notifications.js";
+import type * as orScheduler from "../orScheduler.js";
 import type * as orders from "../orders.js";
 import type * as passkeys from "../passkeys.js";
 import type * as patientNormalization from "../patientNormalization.js";
@@ -65,6 +66,7 @@ declare const fullApi: ApiFromModules<{
   medications: typeof medications;
   notes: typeof notes;
   notifications: typeof notifications;
+  orScheduler: typeof orScheduler;
   orders: typeof orders;
   passkeys: typeof passkeys;
   patientNormalization: typeof patientNormalization;

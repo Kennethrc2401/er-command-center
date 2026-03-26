@@ -77,6 +77,7 @@ import SignaturePad from "@/components/clinical/SignaturePad";
 import ChartDocumentsPanel from "@/components/clinical/ChartDocumentsPanel";
 import OutboundFaxComposer from "@/components/faxes/OutboundFaxComposer";
 import PatientInfoTab from "@/components/patient/PatientInfoTab";
+import CriticalWorkflowKpiCard from "@/components/clinical/CriticalWorkflowKpiCard";
 
 // DYNAMIC IMPORT: DischargeInlineComponent
 const DischargeInlineComponent = dynamic(
@@ -108,6 +109,7 @@ export default function PatientPage() {
   const staffSession = useStaffSession();
   const staffEmail = user?.primaryEmailAddress?.emailAddress;
   const runDiscovery = useMutation(api.insurance.discoverSecondaryCoverage);
+  const runCriticalSweep = useMutation(api.labs.runEscalationSweep);
   const [isSearching, setIsSearching] = useState(false);
   const [activeTab, setActiveTab] = useState("vitals");
   const [showVitalsModal, setShowVitalsModal] = useState(false);
@@ -167,6 +169,17 @@ export default function PatientPage() {
   const pendingLabsCount = useQuery(api.labs.getPendingCount, 
     activeEncounter ? { encounterId: activeEncounter._id } : "skip"
   ) ?? 0;
+
+  useEffect(() => {
+    if (!activeEncounter?._id) return;
+
+    runCriticalSweep({ encounterId: activeEncounter._id }).catch(() => undefined);
+    const intervalId = setInterval(() => {
+      runCriticalSweep({ encounterId: activeEncounter._id }).catch(() => undefined);
+    }, 60_000);
+
+    return () => clearInterval(intervalId);
+  }, [activeEncounter?._id, runCriticalSweep]);
 
   const timelineEvents = useQuery(
     api.encounters.getPatientTimeline,
@@ -311,7 +324,11 @@ export default function PatientPage() {
   return (
     <div className="mx-auto max-w-7xl space-y-6 bg-slate-50/30 p-4 text-slate-900 dark:bg-slate-950/30 dark:text-slate-100 md:p-8">
       
-      {criticalLabs && criticalLabs.length > 0 && <CriticalLabBanner alerts={criticalLabs} />}
+      {criticalLabs && criticalLabs.length > 0 && (
+        <CriticalLabBanner alerts={criticalLabs} actorName={actorName} />
+      )}
+
+      <CriticalWorkflowKpiCard encounterId={activeEncounter._id} />
 
       {showVitalsModal && (
         <VitalsUpdate
@@ -665,7 +682,7 @@ export default function PatientPage() {
             </TabsContent>
             <TabsContent value="imaging" className="pt-4">
                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  <div className="lg:col-span-1"><ImagingOrders encounterId={activeEncounter._id} /></div>
+                  <div className="lg:col-span-1"><ImagingOrders encounterId={activeEncounter._id} actorName={actorName} /></div>
                   <div className="lg:col-span-2"><ImagingResults encounterId={activeEncounter._id} /></div>
                </div>
             </TabsContent>

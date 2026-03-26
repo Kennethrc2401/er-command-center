@@ -6,15 +6,36 @@ const staffRole = v.union(
   v.literal("DOCTOR"),
   v.literal("NURSE"),
   v.literal("CCMA"),
+  v.literal("SURGEON"),
+  v.literal("ANESTHESIOLOGIST"),
+  v.literal("PHARMACIST"),
+  v.literal("RESPIRATORY_THERAPIST"),
+  v.literal("RAD_TECH"),
+  v.literal("SCRUB_TECH"),
+  v.literal("UNIT_COORDINATOR"),
   v.literal("UNKNOWN")
 );
+
+type StaffRole =
+  | "ADMIN"
+  | "DOCTOR"
+  | "NURSE"
+  | "CCMA"
+  | "SURGEON"
+  | "ANESTHESIOLOGIST"
+  | "PHARMACIST"
+  | "RESPIRATORY_THERAPIST"
+  | "RAD_TECH"
+  | "SCRUB_TECH"
+  | "UNIT_COORDINATOR"
+  | "UNKNOWN";
 
 const SEPSIS_ACK_PREFIX = "[SEPSIS_WATCH_ACK]";
 
 function buildSepsisAckContent(payload: {
   triggeredAt: number;
   signals: string[];
-  actorRole: "ADMIN" | "DOCTOR" | "NURSE" | "CCMA" | "UNKNOWN";
+  actorRole: StaffRole;
 }) {
   return `${SEPSIS_ACK_PREFIX}${JSON.stringify(payload)}`;
 }
@@ -27,7 +48,7 @@ function parseSepsisAckContent(content: string) {
     const parsed = JSON.parse(raw) as {
       triggeredAt?: number;
       signals?: string[];
-      actorRole?: "ADMIN" | "DOCTOR" | "NURSE" | "CCMA" | "UNKNOWN";
+      actorRole?: StaffRole;
     };
 
     if (!parsed || typeof parsed.triggeredAt !== "number") return null;

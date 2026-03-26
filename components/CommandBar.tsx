@@ -7,7 +7,7 @@ import { DialogTitle } from "@/components/ui/dialog";
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { 
   Search, Activity, Beaker, LayoutDashboard,
-  FileText, Home, Info, ShieldCheck, FolderOpen
+  FileText, Home, Info, ShieldCheck, FolderOpen, ClipboardList
 } from "lucide-react";
 
 export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: string) => void }) {
@@ -69,6 +69,9 @@ export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: strin
           </Command.Item>
           <Command.Item onSelect={() => runCommand(() => router.push("/dashboard/faxes"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
             <FileText className="h-4 w-4 text-slate-500" /> Fax Center
+          </Command.Item>
+          <Command.Item onSelect={() => runCommand(() => router.push("/dashboard/or-scheduler"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
+            <ClipboardList className="h-4 w-4 text-indigo-500" /> OR Scheduler
           </Command.Item>
           <Command.Item onSelect={() => runCommand(() => router.push("/dashboard/admin"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
             <ShieldCheck className="h-4 w-4 text-emerald-500" /> Admin Suite

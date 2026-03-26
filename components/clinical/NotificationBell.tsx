@@ -4,7 +4,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Bell, Zap, AlertTriangle, CheckCheck } from "lucide-react";
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { toast } from "sonner";
 
 /** Plays a two-tone alert via the Web Audio API — no external files needed. */
@@ -31,7 +31,15 @@ function playStatAlert() {
 }
 
 export default function NotificationBell({ userId }: { userId?: Id<"users"> }) {
-  const notifications = useQuery(api.notifications.getActive, { userId });
+  const [includeGlobal, setIncludeGlobal] = useState(false);
+  const [nowTs, setNowTs] = useState(() => Date.now());
+  const routedCriticalOnly = Boolean(userId) && !includeGlobal;
+
+  const notifications = useQuery(api.notifications.getActive, {
+    userId,
+    includeGlobal,
+    type: routedCriticalOnly ? "CRITICAL_LAB" : undefined,
+  });
   const markRead = useMutation(api.notifications.markAsRead);
   const markAllRead = useMutation(api.notifications.markAllRead);
   const prevCountRef = useRef(0);
@@ -41,8 +49,27 @@ export default function NotificationBell({ userId }: { userId?: Id<"users"> }) {
   const hasStats = notifications?.some((n) => n.type === "STAT_ORDER") ?? false;
 
   const handleMarkAll = useCallback(() => {
-    markAllRead({ userId }).catch(() => null);
-  }, [markAllRead, userId]);
+    markAllRead({
+      userId,
+      includeGlobal,
+      type: routedCriticalOnly ? "CRITICAL_LAB" : undefined,
+    }).catch(() => null);
+  }, [markAllRead, userId, includeGlobal, routedCriticalOnly]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setNowTs(Date.now()), 60_000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  const getAgeMinutes = (timestamp: number) => Math.max(0, Math.floor((nowTs - timestamp) / 60_000));
+
+  const getAgeLabel = (timestamp: number) => {
+    const totalMinutes = getAgeMinutes(timestamp);
+    if (totalMinutes < 60) return `${totalMinutes}m`;
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    return mins === 0 ? `${hours}h` : `${hours}h ${mins}m`;
+  };
 
   // 🔔 Asynchronous listener: fires every time Convex pushes new notifications
   useEffect(() => {
@@ -114,19 +141,43 @@ export default function NotificationBell({ userId }: { userId?: Id<"users"> }) {
             )}
           </div>
 
+          {userId && (
+            <div className="mb-3 flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/60">
+              <p className="text-[9px] font-black uppercase tracking-wide text-slate-500">
+                {routedCriticalOnly ? "Routed Critical Only" : "Including Global/All"}
+              </p>
+              <button
+                onClick={() => setIncludeGlobal((prev) => !prev)}
+                className={`relative h-5 w-10 rounded-full transition-colors ${includeGlobal ? "bg-blue-600" : "bg-slate-300 dark:bg-slate-700"}`}
+                aria-label="Toggle include global notifications"
+              >
+                <span
+                  className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${includeGlobal ? "translate-x-5" : "translate-x-0"}`}
+                />
+              </button>
+            </div>
+          )}
+
           <div className="space-y-2 max-h-80 overflow-y-auto">
             {count === 0 && (
               <p className="p-8 text-center text-xs text-slate-400 font-medium italic">No pending alerts</p>
             )}
-            {notifications?.map((n) => (
-              <div
-                key={n._id}
-                className={`p-4 rounded-2xl flex items-start gap-4 ${
-                  n.type === "STAT_ORDER"
-                    ? "bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40"
-                    : "bg-slate-50 dark:bg-white/5"
-                }`}
-              >
+            {notifications?.map((n) => {
+              const ageMinutes = getAgeMinutes(n.timestamp);
+              const staleCritical =
+                (n.type === "CRITICAL_LAB" || n.type === "CRITICAL_VITAL") && ageMinutes >= 10;
+
+              return (
+                <div
+                  key={n._id}
+                  className={`p-4 rounded-2xl flex items-start gap-4 ${
+                    staleCritical
+                      ? "bg-red-50 border border-red-300 ring-1 ring-red-200 dark:bg-red-950/30 dark:border-red-800"
+                      : n.type === "STAT_ORDER"
+                        ? "bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40"
+                        : "bg-slate-50 dark:bg-white/5"
+                  }`}
+                >
                 <div className="mt-0.5 shrink-0">
                   {n.type === "STAT_ORDER" ? (
                     <Zap className="h-4 w-4 text-amber-500" />
@@ -145,6 +196,42 @@ export default function NotificationBell({ userId }: { userId?: Id<"users"> }) {
                       {n.title}
                     </p>
                   </div>
+                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[7px] font-black uppercase tracking-widest ${
+                        n.userId ? "bg-blue-100 text-blue-700" : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {n.userId ? "Routed" : "Global"}
+                    </span>
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[7px] font-black uppercase tracking-widest ${
+                        n.type === "CRITICAL_LAB"
+                          ? "bg-rose-100 text-rose-700"
+                          : n.type === "CRITICAL_VITAL"
+                            ? "bg-orange-100 text-orange-700"
+                            : n.type === "STAT_ORDER"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {n.type === "CRITICAL_LAB"
+                        ? "Critical Lab"
+                        : n.type === "CRITICAL_VITAL"
+                          ? "Critical Vital"
+                          : n.type === "STAT_ORDER"
+                            ? "Stat"
+                            : "System"}
+                    </span>
+                    <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-widest text-slate-700">
+                      {getAgeLabel(n.timestamp)}
+                    </span>
+                    {staleCritical && (
+                      <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-widest text-white">
+                        Stale
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[10px] text-slate-500 leading-relaxed">{n.message}</p>
                   <button
                     onClick={() => markRead({ id: n._id })}
@@ -154,7 +241,8 @@ export default function NotificationBell({ userId }: { userId?: Id<"users"> }) {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

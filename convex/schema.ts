@@ -67,7 +67,14 @@ export default defineSchema({
       v.literal("ADMIN"), 
       v.literal("DOCTOR"), 
       v.literal("NURSE"), 
-      v.literal("CCMA")
+      v.literal("CCMA"),
+      v.literal("SURGEON"),
+      v.literal("ANESTHESIOLOGIST"),
+      v.literal("PHARMACIST"),
+      v.literal("RESPIRATORY_THERAPIST"),
+      v.literal("RAD_TECH"),
+      v.literal("SCRUB_TECH"),
+      v.literal("UNIT_COORDINATOR")
     ),
     credentials: v.string(), // e.g., "MD, FACS" or "RN, BSN"
     department: v.string(),
@@ -225,7 +232,7 @@ export default defineSchema({
     userId: v.optional(v.id("users")), // null if global/broadcast
     title: v.string(),
     message: v.string(),
-    type: v.union(v.literal("STAT_ORDER"), v.literal("CRITICAL_VITAL"), v.literal("SYSTEM")),
+    type: v.union(v.literal("STAT_ORDER"), v.literal("CRITICAL_VITAL"), v.literal("CRITICAL_LAB"), v.literal("SYSTEM")),
     isRead: v.boolean(),
     timestamp: v.number(),
     patientId: v.optional(v.id("patients")),
@@ -262,6 +269,23 @@ export default defineSchema({
   range: v.string(),
   isAbnormal: v.boolean(),
   status: v.union(v.literal("pending"), v.literal("final")),
+  criticalStatus: v.optional(v.union(
+    v.literal("new"),
+    v.literal("acknowledged"),
+    v.literal("escalated"),
+    v.literal("resolved")
+  )),
+  criticalRaisedAt: v.optional(v.number()),
+  criticalEscalationDueAt: v.optional(v.number()),
+  criticalEscalatedAt: v.optional(v.number()),
+  criticalEscalationCount: v.optional(v.number()),
+  criticalEscalatedRole: v.optional(v.union(
+    v.literal("NURSE"),
+    v.literal("DOCTOR"),
+    v.literal("ADMIN")
+  )),
+  criticalAcknowledgementNote: v.optional(v.string()),
+  criticalResolvedAt: v.optional(v.number()),
   acknowledgedBy: v.optional(v.string()),
   acknowledgedAt: v.optional(v.number()),
 }).index("by_encounter", ["encounterId"]),
@@ -338,6 +362,7 @@ export default defineSchema({
       studyName: v.string(), // e.g., "CT Head w/o Contrast"
       modality: v.string(),  // e.g., "CT", "X-Ray", "MRI", "US"
       reason: v.string(),    // e.g., "Rule out ICH"
+      orderedBy: v.optional(v.string()),
       status: v.union(
         v.literal("Ordered"), 
         v.literal("In Progress"), 
@@ -345,6 +370,19 @@ export default defineSchema({
       ),
       priority: v.string(),  // "STAT" or "Routine"
       report: v.optional(v.string()), // The radiologist's findings
+      simulatedSeries: v.optional(
+        v.object({
+          modality: v.string(),
+          region: v.string(),
+          generatedAt: v.number(),
+          slices: v.array(
+            v.object({
+              label: v.string(),
+              imageDataUri: v.string(),
+            })
+          ),
+        })
+      ),
       orderedAt: v.number(),
       resultedAt: v.optional(v.number()),
       acknowledgedBy: v.optional(v.string()),
@@ -504,6 +542,13 @@ export default defineSchema({
         v.literal("DOCTOR"),
         v.literal("NURSE"),
         v.literal("CCMA"),
+        v.literal("SURGEON"),
+        v.literal("ANESTHESIOLOGIST"),
+        v.literal("PHARMACIST"),
+        v.literal("RESPIRATORY_THERAPIST"),
+        v.literal("RAD_TECH"),
+        v.literal("SCRUB_TECH"),
+        v.literal("UNIT_COORDINATOR"),
         v.literal("UNKNOWN")
       ),
       uploadedAt: v.number(),
@@ -535,6 +580,13 @@ export default defineSchema({
         v.literal("DOCTOR"),
         v.literal("NURSE"),
         v.literal("CCMA"),
+        v.literal("SURGEON"),
+        v.literal("ANESTHESIOLOGIST"),
+        v.literal("PHARMACIST"),
+        v.literal("RESPIRATORY_THERAPIST"),
+        v.literal("RAD_TECH"),
+        v.literal("SCRUB_TECH"),
+        v.literal("UNIT_COORDINATOR"),
         v.literal("UNKNOWN")
       ),
       fileName: v.optional(v.string()),
@@ -580,8 +632,60 @@ export default defineSchema({
         v.literal("DOCTOR"),
         v.literal("NURSE"),
         v.literal("CCMA"),
+        v.literal("SURGEON"),
+        v.literal("ANESTHESIOLOGIST"),
+        v.literal("PHARMACIST"),
+        v.literal("RESPIRATORY_THERAPIST"),
+        v.literal("RAD_TECH"),
+        v.literal("SCRUB_TECH"),
+        v.literal("UNIT_COORDINATOR"),
         v.literal("UNKNOWN")
       )),
     })
       .index("by_singleton_key", ["singletonKey"]),
+    orCases: defineTable({
+      patientName: v.string(),
+      procedure: v.string(),
+      surgeon: v.string(),
+      anesthesia: v.string(),
+      room: v.string(),
+      scheduledStart: v.number(),
+      scheduledEnd: v.number(),
+      priority: v.union(
+        v.literal("ELECTIVE"),
+        v.literal("URGENT"),
+        v.literal("EMERGENT")
+      ),
+      status: v.union(
+        v.literal("SCHEDULED"),
+        v.literal("IN_ROOM"),
+        v.literal("IN_PROGRESS"),
+        v.literal("COMPLETED"),
+        v.literal("CANCELLED")
+      ),
+      notes: v.optional(v.string()),
+      createdBy: v.optional(v.string()),
+      createdAt: v.number(),
+      updatedAt: v.optional(v.number()),
+      statusUpdatedBy: v.optional(v.string()),
+      statusUpdatedAt: v.optional(v.number()),
+      statusHistory: v.optional(
+        v.array(
+          v.object({
+            status: v.union(
+              v.literal("SCHEDULED"),
+              v.literal("IN_ROOM"),
+              v.literal("IN_PROGRESS"),
+              v.literal("COMPLETED"),
+              v.literal("CANCELLED")
+            ),
+            at: v.number(),
+            by: v.optional(v.string()),
+          })
+        )
+      ),
+    })
+      .index("by_scheduled_start", ["scheduledStart"])
+      .index("by_room_start", ["room", "scheduledStart"])
+      .index("by_surgeon_start", ["surgeon", "scheduledStart"]),
   })

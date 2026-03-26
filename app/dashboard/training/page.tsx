@@ -6,6 +6,7 @@ import { GraduationCap, BookOpen, ChevronRight, Activity, Sparkles } from "lucid
 import EsiWizard from "@/components/Training/EsiWizard";
 import SimulateShift from "@/components/Training/SimulateShift";
 import WorkflowAnalytics from "@/components/Training/WorkflowAnalytics";
+import SurgerySimulation from "@/components/Training/SurgerySimulation";
 
 const quickProtocols = [
   {
@@ -131,6 +132,9 @@ export default function TrainingPage() {
             </div>
             <div className="min-w-0">
               <EsiWizard />
+            </div>
+            <div className="min-w-0">
+              <SurgerySimulation />
             </div>
 
             <div className="group relative overflow-hidden rounded-[2.5rem] bg-purple-600 p-6 text-white shadow-xl shadow-purple-200 sm:p-8">
