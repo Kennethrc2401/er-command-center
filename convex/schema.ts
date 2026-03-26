@@ -238,7 +238,6 @@ export default defineSchema({
     timestamp: v.number(),
     patientId: v.optional(v.id("patients")),
   })
-  .index("by_user", ["userId", "isRead"])
   .index("by_timestamp", ["timestamp"]),
   
   clinicalNotes: defineTable({

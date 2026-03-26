@@ -39,11 +39,15 @@ export const getActive = query({
       return applyTypeFilter(globalUnread).slice(0, 10);
     }
 
-    const userUnread = await ctx.db
+    const allUserRecent = await ctx.db
       .query("notifications")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId).eq("isRead", false))
+      .withIndex("by_timestamp")
       .order("desc")
-      .take(25);
+      .take(100);
+    
+    const userUnread = allUserRecent
+      .filter((row) => row.userId === args.userId && !row.isRead)
+      .slice(0, 25);
 
     const globalUnread = includeGlobal
       ? await getGlobalUnread(25)
@@ -81,14 +85,16 @@ export const markAllRead = mutation({
         .order("desc")
         .take(500);
 
-      return recent.filter((row) => row.userId === undefined && !row.isRead);
+      return recent.filter((row) => row.userId == null && !row.isRead);
     };
 
     const userUnread = args.userId
       ? await ctx.db
           .query("notifications")
-          .withIndex("by_user", (q) => q.eq("userId", args.userId).eq("isRead", false))
-          .collect()
+          .withIndex("by_timestamp")
+          .order("desc")
+          .take(500)
+          .then((rows) => rows.filter((row) => row.userId === args.userId && !row.isRead))
       : [];
 
     const globalUnread = includeGlobal
