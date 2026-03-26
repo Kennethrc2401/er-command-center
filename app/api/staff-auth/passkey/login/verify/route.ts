@@ -79,11 +79,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid staff credentials." }, { status: 401 });
     }
 
+    const runtimeOrigin = request.nextUrl.origin;
+
     const verification = await verifyAuthenticationResponse({
       response: responsePayload,
       expectedChallenge: challenge.challenge,
-      expectedOrigin: getPasskeyExpectedOrigins(),
-      expectedRPID: getPasskeyRpId(),
+      expectedOrigin: getPasskeyExpectedOrigins(runtimeOrigin),
+      expectedRPID: getPasskeyRpId(runtimeOrigin),
       requireUserVerification: true,
       credential: {
         id: passkey.credentialId,

@@ -84,8 +84,10 @@ export async function POST(request: NextRequest) {
       userId: user.userId,
     });
 
+    const runtimeOrigin = request.nextUrl.origin;
+
     const options = await generateRegistrationOptions({
-      rpID: getPasskeyRpId(),
+      rpID: getPasskeyRpId(runtimeOrigin),
       rpName: getPasskeyRpName(),
       userID: new TextEncoder().encode(user.userId),
       userName: user.username,
@@ -115,7 +117,7 @@ export async function POST(request: NextRequest) {
 
     const response = NextResponse.json({
       options,
-      expectedOrigins: getPasskeyExpectedOrigins(),
+      expectedOrigins: getPasskeyExpectedOrigins(runtimeOrigin),
     });
 
     response.cookies.set({

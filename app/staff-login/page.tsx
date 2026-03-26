@@ -230,6 +230,8 @@ export default function StaffLoginPage() {
     } catch (err) {
       if (err instanceof Error && err.name === "NotAllowedError") {
         setError("Passkey registration was canceled or timed out.");
+      } else if (err instanceof Error && err.message) {
+        setError(`Passkey registration failed: ${err.message}`);
       } else {
         setError("Unable to register passkey right now.");
       }

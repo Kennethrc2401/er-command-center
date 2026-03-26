@@ -40,11 +40,13 @@ export async function POST(request: NextRequest) {
 
     const convex = new ConvexHttpClient(convexUrl);
 
+    const runtimeOrigin = request.nextUrl.origin;
+
     const verification = await verifyRegistrationResponse({
       response: responsePayload,
       expectedChallenge: challenge.challenge,
-      expectedOrigin: getPasskeyExpectedOrigins(),
-      expectedRPID: getPasskeyRpId(),
+      expectedOrigin: getPasskeyExpectedOrigins(runtimeOrigin),
+      expectedRPID: getPasskeyRpId(runtimeOrigin),
       requireUserVerification: true,
     });
 

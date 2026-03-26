@@ -91,8 +91,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const runtimeOrigin = request.nextUrl.origin;
+
     const options = await generateAuthenticationOptions({
-      rpID: getPasskeyRpId(),
+      rpID: getPasskeyRpId(runtimeOrigin),
       timeout: 60000,
       userVerification: "preferred",
       allowCredentials: passkeys.map((passkey) => ({
@@ -110,7 +112,7 @@ export async function POST(request: NextRequest) {
 
     const response = NextResponse.json({
       options,
-      expectedOrigins: getPasskeyExpectedOrigins(),
+      expectedOrigins: getPasskeyExpectedOrigins(runtimeOrigin),
     });
 
     response.cookies.set({
