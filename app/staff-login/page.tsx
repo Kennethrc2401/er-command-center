@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { AlertTriangle, KeyRound, Loader2, Lock, UserRound } from "lucide-react";
+import { notifyStaffSessionUpdated } from "@/lib/hooks/useStaffSession";
 
 export default function StaffLoginPage() {
   const router = useRouter();
@@ -48,6 +49,7 @@ export default function StaffLoginPage() {
         return;
       }
 
+      notifyStaffSessionUpdated();
       setSuccess("Access granted. Redirecting to triage dashboard...");
       router.push("/dashboard/triage");
       router.refresh();
@@ -155,6 +157,7 @@ export default function StaffLoginPage() {
         return;
       }
 
+      notifyStaffSessionUpdated();
       setSuccess("Passkey verified. Redirecting to triage dashboard...");
       router.push("/dashboard/triage");
       router.refresh();

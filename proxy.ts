@@ -12,12 +12,27 @@ const isPublicRoute = createRouteMatcher([
 ]);
 
 const isAdminRoute = createRouteMatcher(["/dashboard/admin(.*)"]);
+const isStaffDashboardRoute = createRouteMatcher(["/dashboard(.*)"]);
 
 export default clerkMiddleware(async (auth, request) => {
   if (isPublicRoute(request)) return;
 
   const staffToken = request.cookies.get(STAFF_SESSION_COOKIE)?.value;
   const staffSession = await verifyStaffSessionToken(staffToken);
+
+  if (isStaffDashboardRoute(request)) {
+    if (!staffSession) {
+      const url = new URL("/staff-login", request.url);
+      return NextResponse.redirect(url);
+    }
+
+    if (isAdminRoute(request) && staffSession.role !== "ADMIN") {
+      const url = new URL("/dashboard/triage", request.url);
+      return NextResponse.redirect(url);
+    }
+
+    return;
+  }
 
   if (staffSession) {
     if (isAdminRoute(request) && staffSession.role !== "ADMIN") {

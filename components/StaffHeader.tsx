@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SignInButton, UserButton, useAuth } from "@clerk/nextjs";
-import { useStaffSession } from "@/lib/hooks/useStaffSession";
+import { notifyStaffSessionUpdated, useStaffSession } from "@/lib/hooks/useStaffSession";
 
 export default function StaffHeader() {
   const { isSignedIn } = useAuth();
@@ -19,6 +19,7 @@ export default function StaffHeader() {
         method: "POST",
         credentials: "include",
       });
+      notifyStaffSessionUpdated();
       await staffSession.refresh();
       router.push("/staff-login");
       router.refresh();

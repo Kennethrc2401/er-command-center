@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { StaffRole } from "@/lib/staffSessionToken";
 
+const STAFF_SESSION_UPDATED_EVENT = "staff-session-updated";
+
 type StaffSessionUser = {
   userId: string;
   name: string;
@@ -16,6 +18,11 @@ type StaffSessionState = {
   user: StaffSessionUser | null;
   refresh: () => Promise<void>;
 };
+
+export function notifyStaffSessionUpdated() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(STAFF_SESSION_UPDATED_EVENT));
+}
 
 export function useStaffSession(): StaffSessionState {
   const [loading, setLoading] = useState(true);
@@ -58,6 +65,26 @@ export function useStaffSession(): StaffSessionState {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleSessionUpdate = () => {
+      void refresh();
+    };
+
+    const handleFocus = () => {
+      void refresh();
+    };
+
+    window.addEventListener(STAFF_SESSION_UPDATED_EVENT, handleSessionUpdate);
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.removeEventListener(STAFF_SESSION_UPDATED_EVENT, handleSessionUpdate);
+      window.removeEventListener("focus", handleFocus);
+    };
   }, [refresh]);
 
   return { loading, authenticated, user, refresh };
