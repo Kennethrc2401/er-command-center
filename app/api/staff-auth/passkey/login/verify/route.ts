@@ -112,6 +112,13 @@ export async function POST(request: NextRequest) {
       convex.mutation(api.users.clearStaffIpRateLimit, {
         key: challenge.ipKey,
       }),
+      convex.mutation(api.audit.logEvent, {
+        userId: user.userId,
+        userName: user.name,
+        action: "PASSKEY_LOGIN_SUCCESS",
+        patientName: "System",
+        metadata: `Credential=${passkey.credentialId.slice(0, 12)}...; username=${user.username}`,
+      }),
     ]);
 
     const token = await createStaffSessionToken({

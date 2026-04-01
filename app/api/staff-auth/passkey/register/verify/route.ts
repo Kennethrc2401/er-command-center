@@ -67,6 +67,14 @@ export async function POST(request: NextRequest) {
       name: body.passkeyName?.trim() || undefined,
     });
 
+    await convex.mutation(api.audit.logEvent, {
+      userId: challenge.userId as Id<"users">,
+      userName: challenge.username,
+      action: "PASSKEY_REGISTERED",
+      patientName: "System",
+      metadata: `Credential=${registrationInfo.credential.id.slice(0, 12)}...; label=${body.passkeyName?.trim() || "Current Device"}`,
+    });
+
     const response = NextResponse.json({ ok: true });
     response.cookies.set({
       name: STAFF_PASSKEY_CHALLENGE_COOKIE,

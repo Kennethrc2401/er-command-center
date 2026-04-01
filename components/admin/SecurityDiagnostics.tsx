@@ -1,15 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { Fingerprint, LockKeyhole, PencilLine, ShieldAlert, TimerReset, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Fingerprint, LockKeyhole, PencilLine, ServerCog, ShieldAlert, TimerReset, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { defaultCredentialsForRole, normalizeStaffRole } from "@/lib/auth/roles";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
 import { useStaffSession } from "@/lib/hooks/useStaffSession";
+
+type DeploymentCheck = {
+  key: string;
+  label: string;
+  status: "ok" | "warn" | "fail";
+  detail: string;
+  fixStep?: string;
+};
+
+type DeploymentHealthPayload = {
+  summaryStatus: "ok" | "warn" | "fail";
+  deploymentOrigin: string;
+  deploymentHost: string;
+  rpId: string;
+  allowedOrigins: string[];
+  vercelEnvUrl: string;
+  checks: DeploymentCheck[];
+};
 
 const formatTimestamp = (timestamp: number) => {
   if (!timestamp) return "-";
@@ -46,11 +64,54 @@ export default function SecurityDiagnostics() {
   const [clearingKey, setClearingKey] = useState<string | null>(null);
   const [renamingPasskeyId, setRenamingPasskeyId] = useState<Id<"staffPasskeys"> | null>(null);
   const [revokingPasskeyId, setRevokingPasskeyId] = useState<Id<"staffPasskeys"> | null>(null);
+  const [deploymentHealth, setDeploymentHealth] = useState<DeploymentHealthPayload | null>(null);
+  const [deploymentHealthError, setDeploymentHealthError] = useState<string | null>(null);
+  const [deploymentHealthLoading, setDeploymentHealthLoading] = useState(true);
 
   const activeThrottleBlocks = throttleRows?.filter((row) => row.isBlocked).length ?? 0;
   const activePasskeyCount = passkeyInventory?.filter((row) => row.status === "ACTIVE").length ?? 0;
 
   const auditActorId = staffSession.user?.userId as Id<"users"> | undefined;
+
+  useEffect(() => {
+    let active = true;
+
+    const loadDeploymentHealth = async () => {
+      setDeploymentHealthLoading(true);
+      setDeploymentHealthError(null);
+
+      try {
+        const response = await fetch("/api/admin/deployment-health", {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+        });
+
+        const data = (await response.json()) as DeploymentHealthPayload & { error?: string };
+        if (!active) return;
+
+        if (!response.ok) {
+          setDeploymentHealthError(data.error ?? "Unable to load deployment diagnostics.");
+          setDeploymentHealth(null);
+          return;
+        }
+
+        setDeploymentHealth(data);
+      } catch {
+        if (!active) return;
+        setDeploymentHealthError("Unable to load deployment diagnostics.");
+        setDeploymentHealth(null);
+      } finally {
+        if (active) setDeploymentHealthLoading(false);
+      }
+    };
+
+    void loadDeploymentHealth();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const resolveAuditActorId = async (): Promise<Id<"users"> | null> => {
     if (auditActorId) return auditActorId;
@@ -164,8 +225,138 @@ export default function SecurityDiagnostics() {
     }
   };
 
+  const handleCopyFix = async (check: DeploymentCheck) => {
+    if (!check.fixStep) return;
+    try {
+      await navigator.clipboard.writeText(check.fixStep);
+      toast.success(`Copied fix for ${check.label}.`);
+    } catch {
+      toast.error("Unable to copy remediation text.");
+    }
+  };
+
   return (
     <div className="space-y-6">
+      <section className="overflow-hidden rounded-[2.5rem] border border-indigo-100 bg-white shadow-sm">
+        <header className="flex items-center justify-between gap-3 border-b border-indigo-50 bg-indigo-50/40 p-6">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl border border-indigo-200 bg-indigo-100 p-2">
+              <ServerCog className="h-4 w-4 text-indigo-700" />
+            </div>
+            <div>
+              <h2 className="text-sm font-black uppercase tracking-tight text-slate-900">Deployment Health</h2>
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-600">Auth · Passkey · Runtime Config</p>
+            </div>
+          </div>
+
+          <div
+            className={`rounded-2xl border px-3 py-2 text-right ${
+              deploymentHealth?.summaryStatus === "fail"
+                ? "border-rose-200 bg-rose-100/70"
+                : deploymentHealth?.summaryStatus === "warn"
+                  ? "border-amber-200 bg-amber-100/70"
+                  : "border-emerald-200 bg-emerald-100/70"
+            }`}
+          >
+            <p className="text-[9px] font-black uppercase tracking-widest text-slate-700">Runtime Status</p>
+            <p className="text-lg font-black leading-none text-slate-800">
+              {deploymentHealthLoading ? "..." : deploymentHealth?.summaryStatus?.toUpperCase() ?? "N/A"}
+            </p>
+            {deploymentHealth?.vercelEnvUrl ? (
+              <a
+                href={deploymentHealth.vercelEnvUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex rounded-lg border border-slate-300 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-widest text-slate-700 transition-colors hover:bg-slate-100"
+              >
+                Open Vercel Env
+              </a>
+            ) : null}
+          </div>
+        </header>
+
+        <div className="space-y-4 p-4">
+          {deploymentHealthLoading && (
+            <p className="p-2 text-xs font-semibold text-slate-400">Checking deployment configuration...</p>
+          )}
+
+          {deploymentHealthError && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
+              {deploymentHealthError}
+            </div>
+          )}
+
+          {deploymentHealth && (
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Deployment Origin</p>
+                  <p className="text-xs font-semibold text-slate-800">{deploymentHealth.deploymentOrigin}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Resolved RP ID</p>
+                  <p className="text-xs font-semibold text-slate-800">{deploymentHealth.rpId}</p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-160 text-left">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50/50">
+                      <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wide text-slate-500">Check</th>
+                      <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wide text-slate-500">Status</th>
+                      <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wide text-slate-500">Detail</th>
+                      <th className="px-4 py-3 text-[10px] font-black uppercase tracking-wide text-slate-500">Remediation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deploymentHealth.checks.map((check) => (
+                      <tr key={check.key} className="border-b border-slate-50 last:border-b-0">
+                        <td className="px-4 py-3 text-xs font-black uppercase text-slate-800">{check.label}</td>
+                        <td className="px-4 py-3">
+                          {check.status === "ok" ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">
+                              <CheckCircle2 className="h-3 w-3" />
+                              OK
+                            </span>
+                          ) : check.status === "warn" ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700">
+                              <AlertTriangle className="h-3 w-3" />
+                              WARN
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-rose-700">
+                              <XCircle className="h-3 w-3" />
+                              FAIL
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-[11px] text-slate-600">{check.detail}</td>
+                        <td className="px-4 py-3">
+                          {check.status === "ok" ? (
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">No action</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void handleCopyFix(check)}
+                              disabled={!check.fixStep}
+                              className="inline-flex items-center gap-1 rounded-xl border border-indigo-200 bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest text-indigo-700 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <Copy className="h-3 w-3" />
+                              Copy Fix
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-5">
         <div className="xl:col-span-2 overflow-hidden rounded-[2.5rem] border border-rose-100 bg-white shadow-sm">
         <header className="flex items-center gap-3 border-b border-rose-50 bg-rose-50/40 p-6">

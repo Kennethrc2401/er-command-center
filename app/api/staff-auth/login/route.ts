@@ -82,6 +82,14 @@ export async function POST(request: Request) {
       officeKey,
     });
 
+    await convex.mutation(api.audit.logEvent, {
+      userId: user.userId,
+      userName: user.name,
+      action: "STAFF_LOGIN_SUCCESS",
+      patientName: "System",
+      metadata: `Method=password; username=${user.username}; ipKey=${ipKey}`,
+    });
+
     await convex.mutation(api.users.clearStaffIpRateLimit, {
       key: ipKey,
     });
