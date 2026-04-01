@@ -35,12 +35,13 @@ export default function CriticalLabBanner({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
 
-  if (alerts.length === 0) return null;
-
   useEffect(() => {
+    if (alerts.length === 0) return;
     const intervalId = setInterval(() => setNowTs(Date.now()), 60_000);
     return () => clearInterval(intervalId);
-  }, []);
+  }, [alerts.length]);
+
+  if (alerts.length === 0) return null;
 
   const escalatedCount = alerts.filter((alert) => alert.criticalStatus === "escalated").length;
   const acknowledgedCount = alerts.filter((alert) => alert.criticalStatus === "acknowledged").length;

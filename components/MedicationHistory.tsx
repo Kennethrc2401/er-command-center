@@ -33,7 +33,7 @@ export default function MedicationHistory({ encounterId }: MedHistoryProps) {
       toast.success("Medication Documented", {
         description: "Status updated to Administered by Sophia R, RN",
       });
-    } catch (error) {
+    } catch {
       toast.error("Documentation Error");
     }
   };

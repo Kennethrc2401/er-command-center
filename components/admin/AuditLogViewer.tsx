@@ -2,7 +2,7 @@
 
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { ShieldCheck, User, Clock, FileSearch } from "lucide-react";
+import { ShieldCheck, User } from "lucide-react";
 
 export default function AuditLogViewer() {
   const logs = useQuery(api.audit.getRecentLogs);

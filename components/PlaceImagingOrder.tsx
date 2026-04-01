@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { 
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
 } from "@/components/ui/select";
-import { Scan, Radio, Save, AlertCircle } from "lucide-react";
+import { Scan, Radio, Save } from "lucide-react";
 import { toast } from "sonner";
 
 export default function PlaceImagingOrder({
@@ -52,7 +52,7 @@ export default function PlaceImagingOrder({
       setOpen(false);
       setStudyName("");
       setReason("");
-    } catch (e) {
+    } catch {
       toast.error("Order Failed", { description: "Clinical system error." });
     } finally {
       setIsSaving(false);

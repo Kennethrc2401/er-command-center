@@ -2,15 +2,13 @@
 
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { 
   Badge 
 } from "@/components/ui/badge";
 import { 
   Users, 
   Clock, 
-  AlertCircle, 
-  CheckCircle2, 
   ArrowRightCircle 
 } from "lucide-react";
 import Link from "next/link";
@@ -141,19 +139,15 @@ function StatusBadge({ status }: { status: string }) {
 
 // Helper: Real-time Wait Timer
 function WaitTimer({ startTime }: { startTime: number }) {
-  // 1. Calculate the initial time immediately so we don't need an effect call on mount
-  const getDiff = () => Math.floor((Date.now() - startTime) / 60000);
-  
-  const [mins, setMins] = useState<number>(getDiff);
+  const [mins, setMins] = useState<number>(() => Math.floor((Date.now() - startTime) / 60000));
 
   useEffect(() => {
-    // 2. The interval handles subsequent updates (asynchronous)
     const timer = setInterval(() => {
-      setMins(getDiff());
+      setMins(Math.floor((Date.now() - startTime) / 60000));
     }, 60000); 
 
     return () => clearInterval(timer);
-  }, [startTime]); // Only re-run if the patient's check-in time changes
+  }, [startTime]);
 
   return (
     <div className="flex items-center gap-1 font-mono text-[11px] font-bold text-slate-500">

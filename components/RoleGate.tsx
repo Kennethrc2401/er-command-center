@@ -1,7 +1,7 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { AlertCircle, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
 
 interface RoleGateProps {
   children: React.ReactNode;

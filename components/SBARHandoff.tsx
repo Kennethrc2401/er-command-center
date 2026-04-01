@@ -1,8 +1,7 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { ClipboardCopy, MessageSquare, AlertTriangle, Activity, CheckCircle2, Sparkles } from "lucide-react";
+import { ClipboardCopy, MessageSquare, CheckCircle2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { useMemo, useState } from "react";

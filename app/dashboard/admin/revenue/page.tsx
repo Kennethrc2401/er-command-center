@@ -2,8 +2,8 @@
 
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { BarChart3, TrendingUp, DollarSign, ArrowUpRight, ArrowDownRight, CreditCard } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { Card } from "@/components/ui/card";
 import RevenuePayerMix from "@/components/mgmt/RevenuePayerMix";
 
 interface RevenueCardProps {

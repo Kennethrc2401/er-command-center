@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { Printer, ArrowLeft, ShieldCheck, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -186,7 +187,7 @@ export default function DischargeSummary({ patient, encounter, onClose }: Discha
             <div className="space-y-4">
               {encounter.patientSignature ? (
                 <div className="space-y-1">
-                  <img src={encounter.patientSignature} alt="Patient Signature" className="h-12 w-auto grayscale" />
+                  <Image src={encounter.patientSignature} alt="Patient Signature" width={192} height={48} unoptimized className="h-12 w-auto grayscale" />
                   <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
                     Digitally Signed on {signatureSignedAt}
                   </p>

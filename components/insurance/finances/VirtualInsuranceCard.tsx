@@ -1,6 +1,6 @@
 "use client";
 
-import { CreditCard, ShieldCheck, Globe, Phone } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 
 interface Insurance {
   provider?: string;

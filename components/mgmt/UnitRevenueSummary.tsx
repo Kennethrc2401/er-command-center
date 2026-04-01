@@ -1,7 +1,8 @@
-import { BarChart3, PieChart, TrendingUp, ShieldCheck, Badge } from "lucide-react";
+import { BarChart3, TrendingUp, Badge } from "lucide-react";
 
 import { Card, CardContent } from "../ui/card";
 export default function UnitRevenueSummary({ stats, isPresentationMode }: { stats: Record<string, unknown>, isPresentationMode: boolean }) {
+  void stats;
   return (
     <Card className="border-slate-200 shadow-sm rounded-[2.5rem] overflow-hidden bg-white">
       <div className="bg-slate-900 p-5 flex justify-between items-center px-8">

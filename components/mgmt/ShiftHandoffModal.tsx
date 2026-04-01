@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ClipboardCopy, FileText, Printer, CheckCircle2, AlertCircle, Share2, Badge } from "lucide-react";
 import { toast } from "sonner";
@@ -16,8 +15,6 @@ interface ShiftStats {
 }
 
 export default function ShiftHandoffModal({ stats }: { stats: ShiftStats }) {
-  const [copied, setCopied] = useState(false);
-
   const handoffText = `
 UNIT 4B SHIFT HANDOFF REPORT
 Date: ${new Date().toLocaleDateString()} | Time: ${new Date().toLocaleTimeString()}
@@ -43,9 +40,7 @@ END OF REPORT
 
   const handleCopy = () => {
     navigator.clipboard.writeText(handoffText);
-    setCopied(true);
     toast.success("Handoff report copied to clipboard");
-    setTimeout(() => setCopied(false), 2000);
   };
 
   return (

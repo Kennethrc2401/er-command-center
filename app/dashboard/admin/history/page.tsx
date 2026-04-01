@@ -2,7 +2,7 @@
 
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Clock, History, Calendar, UserPlus, LogOut, CreditCard } from "lucide-react";
+import { Calendar, UserPlus, CreditCard } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export default function HistoryPage() {

@@ -1,8 +1,5 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +8,7 @@ import { Printer, Home, AlertTriangle, Stethoscope } from "lucide-react";
 export default function DischargeTool({ encounterId }: { encounterId: Id<"encounters"> }) {
   // Logic to pull diagnosis from notes and generate take-home plan
   return (
-    <Card className="border-slate-200 bg-white overflow-hidden rounded-3xl">
+    <Card className="border-slate-200 bg-white overflow-hidden rounded-3xl" data-encounter-id={encounterId}>
       <CardHeader className="bg-slate-900 text-white p-6">
         <CardTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
           <Home className="h-4 w-4 text-emerald-400" /> Patient Discharge Instructions

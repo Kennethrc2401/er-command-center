@@ -56,7 +56,7 @@ export default function OrderMedication({ encounterId, patientId, patientAllergi
       setIsOpen(false);
       setMedName("");
       setDosage("");
-    } catch (error) {
+    } catch {
       toast.error("Order Entry Failed", {
         description: "Please check clinical connectivity and try again.",
       });

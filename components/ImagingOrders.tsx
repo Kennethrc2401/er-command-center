@@ -7,8 +7,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { 
   Scan, 
-  CheckCircle2, 
-  FileSearch,
   ChevronRight,
   FlaskConical,
   Activity
@@ -32,7 +30,7 @@ export default function ImagingOrders({
     try {
       await finalizeSimulatedResult({ orderId });
       toast.success("Radiology Report Finalized");
-    } catch (e) {
+    } catch {
       toast.error("Simulation failed");
     }
   };

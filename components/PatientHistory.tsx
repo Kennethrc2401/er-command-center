@@ -4,7 +4,6 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { Calendar, Stethoscope, ChevronRight } from "lucide-react";
-import Link from "next/link";
 
 export default function PatientHistory({ patientId }: { patientId: Id<"patients"> }) {
   const history = useQuery(api.encounters.getByPatient, { patientId });

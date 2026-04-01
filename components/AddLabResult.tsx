@@ -46,7 +46,7 @@ export default function AddLabResult({ encounterId }: { encounterId: Id<"encount
       });
       setOpen(false);
       resetForm();
-    } catch (e) {
+    } catch {
       toast.error("Entry Failed", { description: "Check server connection." });
     } finally {
       setIsSaving(false);

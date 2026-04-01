@@ -12,7 +12,6 @@ import {
   ScrollText,
   FolderCog
 } from "lucide-react";
-import ShiftHandoffModal from "@/components/mgmt/ShiftHandoffModal";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

@@ -47,7 +47,7 @@ export default function PatientCareSidebar({
         completedByRole: actorRole,
       });
       toast.success("Care task updated");
-    } catch (e) {
+    } catch {
       toast.error("Failed to update task");
     }
   };

@@ -6,7 +6,6 @@ import { api } from "@/convex/_generated/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { 
   Users, 
-  LogOut, 
   Clock, 
   AlertTriangle, 
   GitPullRequest, 
@@ -26,12 +25,6 @@ import {
 import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
 
 // --- Types to resolve ESLint 'any' errors ---
-
-interface HighRiskPatient {
-  name: string;
-  issue: string;
-  location: string;
-}
 
 interface AcuityData {
   name: string;

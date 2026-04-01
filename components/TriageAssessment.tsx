@@ -40,7 +40,7 @@ export default function TriageAssessment({ encounterId }: { encounterId: Id<"enc
       });
       toast.success("Triage Assessment Finalized");
       setIsEditing(false);
-    } catch (e) {
+    } catch {
       toast.error("Failed to save assessment");
     }
   };

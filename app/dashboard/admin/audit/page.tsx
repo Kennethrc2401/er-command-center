@@ -6,7 +6,7 @@ import { api } from "@/convex/_generated/api";
 import { 
   ShieldCheck, ShieldAlert, FileSearch, 
   UserCircle, Download, CheckCircle2, 
-  XCircle, Filter, Lock, Eye
+  Filter, Lock, Eye
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

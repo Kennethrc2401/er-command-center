@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Image from "next/image";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -157,7 +158,7 @@ RED FLAGS: Return to ER for chest pain, shortness of breath, or high fever.
             
             <div className="text-center">
               {signatureData ? (
-                <img src={signatureData} alt="Patient Signature" className="h-16 mx-auto mb-1" />
+                <Image src={signatureData} alt="Patient Signature" width={192} height={64} unoptimized className="h-16 w-auto mx-auto mb-1" />
               ) : (
                 <div className="h-16 w-48 border-b border-dashed border-slate-300 mb-1 flex items-center justify-center">
                   <span className="text-[9px] text-slate-300 uppercase font-black">Waiting for signature...</span>
