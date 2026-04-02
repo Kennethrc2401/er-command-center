@@ -11,7 +11,8 @@ import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
 import { AlertTriangle, CheckCheck, Microscope, ScanLine, Stethoscope, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
-function alertIcon(kind: "lab" | "imaging" | "consult" | "assignment") {
+function alertIcon(kind: "room" | "lab" | "imaging" | "consult" | "assignment") {
+  if (kind === "room") return <AlertTriangle className="h-4 w-4 text-amber-600" />;
   if (kind === "lab") return <Microscope className="h-4 w-4 text-red-600" />;
   if (kind === "imaging") return <ScanLine className="h-4 w-4 text-blue-600" />;
   if (kind === "assignment") return <UserRound className="h-4 w-4 text-emerald-600" />;

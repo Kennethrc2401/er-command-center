@@ -15,6 +15,16 @@ type ClaimMode = "flowOwner" | "assignedProvider";
 
 const SELF_SELECTION_VALUE = "__me__";
 
+type ProviderWorkloadRow = {
+  name: string;
+  assignedCount: number;
+  highAcuityCount: number;
+  acuityWeightedLoad: number;
+  blockedCount: number;
+  readyDischargeCount: number;
+  openAlertCount: number;
+};
+
 export default function AssignmentQueue() {
   const roster = useQuery(api.users.getActiveRoster);
   const encounters = useQuery(api.workflow.getThroughputBoard);
@@ -43,7 +53,7 @@ export default function AssignmentQueue() {
   }, [roster]);
 
   const workloadByName = useMemo(() => {
-    const map = new Map<string, (typeof providerWorkload)[number]>();
+    const map = new Map<string, ProviderWorkloadRow>();
     for (const row of providerWorkload ?? []) {
       map.set(row.name, row);
     }
