@@ -149,16 +149,26 @@ export const getActiveRoster = query({
       .query("users")
       .collect();
 
+    // Harden against legacy or malformed records in deployed environments.
     return users
       .filter((user) => user.status === "ACTIVE")
-      .map((user) => ({
-        _id: user._id,
-        name: user.name,
-        role: user.role,
-        credentials: user.credentials,
-        department: user.department,
-        username: user.username ?? undefined,
-      }))
+      .map((user) => {
+        const safeName = typeof user.name === "string" ? user.name : "";
+        const safeRole = typeof user.role === "string" ? user.role : "UNIT_COORDINATOR";
+        const safeCredentials = typeof user.credentials === "string" ? user.credentials : "";
+        const safeDepartment = typeof user.department === "string" ? user.department : "";
+        const safeUsername = typeof user.username === "string" ? user.username : undefined;
+
+        return {
+          _id: user._id,
+          name: safeName,
+          role: safeRole,
+          credentials: safeCredentials,
+          department: safeDepartment,
+          username: safeUsername,
+        };
+      })
+      .filter((user) => user.name.length > 0)
       .sort((left, right) => left.role.localeCompare(right.role) || left.name.localeCompare(right.name));
   },
 });
