@@ -29,15 +29,15 @@ export default function StaffHeader() {
   };
 
   return (
-    <header className="sticky top-0 z-50 h-10 w-full shrink-0 border-b border-slate-800 bg-slate-950 px-3 text-slate-100 sm:px-6 lg:px-8">
-      <div className="flex h-full items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+    <header className="sticky top-0 z-50 w-full shrink-0 border-b border-slate-800 bg-slate-950 px-3 py-2 text-slate-100 sm:px-6 lg:px-8">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-4">
           <div className="relative flex h-2.5 w-2.5 shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70"></span>
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400"></span>
           </div>
 
-          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
             <span className="truncate text-[11px] font-extrabold uppercase tracking-[0.16em] text-slate-100">
               Nexus <span className="text-sky-300">Core</span>
             </span>
@@ -51,7 +51,7 @@ export default function StaffHeader() {
           </span>
         </div>
 
-        <div className="flex items-center gap-3 sm:gap-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 sm:justify-end lg:gap-4">
           <div className="hidden items-center gap-2 lg:flex">
             <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-300">
               HIPAA Tunnel Active
@@ -65,7 +65,7 @@ export default function StaffHeader() {
           {isSignedIn ? (
             <UserButton afterSignOutUrl="/" />
           ) : staffSession.authenticated && staffSession.user ? (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-200">
                 {staffSession.user.username}
               </span>

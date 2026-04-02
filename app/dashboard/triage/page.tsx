@@ -36,6 +36,8 @@ import MorningReport from "@/components/clinical/MorningReport";
 import ThroughputControlTower from "@/components/clinical/ThroughputControlTower";
 import OperationalAlertsPanel from "@/components/clinical/OperationalAlertsPanel";
 import ProviderWorkloadPanel from "@/components/clinical/ProviderWorkloadPanel";
+import RoomTurnoverMonitor from "@/components/clinical/RoomTurnoverMonitor";
+import AssignmentQueue from "@/components/clinical/AssignmentQueue";
 import KioskHandoffQueue from "@/components/kiosk/KioskHandoffQueue";
 import { useAuth } from "@clerk/nextjs";
 import { useStaffSession } from "@/lib/hooks/useStaffSession";
@@ -288,6 +290,8 @@ function ERDashboardContent() {
           </div>
         )}
 
+        <AssignmentQueue />
+
         {/* NEW ANALYTICS KPI SECTION */}
         <ClinicalAnalytics />
 
@@ -344,8 +348,9 @@ function ERDashboardContent() {
 
         <ThroughputControlTower isPrivate={isPrivate} isDemoMode={isDemoMode} />
 
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-4">
           <OperationalAlertsPanel />
+          <RoomTurnoverMonitor />
           <ProviderWorkloadPanel />
           <KioskHandoffQueue />
         </section>

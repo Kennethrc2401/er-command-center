@@ -1,5 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { resolveDashboardAccess } from "@/lib/auth/dashboardAccess";
 import { STAFF_SESSION_COOKIE, verifyStaffSessionToken } from "@/lib/staffSessionToken";
 
 const isPublicRoute = createRouteMatcher([
@@ -19,28 +20,20 @@ export default clerkMiddleware(async (auth, request) => {
 
   const staffToken = request.cookies.get(STAFF_SESSION_COOKIE)?.value;
   const staffSession = await verifyStaffSessionToken(staffToken);
+  const session = await auth();
 
   if (isStaffDashboardRoute(request)) {
-    if (staffSession) {
-      if (isAdminRoute(request) && staffSession.role !== "ADMIN") {
-        const url = new URL("/dashboard/triage", request.url);
-        return NextResponse.redirect(url);
-      }
-      return;
-    }
+    const decision = resolveDashboardAccess({
+      path: request.nextUrl.pathname,
+      hasStaffSession: Boolean(staffSession),
+      staffRole: staffSession?.role,
+      hasClerkSession: Boolean(session.userId),
+      clerkRole: (session.sessionClaims?.metadata as { role?: string } | undefined)?.role ?? null,
+    });
 
-    const session = await auth();
-    if (!session.userId) {
-      const url = new URL("/staff-login", request.url);
+    if (!decision.allowed) {
+      const url = new URL(decision.redirectTo, request.url);
       return NextResponse.redirect(url);
-    }
-
-    if (isAdminRoute(request)) {
-      const role = (session.sessionClaims?.metadata as { role?: string })?.role;
-      if (role !== "admin") {
-        const url = new URL("/dashboard/triage", request.url);
-        return NextResponse.redirect(url);
-      }
     }
 
     return;
@@ -54,7 +47,6 @@ export default clerkMiddleware(async (auth, request) => {
     return;
   }
 
-  const session = await auth();
   if (!session.userId) return session.redirectToSignIn();
 
   if (isAdminRoute(request)) {

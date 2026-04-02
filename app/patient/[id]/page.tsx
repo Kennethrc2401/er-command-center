@@ -67,6 +67,7 @@ import ProtocolLibrary from "@/components/clinical/ProtocolLibrary";
 import OperationalAlertsPanel from "@/components/clinical/OperationalAlertsPanel";
 import DischargeReadinessPanel from "@/components/clinical/DischargeReadinessPanel";
 import BoardingTransferPanel from "@/components/clinical/BoardingTransferPanel";
+import RoomStatus from "@/components/RoomStatus";
 import OrderEntry from "@/components/clinical/OrderEntry";
 import PatientEducation from "@/components/clinical/PatientEducation";
 import { PROTOCOL_LIBRARY } from "@/lib/hooks/protocols";
@@ -329,6 +330,12 @@ export default function PatientPage() {
       )}
 
       <CriticalWorkflowKpiCard encounterId={activeEncounter._id} />
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <RoomStatus
+          encounter={activeEncounter}
+        />
+      </div>
 
       {showVitalsModal && (
         <VitalsUpdate

@@ -86,10 +86,17 @@ export default defineSchema({
     failedLoginAttempts: v.optional(v.number()),
     lastFailedLoginAt: v.optional(v.number()),
     lockedUntil: v.optional(v.number()),
+    // Specialist matching
+    specialties: v.optional(v.array(v.string())), // e.g., ["Cardiology", "Trauma", "Pediatrics"]
+    certifications: v.optional(v.array(v.string())), // e.g., ["PLS", "ACLS", "PEDIATRIC_CERT"]
+    // Preference learning
+    totalPatientsAssigned: v.optional(v.number()),
+    lastPreferenceUpdateAt: v.optional(v.number()),
   })
   .index("by_email", ["email"])
   .index("by_username", ["username"])
-  .index("by_role", ["role"]),
+  .index("by_role", ["role"])
+  .index("by_specialty", ["specialties"]),
   staffLoginThrottles: defineTable({
     key: v.string(),
     attemptCount: v.number(),
@@ -113,6 +120,19 @@ export default defineSchema({
   })
   .index("by_user", ["userId"])
   .index("by_credential_id", ["credentialId"]),
+  breakGlassSessions: defineTable({
+    userId: v.id("users"),
+    reason: v.string(),
+    startedAt: v.number(),
+    expiresAt: v.number(),
+    isActive: v.boolean(),
+    revokedAt: v.optional(v.number()),
+    revokedByUserId: v.optional(v.id("users")),
+    revokeReason: v.optional(v.string()),
+  })
+  .index("by_user_active", ["userId", "isActive", "expiresAt"])
+  .index("by_active_expiry", ["isActive", "expiresAt"])
+  .index("by_startedAt", ["startedAt"]),
   encounters: defineTable({
     patientId: v.id("patients"),
     patientName: v.optional(v.string()),
@@ -688,4 +708,238 @@ export default defineSchema({
       .index("by_scheduled_start", ["scheduledStart"])
       .index("by_room_start", ["room", "scheduledStart"])
       .index("by_surgeon_start", ["surgeon", "scheduledStart"]),
+    shiftHandoffs: defineTable({
+      fromUserId: v.id("users"),
+      fromUserName: v.string(),
+      fromUserRole: v.string(),
+      toUserId: v.optional(v.id("users")), // Optional for handoffs in progress
+      toUserName: v.optional(v.string()),
+      toUserRole: v.optional(v.string()),
+      status: v.union(
+        v.literal("initiated"),
+        v.literal("accepted"),
+        v.literal("partially_accepted"),
+        v.literal("rejected"),
+        v.literal("expired")
+      ),
+      patientCount: v.number(),
+      patientEncounterIds: v.array(v.id("encounters")),
+      initiatedAt: v.number(),
+      acceptedAt: v.optional(v.number()),
+      rejectedAt: v.optional(v.number()),
+      rejectionReason: v.optional(v.string()),
+      expiresAt: v.number(), // Handoff must be accepted/rejected within time limit
+      completedAt: v.optional(v.number()),
+      notes: v.optional(v.string()),
+    })
+      .index("by_from_user_status", ["fromUserId", "status"])
+      .index("by_to_user_status", ["toUserId", "status"])
+      .index("by_initiated_at", ["initiatedAt"])
+      .index("by_expires_at", ["expiresAt", "status"]),
+    handoffSessions: defineTable({
+      handoffId: v.id("shiftHandoffs"),
+      encounterId: v.id("encounters"),
+      status: v.union(
+        v.literal("pending"),
+        v.literal("acknowledged"),
+        v.literal("accepted"),
+        v.literal("rejected"),
+        v.literal("missed")
+      ),
+      patientName: v.string(),
+      chiefComplaint: v.string(),
+      acuity: v.number(),
+      currentLocation: v.optional(v.string()),
+      keyAlertsCount: v.number(),
+      pendingActionsCount: v.number(),
+      acknowledgedAt: v.optional(v.number()),
+      acceptedAt: v.optional(v.number()),
+      rejectionReason: v.optional(v.string()),
+      signOutNotes: v.optional(v.string()),
+      signInNotes: v.optional(v.string()),
+    })
+      .index("by_handoff", ["handoffId"])
+      .index("by_encounter", ["encounterId"])
+      .index("by_status", ["status"]),
+    handoffAuditLogs: defineTable({
+      handoffId: v.id("shiftHandoffs"),
+      encounterId: v.optional(v.id("encounters")),
+      action: v.union(
+        v.literal("handoff_initiated"),
+        v.literal("handoff_acknowledged"),
+        v.literal("handoff_accepted"),
+        v.literal("handoff_rejected"),
+        v.literal("handoff_expired"),
+        v.literal("encounter_acknowledged"),
+        v.literal("encounter_accepted"),
+        v.literal("encounter_rejected")
+      ),
+      actorUserId: v.id("users"),
+      actorUserName: v.string(),
+      actorUserRole: v.string(),
+      details: v.optional(v.string()),
+      timestamp: v.number(),
+    })
+      .index("by_handoff_timestamp", ["handoffId", "timestamp"])
+      .index("by_actor_timestamp", ["actorUserId", "timestamp"]),
+
+    // ============ STANDING ORDERS & PROTOCOLS ============
+    standingOrders: defineTable({
+      encounterId: v.id("encounters"),
+      protocolId: v.optional(v.string()),
+      orderType: v.union(
+        v.literal("LAB"),
+        v.literal("IMAGING"),
+        v.literal("MEDICATION"),
+        v.literal("PROCEDURE")
+      ),
+      orderName: v.string(),
+      description: v.optional(v.string()),
+      status: v.union(
+        v.literal("pending"),
+        v.literal("placed"),
+        v.literal("completed"),
+        v.literal("cancelled")
+      ),
+      trigger: v.union(
+        v.literal("chief_complaint"),
+        v.literal("diagnosis"),
+        v.literal("vital_threshold"),
+        v.literal("manual"),
+        v.literal("protocol_activation")
+      ),
+      triggerValue: v.optional(v.string()),
+      autoPlaced: v.boolean(), // true if placed by standing order automation
+      placedBy: v.optional(v.string()),
+      placedAt: v.optional(v.number()),
+      completedAt: v.optional(v.number()),
+      createdAt: v.number(),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_status", ["status"])
+      .index("by_protocol", ["protocolId"]),
+
+    // ============ TRIAGE REASSESSMENT ============
+    triageReassessments: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      reassessmentPhase: v.number(), // 1 = initial, 2 = repeat, 3 = before disposition
+      previousAcuity: v.number(),
+      currentAcuity: v.number(),
+      acuityChanged: v.boolean(),
+      presentationChanges: v.optional(v.array(v.string())), // e.g., ["increased_pain", "new_tachycardia"]
+      vitalChanges: v.optional(v.object({
+        hrChanged: v.optional(v.boolean()),
+        bpChanged: v.optional(v.boolean()),
+        tempChanged: v.optional(v.boolean()),
+        o2Changed: v.optional(v.boolean()),
+      })),
+      reassessedBy: v.string(),
+      assessmentNotes: v.optional(v.string()),
+      recommendedDisposition: v.optional(v.union(
+        v.literal("discharge"),
+        v.literal("admit"),
+        v.literal("observation"),
+        v.literal("transfer")
+      )),
+      reassessedAt: v.number(),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_reassessment_phase", ["encounterId", "reassessmentPhase"]),
+
+    // ============ PROVIDER PREFERENCES & LEARNING ============
+    providerPreferences: defineTable({
+      providerId: v.id("users"),
+      prefCategory: v.union(
+        v.literal("patient_type"),
+        v.literal("chief_complaint"),
+        v.literal("acuity_level"),
+        v.literal("procedure"),
+        v.literal("specialty"),
+        v.literal("age_group")
+      ),
+      prefValue: v.string(), // e.g., "cardiac", "pediatric", "trauma"
+      preference: v.number(), // -1 (avoid), 0 (neutral), 1 (prefer)
+      matchCount: v.number(), // how many times this was matched
+      successRate: v.number(), // 0-1, how often it worked well
+      lastUpdatedAt: v.number(),
+    })
+      .index("by_provider", ["providerId"])
+      .index("by_provider_category", ["providerId", "prefCategory"]),
+
+    // ============ ASSIGNMENT HISTORY FOR LEARNING ============
+    assignmentHistory: defineTable({
+      encounterId: v.id("encounters"),
+      providerId: v.id("users"),
+      handoffFromProviderId: v.optional(v.id("users")),
+      assignmentReason: v.string(), // e.g., "recommendation", "manual", "handoff"
+      assignedAt: v.number(),
+      assignmentDurationMs: v.optional(v.number()),
+      outcomeScore: v.optional(v.number()), // 1-5 quality score for learning
+      outcomeNotes: v.optional(v.string()),
+      patientChiefComplaint: v.string(),
+      patientAcuity: v.number(),
+      finalDisposition: v.optional(v.string()),
+    })
+      .index("by_provider_date", ["providerId", "assignedAt"])
+      .index("by_encounter", ["encounterId"]),
+
+    // ============ REAL-TIME METRICS ============
+    edMetrics: defineTable({
+      singletonKey: v.literal("current"),
+      timestamp: v.number(),
+      activePatientCount: v.number(),
+      waitingInTriageCount: v.number(),
+      beddedCount: v.number(),
+      dischargeReadyCount: v.number(),
+      admitReadyCount: v.number(),
+      avgTimeInTriageMinutes: v.number(),
+      avgTimeFromArrivalToBedroomMinutes: v.number(),
+      avgTimeFromArrivalToProviderMinutes: v.number(),
+      avgLengthOfStayMinutes: v.optional(v.number()),
+      bedsOccupied: v.number(),
+      bedsTotalAvailable: v.number(),
+      bedUtilizationPercent: v.number(),
+      averageProviderLoad: v.number(),
+      highAcuityPatientCount: v.number(),
+      criticalAlertsOpen: v.number(),
+      dischargesLastHour: v.number(),
+      admitsLastHour: v.number(),
+      lastUpdateMs: v.number(),
+    })
+      .index("by_singleton", ["singletonKey"]),
+
+    // ============ BED AVAILABILITY PREDICTION ============
+    bedAvailabilityPredictions: defineTable({
+      bedLabel: v.string(),
+      predictedAvailableAt: v.number(),
+      predictionConfidence: v.number(), // 0-1
+      currentOccupantEncounterId: v.optional(v.id("encounters")),
+      currentOccupantAcuity: v.optional(v.number()),
+      estimatedDischargeTimeMs: v.optional(v.number()),
+      estimatedAdmitTimeMs: v.optional(v.number()),
+      historyBasedAvgTurnaroundMs: v.optional(v.number()),
+      lastUpdatedAt: v.number(),
+    })
+      .index("by_bed_label", ["bedLabel"])
+      .index("by_predicted_available", ["predictedAvailableAt"]),
+
+    // ============ HISTORICAL BED PATTERNS (for prediction ML) ============
+    bedTurnoverHistory: defineTable({
+      bedLabel: v.string(),
+      previousEncounterId: v.id("encounters"),
+      previousDischargeAt: v.number(),
+      nextEncounterId: v.id("encounters"),
+      nextAdmitAt: v.number(),
+      turnoverTimeMs: v.number(), // time between discharge and next admission
+      turnoverStatus: v.union(
+        v.literal("clean"),
+        v.literal("expedited_clean"),
+        v.literal("deep_clean"),
+        v.literal("maintenance"),
+        v.literal("blocked")
+      ),
+      cleanedAt: v.optional(v.number()),
+    })
+      .index("by_bed_discharge", ["bedLabel", "previousDischargeAt"]),
   })

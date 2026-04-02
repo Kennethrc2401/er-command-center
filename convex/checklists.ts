@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, type MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 
 const checklistCategoryValidator = v.optional(v.union(v.literal("care"), v.literal("discharge")));
 
@@ -11,6 +12,17 @@ const DISCHARGE_TASKS = [
   { taskKey: "ride-home", item: "Safe ride / disposition plan confirmed", required: true },
   { taskKey: "education-signoff", item: "Education and signature workflow completed", required: true },
 ] as const;
+
+const ROOM_TURNOVER_TASKS = {
+  boarded: {
+    taskKey: "room-turnover-start",
+    item: "Initiate room turnover / request EVS cleaning",
+  },
+  discharged: {
+    taskKey: "room-turnover-ready",
+    item: "Verify room cleaned and ready for next patient",
+  },
+} as const;
 
 function matchesCategory(
   category: "care" | "discharge" | undefined,
@@ -155,6 +167,37 @@ export const ensureDischargeChecklist = mutation({
     return { createdCount };
   },
 });
+
+export async function ensureRoomTurnoverChecklist(
+  ctx: MutationCtx,
+  args: {
+    encounterId: Id<"encounters">;
+    state: keyof typeof ROOM_TURNOVER_TASKS;
+  }
+) {
+  const tasks = await ctx.db
+    .query("checklists")
+    .withIndex("by_encounter", (q) => q.eq("encounterId", args.encounterId))
+    .collect();
+
+  const taskDefinition = ROOM_TURNOVER_TASKS[args.state];
+  const existingKeys = new Set(tasks.map((task) => task.taskKey ?? task.item));
+
+  if (existingKeys.has(taskDefinition.taskKey)) {
+    return { createdCount: 0 };
+  }
+
+  await ctx.db.insert("checklists", {
+    encounterId: args.encounterId,
+    taskKey: taskDefinition.taskKey,
+    item: taskDefinition.item,
+    completed: false,
+    category: "care",
+    required: false,
+  });
+
+  return { createdCount: 1 };
+}
 
 export const getDischargeReadiness = query({
   args: { encounterId: v.id("encounters") },

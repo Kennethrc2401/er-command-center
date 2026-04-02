@@ -71,69 +71,69 @@ export default function Navbar() {
   if (pathname === "/kiosk") return null;
 
   return (
-    <nav className="sticky top-10 z-40 h-24 border-b border-slate-200 bg-white/90 px-4 shadow-sm backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/85 sm:px-8 flex items-center justify-between">
-      <div className="flex items-center gap-4 sm:gap-10 min-w-0">
-        {/* 🏥 BRANDING SECTION (Merged from StaffHeader) */}
-        <Link href="/" className="flex items-center gap-4 group">
-          <div className="h-12 w-12 rounded-2xl bg-slate-900 shadow-lg shadow-slate-200 transition-all group-hover:bg-blue-600 dark:bg-slate-800 dark:shadow-slate-950 flex items-center justify-center">
-            <Activity className="h-6 w-6 text-white" />
-          </div>
-          <div className="hidden md:block">
-            <div className="flex items-center gap-2 mb-1">
-               <span className="relative flex h-2 w-2">
-                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-               </span>
-               <p className="text-[9px] font-black uppercase tracking-[0.2em] leading-none text-slate-400 dark:text-slate-500">
-                 System Online • Unit 4B
-               </p>
+    <nav className="sticky top-10 z-40 border-b border-slate-200 bg-white/90 px-3 py-3 shadow-sm backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/85 sm:px-6 lg:px-8">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-6 lg:gap-10">
+          {/* 🏥 BRANDING SECTION (Merged from StaffHeader) */}
+          <Link href="/" className="flex items-center gap-4 group">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 shadow-lg shadow-slate-200 transition-all group-hover:bg-blue-600 dark:bg-slate-800 dark:shadow-slate-950">
+              <Activity className="h-6 w-6 text-white" />
             </div>
-            <p className="text-lg font-black italic tracking-tighter uppercase leading-none text-slate-900 dark:text-slate-100">
-              Nexus <span className="text-blue-600">ER</span>
-            </p>
-          </div>
-        </Link>
+            <div className="hidden md:block">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+                </span>
+                <p className="text-[9px] font-black uppercase leading-none tracking-[0.2em] text-slate-400 dark:text-slate-500">
+                  System Online • Unit 4B
+                </p>
+              </div>
+              <p className="text-lg font-black italic uppercase leading-none tracking-tighter text-slate-900 dark:text-slate-100">
+                Nexus <span className="text-blue-600">ER</span>
+              </p>
+            </div>
+          </Link>
 
-        <div className="hidden h-10 w-px bg-slate-200 dark:bg-slate-800 md:block" />
+          <div className="hidden h-10 w-px bg-slate-200 dark:bg-slate-800 md:block" />
 
-        {/* 🧭 NAVIGATION LINKS */}
-        <div className="flex items-center gap-2">
-          <NavLink 
-            href="/dashboard/triage" 
-            icon={LayoutDashboard} 
-            label="Triage Board" 
-            active={pathname.includes("/triage")} 
-          />
-          {/* Faxes */}
-          <NavLink 
-            href="/dashboard/faxes" 
-            icon={FileText}
-            label="Faxes"
-            active={pathname.includes("/faxes")}
-          />
-          <NavLink 
-            href="/dashboard/or-scheduler" 
-            icon={ClipboardList}
-            label="OR Scheduler"
-            active={pathname.includes("/or-scheduler")}
-          />
-
-          {isAdmin && (
-            <NavLink 
-              href="/dashboard/admin" 
-              icon={ShieldCheck} 
-              label="Admin Suite" 
-              active={pathname.includes("/admin")} 
-              variant="admin"
+          {/* 🧭 NAVIGATION LINKS */}
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <NavLink
+              href="/dashboard/triage"
+              icon={LayoutDashboard}
+              label="Triage Board"
+              active={pathname.includes("/triage")}
             />
-          )}
-        </div>
-      </div>
+            <NavLink
+              href="/dashboard/faxes"
+              icon={FileText}
+              label="Faxes"
+              active={pathname.includes("/faxes")}
+            />
+            <NavLink
+              href="/dashboard/or-scheduler"
+              icon={ClipboardList}
+              label="OR Scheduler"
+              active={pathname.includes("/or-scheduler")}
+            />
 
-      <div className="flex items-center gap-3 sm:gap-6">
+            {isAdmin && (
+              <NavLink
+                href="/dashboard/admin"
+                icon={ShieldCheck}
+                label="Admin Suite"
+                active={pathname.includes("/admin")}
+                variant="admin"
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 lg:justify-end lg:gap-6">
           <button 
             onClick={togglePrivacy}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+            className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all sm:px-4 sm:py-2.5 ${
               isPrivate 
                 ? "bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-200 animate-pulse" 
                 : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"
@@ -151,17 +151,17 @@ export default function Navbar() {
         {/* ➕ QUICK ACTION */}
         <NewPatientModal 
           trigger={
-            <button className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 dark:hover:bg-blue-500 transition-all shadow-blue-200 dark:shadow-blue-900/40 shadow-lg active:scale-95">
+            <button className="flex items-center gap-2 rounded-2xl bg-blue-600 px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-white shadow-lg shadow-blue-200 transition-all active:scale-95 hover:bg-slate-900 dark:shadow-blue-900/40 dark:hover:bg-blue-500 sm:px-5">
               <UserPlus className="h-4 w-4" />
               <span className="hidden sm:inline">New Admission</span>
             </button>
           } 
         />
 
-        <div className="h-10 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block" />
+        <div className="hidden h-10 w-px bg-slate-200 dark:bg-slate-800 sm:block" />
 
         {/* 👤 USER PROFILE (Merged from StaffHeader) */}
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4">
           <div className="hidden lg:flex flex-col items-end">
             <p className="text-[10px] font-black uppercase leading-none italic text-slate-900 dark:text-slate-100">
               {user?.firstName} {user?.lastName}
@@ -178,6 +178,7 @@ export default function Navbar() {
           </SignOutButton>
         </div>
       </div>
+      </div>
     </nav>
   );
 }
@@ -185,7 +186,7 @@ export default function Navbar() {
 function NavLink({ href, icon: Icon, label, active, variant = "default" }: NavLinkProps) {
   return (
     <Link href={href}>
-      <button className={`flex items-center gap-2 px-5 py-3 rounded-2xl transition-all duration-300 ${
+      <button className={`flex items-center gap-2 rounded-2xl px-3 py-2 text-left transition-all duration-300 sm:px-4 sm:py-2.5 lg:px-5 lg:py-3 ${
         active 
           ? "bg-slate-100 text-slate-900 shadow-inner dark:bg-slate-800 dark:text-slate-100" 
           : "text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-900"

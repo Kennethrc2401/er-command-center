@@ -11,6 +11,7 @@
 import type * as analytics from "../analytics.js";
 import type * as audit from "../audit.js";
 import type * as auth from "../auth.js";
+import type * as breakGlass from "../breakGlass.js";
 import type * as chartDocuments from "../chartDocuments.js";
 import type * as checklists from "../checklists.js";
 import type * as clinical from "../clinical.js";
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   analytics: typeof analytics;
   audit: typeof audit;
   auth: typeof auth;
+  breakGlass: typeof breakGlass;
   chartDocuments: typeof chartDocuments;
   checklists: typeof checklists;
   clinical: typeof clinical;

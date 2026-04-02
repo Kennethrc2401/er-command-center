@@ -1,5 +1,28 @@
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+
+const requireBreakGlassForAdmin = async (ctx: MutationCtx, actorUserId: Id<"users">) => {
+  const actor = await ctx.db.get(actorUserId);
+  if (!actor || actor.role !== "ADMIN" || actor.status !== "ACTIVE") {
+    throw new Error("Only active ADMIN users can perform this action.");
+  }
+
+  const now = Date.now();
+  const sessions = await ctx.db
+    .query("breakGlassSessions")
+    .withIndex("by_user_active", (q) => q.eq("userId", actorUserId).eq("isActive", true))
+    .order("desc")
+    .take(10);
+
+  const activeSession = sessions.find((session) => session.expiresAt > now);
+  if (!activeSession) {
+    throw new Error("Break-glass access is required for this operation.");
+  }
+
+  return actor;
+};
 
 const normalizeCredentialId = (credentialId: string) => credentialId.trim();
 
@@ -192,10 +215,13 @@ export const getAdminPasskeyInventory = query({
 
 export const renamePasskey = mutation({
   args: {
+    actorUserId: v.id("users"),
     passkeyId: v.id("staffPasskeys"),
     name: v.string(),
   },
   handler: async (ctx, args) => {
+    await requireBreakGlassForAdmin(ctx, args.actorUserId);
+
     const passkey = await ctx.db.get(args.passkeyId);
     if (!passkey) {
       throw new Error("Passkey not found.");
@@ -212,9 +238,12 @@ export const renamePasskey = mutation({
 
 export const revokePasskey = mutation({
   args: {
+    actorUserId: v.id("users"),
     passkeyId: v.id("staffPasskeys"),
   },
   handler: async (ctx, args) => {
+    await requireBreakGlassForAdmin(ctx, args.actorUserId);
+
     const passkey = await ctx.db.get(args.passkeyId);
     if (!passkey) {
       throw new Error("Passkey not found.");

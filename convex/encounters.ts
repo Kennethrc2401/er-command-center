@@ -2,6 +2,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { v } from "convex/values";
 import { normalizePatientContactFields } from "./patientNormalization";
 import type { Doc } from "./_generated/dataModel";
+import { ensureRoomTurnoverChecklist } from "./checklists";
 
 /**
  * Shared Vitals Validator to ensure strict data integrity.
@@ -389,6 +390,8 @@ export const dischargePatient = mutation({
   handler: async (ctx, args) => {
     const encounter = await ctx.db.get(args.encounterId);
     if (!encounter) throw new Error("Encounter not found");
+
+    await ensureRoomTurnoverChecklist(ctx, { encounterId: args.encounterId, state: "discharged" });
 
     return await ctx.db.patch(args.encounterId, {
       status: "discharged",
@@ -1274,6 +1277,7 @@ export const updateBoardingWorkflow = mutation({
       patch.delayReason = encounter.transportStatus === "completed" ? "none" : "awaiting_transport";
       patch.flowStage = "boarded";
       patch.flowStageUpdatedAt = now;
+      await ensureRoomTurnoverChecklist(ctx, { encounterId: args.encounterId, state: "boarded" });
     }
 
     if (args.markHandoffCompleted) {

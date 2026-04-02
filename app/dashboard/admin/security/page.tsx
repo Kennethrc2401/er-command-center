@@ -2,6 +2,7 @@
 
 import { ScrollText } from "lucide-react";
 import AuditLogViewer from "@/components/admin/AuditLogViewer";
+import PermissionMatrix from "@/components/admin/PermissionMatrix";
 import SecurityDiagnostics from "@/components/admin/SecurityDiagnostics";
 import SessionActivityTimeline from "@/components/admin/SessionActivityTimeline";
 
@@ -25,6 +26,8 @@ export default function SecurityAuditPage() {
       </header>
 
       <SecurityDiagnostics />
+
+      <PermissionMatrix />
 
       <SessionActivityTimeline />
 

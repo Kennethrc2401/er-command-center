@@ -1,5 +1,7 @@
 // convex/users.ts
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 
 const userRoleValidator = v.union(
@@ -26,6 +28,27 @@ const STAFF_IP_WINDOW_MS = 10 * 60 * 1000;
 const STAFF_IP_MAX_ATTEMPTS = 20;
 const STAFF_IP_BLOCK_DURATION_MS = 10 * 60 * 1000;
 const STAFF_IP_THROTTLE_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+const requireBreakGlassForAdmin = async (ctx: MutationCtx, actorUserId: Id<"users">) => {
+  const actor = await ctx.db.get(actorUserId);
+  if (!actor || actor.role !== "ADMIN" || actor.status !== "ACTIVE") {
+    throw new Error("Only active ADMIN users can perform this action.");
+  }
+
+  const now = Date.now();
+  const sessions = await ctx.db
+    .query("breakGlassSessions")
+    .withIndex("by_user_active", (q) => q.eq("userId", actorUserId).eq("isActive", true))
+    .order("desc")
+    .take(10);
+
+  const activeSession = sessions.find((session) => session.expiresAt > now);
+  if (!activeSession) {
+    throw new Error("Break-glass access is required for this operation.");
+  }
+
+  return actor;
+};
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 const normalizeUsername = (username: string) => username.trim().toLowerCase();
@@ -116,6 +139,27 @@ export const listAll = query({
       delete sanitizedUser.officeKeyHash;
       return sanitizedUser;
     });
+  },
+});
+
+export const getActiveRoster = query({
+  args: {},
+  handler: async (ctx) => {
+    const users = await ctx.db
+      .query("users")
+      .collect();
+
+    return users
+      .filter((user) => user.status === "ACTIVE")
+      .map((user) => ({
+        _id: user._id,
+        name: user.name,
+        role: user.role,
+        credentials: user.credentials,
+        department: user.department,
+        username: user.username ?? undefined,
+      }))
+      .sort((left, right) => left.role.localeCompare(right.role) || left.name.localeCompare(right.name));
   },
 });
 
@@ -496,9 +540,12 @@ export const deleteUser = mutation({
 
 export const unlockStaffAccount = mutation({
   args: {
+    actorUserId: v.id("users"),
     id: v.id("users"),
   },
   handler: async (ctx, args) => {
+    const actor = await requireBreakGlassForAdmin(ctx, args.actorUserId);
+
     const user = await ctx.db.get(args.id);
     if (!user) {
       throw new Error("User not found.");
@@ -508,6 +555,15 @@ export const unlockStaffAccount = mutation({
       failedLoginAttempts: 0,
       lastFailedLoginAt: 0,
       lockedUntil: 0,
+    });
+
+    await ctx.db.insert("auditLogs", {
+      userId: args.actorUserId,
+      userName: actor.name,
+      action: "STAFF_ACCOUNT_UNLOCKED",
+      patientName: "Security Admin",
+      timestamp: Date.now(),
+      metadata: `TargetUser=${user.name}; username=${user.username ?? "unset"}`,
     });
 
     return { success: true };
@@ -694,6 +750,37 @@ export const clearStaffIpRateLimit = mutation({
     if (existing) {
       await ctx.db.delete(existing._id);
     }
+  },
+});
+
+export const clearStaffIpRateLimitAdmin = mutation({
+  args: {
+    actorUserId: v.id("users"),
+    key: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const actor = await requireBreakGlassForAdmin(ctx, args.actorUserId);
+
+    const key = args.key.trim().toLowerCase();
+    if (!key) return;
+
+    const existing = await ctx.db
+      .query("staffLoginThrottles")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+
+    if (existing) {
+      await ctx.db.delete(existing._id);
+    }
+
+    await ctx.db.insert("auditLogs", {
+      userId: args.actorUserId,
+      userName: actor.name,
+      action: "STAFF_THROTTLE_CLEARED",
+      patientName: "Security Admin",
+      timestamp: Date.now(),
+      metadata: `Key=${key}`,
+    });
   },
 });
 

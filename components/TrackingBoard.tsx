@@ -93,7 +93,13 @@ export default function TrackingBoard() {
 
                     {/* STATUS BADGE */}
                     <td className="px-6 py-4">
-                      <StatusBadge status={encounter.status} />
+                      <div className="flex flex-col gap-2">
+                        <StatusBadge status={encounter.status} />
+                        <FlowStageBadge
+                          flowStage={encounter.flowStage}
+                          delayReason={encounter.delayReason}
+                        />
+                      </div>
                     </td>
 
                     {/* WAIT TIME */}
@@ -134,6 +140,38 @@ function StatusBadge({ status }: { status: string }) {
     <Badge variant="outline" className={`capitalize font-black text-[9px] tracking-widest ${styles[status] || styles.waiting}`}>
       {status.replace(/-/g, " ")}
     </Badge>
+  );
+}
+
+function FlowStageBadge({ flowStage, delayReason }: { flowStage?: string; delayReason?: string | null }) {
+  const stage = flowStage || "unspecified";
+  const styles: Record<string, string> = {
+    triage: "bg-blue-50 text-blue-700 border-blue-200",
+    awaiting_bed: "bg-amber-50 text-amber-700 border-amber-200",
+    bedded: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    provider_assigned: "bg-cyan-50 text-cyan-700 border-cyan-200",
+    workup_pending: "bg-violet-50 text-violet-700 border-violet-200",
+    consult_pending: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
+    discharge_ready: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    admit_ready: "bg-sky-50 text-sky-700 border-sky-200",
+    boarded: "bg-rose-50 text-rose-700 border-rose-200",
+    unspecified: "bg-slate-50 text-slate-500 border-slate-200",
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge
+        variant="outline"
+        className={`capitalize font-black text-[9px] tracking-widest ${styles[stage] || styles.unspecified}`}
+      >
+        {(flowStage || "flow stage").replace(/_/g, " ")}
+      </Badge>
+      {delayReason && delayReason !== "none" ? (
+        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-slate-500">
+          Hold: {delayReason.replace(/_/g, " ")}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
