@@ -21,7 +21,9 @@ import {
   Search,
   ArrowLeftRight,
   Zap,
-  FolderOpen
+  FolderOpen,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -80,6 +82,8 @@ import OutboundFaxComposer from "@/components/faxes/OutboundFaxComposer";
 import PatientInfoTab from "@/components/patient/PatientInfoTab";
 import CriticalWorkflowKpiCard from "@/components/clinical/CriticalWorkflowKpiCard";
 
+const WORKFLOW_PANEL_PREFERENCE_KEY = "patient-workflow-panels-visible";
+
 // DYNAMIC IMPORT: DischargeInlineComponent
 const DischargeInlineComponent = dynamic(
   () => import("@/components/DischargeSummary"),
@@ -115,6 +119,10 @@ export default function PatientPage() {
   const [activeTab, setActiveTab] = useState("vitals");
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [showDischarge, setShowDischarge] = useState(false);
+  const [showWorkflowPanels, setShowWorkflowPanels] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(WORKFLOW_PANEL_PREFERENCE_KEY) === "1";
+  });
   const [suggestedTriageOrders, setSuggestedTriageOrders] = useState<string[]>([]);
   const [nowTs, setNowTs] = useState(() => Date.now());
   const { isDemoMode, toggleDemoMode } = usePresentationMode();
@@ -123,6 +131,11 @@ export default function PatientPage() {
     const timerId = setInterval(() => setNowTs(Date.now()), 60_000);
     return () => clearInterval(timerId);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(WORKFLOW_PANEL_PREFERENCE_KEY, showWorkflowPanels ? "1" : "0");
+  }, [showWorkflowPanels]);
 
   // --- 2. CONVEX SUBSCRIPTIONS ---
   const patient = useQuery(api.patients.getById, { patientId });
@@ -329,14 +342,6 @@ export default function PatientPage() {
         <CriticalLabBanner alerts={criticalLabs} actorName={actorName} />
       )}
 
-      <CriticalWorkflowKpiCard encounterId={activeEncounter._id} />
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <RoomStatus
-          encounter={activeEncounter}
-        />
-      </div>
-
       {showVitalsModal && (
         <VitalsUpdate
           encounter={{
@@ -426,6 +431,24 @@ export default function PatientPage() {
           </div>
         </div>
       </header>
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setShowWorkflowPanels((prev) => !prev)}
+          className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          {showWorkflowPanels ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          {showWorkflowPanels ? "Hide Workflow Panels" : "Show Workflow Panels"}
+        </button>
+      </div>
+
+      {showWorkflowPanels && (
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <CriticalWorkflowKpiCard encounterId={activeEncounter._id} />
+          <RoomStatus encounter={activeEncounter} />
+        </section>
+      )}
 
       {/* WORKSPACE GRID */}
       <div className="grid grid-cols-1 gap-6 items-start lg:grid-cols-12">

@@ -38,6 +38,8 @@ import OperationalAlertsPanel from "@/components/clinical/OperationalAlertsPanel
 import ProviderWorkloadPanel from "@/components/clinical/ProviderWorkloadPanel";
 import RoomTurnoverMonitor from "@/components/clinical/RoomTurnoverMonitor";
 import AssignmentQueue from "@/components/clinical/AssignmentQueue";
+import OperationsIntelligenceSuite from "@/components/clinical/OperationsIntelligenceSuite";
+import TriageTabs from "@/components/clinical/TriageTabs";
 import KioskHandoffQueue from "@/components/kiosk/KioskHandoffQueue";
 import { useAuth } from "@clerk/nextjs";
 import { useStaffSession } from "@/lib/hooks/useStaffSession";
@@ -260,6 +262,8 @@ function ERDashboardContent() {
 
           {/* Action Control Strip */}
           <div className="flex flex-wrap items-center gap-3 rounded-[2rem] border border-slate-200/50 bg-white/50 p-2 shadow-sm backdrop-blur-md dark:border-slate-800/70 dark:bg-slate-900/60">
+            <TriageTabs activeTab="overview" />
+
             {/* 1. MONITOR VIEW */}
             <Link href="/dashboard/monitor">
               <button className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[10px] font-black uppercase tracking-widest text-slate-600 shadow-sm transition-all hover:border-slate-900 hover:bg-slate-900 hover:text-white active:scale-95 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800">
@@ -347,6 +351,8 @@ function ERDashboardContent() {
         </section>
 
         <ThroughputControlTower isPrivate={isPrivate} isDemoMode={isDemoMode} />
+
+        <OperationsIntelligenceSuite />
 
         <section className="grid grid-cols-1 gap-6 xl:grid-cols-4">
           <OperationalAlertsPanel />

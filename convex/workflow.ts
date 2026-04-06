@@ -1317,3 +1317,732 @@ export const recordBedTurnover = mutation({
     return turnoverHistoryId;
   },
 });
+
+// ============================================================================
+// OPERATIONS INTELLIGENCE SUITE (10-feature MVP)
+// ============================================================================
+
+const computeDeteriorationRisk = (encounter: {
+  acuity?: number;
+  vitals?: { hr?: number; temp?: number; spO2?: number; bp?: string };
+  flowStageUpdatedAt?: number;
+  _creationTime: number;
+}) => {
+  const vitals = encounter.vitals;
+  let score = 0;
+  const reasons: string[] = [];
+
+  if ((encounter.acuity ?? 5) <= 2) {
+    score += 30;
+    reasons.push("high_acuity");
+  }
+  if ((vitals?.spO2 ?? 100) <= 92) {
+    score += 25;
+    reasons.push("low_spo2");
+  }
+  if ((vitals?.hr ?? 80) >= 120) {
+    score += 20;
+    reasons.push("tachycardia");
+  }
+  if ((vitals?.temp ?? 98.6) >= 101.5) {
+    score += 10;
+    reasons.push("fever");
+  }
+
+  const stageAgeMinutes = Math.floor((Date.now() - (encounter.flowStageUpdatedAt ?? encounter._creationTime)) / 60000);
+  if (stageAgeMinutes >= 60) {
+    score += 15;
+    reasons.push("prolonged_stage_time");
+  }
+
+  return {
+    score,
+    reasons,
+    tier: score >= 65 ? "high" : score >= 35 ? "medium" : "low",
+  } as const;
+};
+
+export const getOperationsIntelligenceSuite = query({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const oneHourAgo = now - 60 * 60 * 1000;
+    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
+
+    const [encounters, users, labs, imaging, consults, checklists, educationLogs, protocolActivations, kioskIntakes, handoffs] = await Promise.all([
+      ctx.db.query("encounters").collect(),
+      ctx.db.query("users").collect(),
+      ctx.db.query("labResults").collect(),
+      ctx.db.query("imagingOrders").collect(),
+      ctx.db.query("teleConsults").collect(),
+      ctx.db.query("checklists").collect(),
+      ctx.db.query("educationLogs").collect(),
+      ctx.db.query("protocolActivations").collect(),
+      ctx.db.query("kioskIntakes").collect(),
+      ctx.db.query("shiftHandoffs").collect(),
+    ]);
+
+    const activeEncounters = encounters.filter((enc) => enc.status !== "discharged");
+
+    // 1) Clinical deterioration watchlist
+    const deteriorationWatchlist = activeEncounters
+      .map((enc) => {
+        const risk = computeDeteriorationRisk(enc);
+        return {
+          encounterId: enc._id,
+          patientId: enc.patientId,
+          patientName: enc.patientName ?? "Unknown Patient",
+          acuity: enc.acuity ?? 5,
+          flowStage: enc.flowStage ?? "triage",
+          riskScore: risk.score,
+          riskTier: risk.tier,
+          reasons: risk.reasons,
+        };
+      })
+      .filter((item) => item.riskScore >= 35)
+      .sort((a, b) => b.riskScore - a.riskScore)
+      .slice(0, 8);
+
+    // 2) Disposition command center
+    const disposition = {
+      admitReady: activeEncounters.filter((enc) => enc.flowStage === "admit_ready").length,
+      dischargeReady: activeEncounters.filter((enc) => enc.flowStage === "discharge_ready").length,
+      boarded: activeEncounters.filter((enc) => enc.flowStage === "boarded").length,
+      undecided: activeEncounters.filter((enc) => !enc.dispositionPlan || enc.dispositionPlan === "undecided").length,
+      transfer: activeEncounters.filter((enc) => enc.dispositionPlan === "transfer").length,
+    };
+
+    const dispositionCandidates = activeEncounters
+      .filter((enc) => enc.flowStage === "admit_ready" || enc.flowStage === "discharge_ready" || enc.flowStage === "boarded" || !enc.dispositionPlan || enc.dispositionPlan === "undecided")
+      .map((enc) => {
+        const stageAgeMinutes = Math.floor((now - (enc.flowStageUpdatedAt ?? enc._creationTime)) / 60000);
+        const nextAction = enc.flowStage === "admit_ready"
+          ? "Set admit plan"
+          : enc.flowStage === "discharge_ready"
+            ? "Prepare discharge packet"
+            : enc.flowStage === "boarded"
+              ? "Resolve boarding delay"
+              : "Clarify disposition";
+
+        return {
+          encounterId: enc._id,
+          patientId: enc.patientId,
+          patientName: enc.patientName ?? "Unknown Patient",
+          flowStage: enc.flowStage ?? "triage",
+          dispositionPlan: enc.dispositionPlan ?? "undecided",
+          delayReason: enc.delayReason ?? "none",
+          stageAgeMinutes,
+          nextAction,
+          isAdmitReady: enc.flowStage === "admit_ready",
+          isDischargeReady: enc.flowStage === "discharge_ready",
+          isBoarded: enc.flowStage === "boarded",
+        };
+      })
+      .sort((left, right) => {
+        if (left.isBoarded !== right.isBoarded) return left.isBoarded ? -1 : 1;
+        if (left.isDischargeReady !== right.isDischargeReady) return left.isDischargeReady ? -1 : 1;
+        if (left.isAdmitReady !== right.isAdmitReady) return left.isAdmitReady ? -1 : 1;
+        return right.stageAgeMinutes - left.stageAgeMinutes;
+      })
+      .slice(0, 8);
+
+    // 3) SLA timers + escalation
+    const slaEscalations = activeEncounters
+      .map((enc) => {
+        const stageAgeMinutes = Math.floor((now - (enc.flowStageUpdatedAt ?? enc._creationTime)) / 60000);
+        const missingOwner = !enc.flowOwner?.trim();
+        const missingProvider = !enc.assignedProvider?.trim();
+        const breaching = stageAgeMinutes >= 15 && (missingOwner || missingProvider);
+        return {
+          encounterId: enc._id,
+          patientId: enc.patientId,
+          patientName: enc.patientName ?? "Unknown Patient",
+          stageAgeMinutes,
+          flowStage: enc.flowStage ?? "triage",
+          missingOwner,
+          missingProvider,
+          severity: stageAgeMinutes >= 30 ? "critical" : "attention",
+          breaching,
+        };
+      })
+      .filter((item) => item.breaching)
+      .sort((a, b) => b.stageAgeMinutes - a.stageAgeMinutes)
+      .slice(0, 10);
+
+    // 4) Closed-loop critical result acknowledgments
+    const criticalLabsOpen = labs.filter((lab) => lab.isAbnormal && !lab.acknowledgedAt).length;
+    const imagingUnacked = imaging.filter((study) => study.status === "Resulted" && !study.acknowledgedAt).length;
+    const consultUnacked = consults.filter((c) => c.status === "ACTIVE" && !c.acknowledgedAt).length;
+    const closedLoop = {
+      openCriticalLabs: criticalLabsOpen,
+      openImagingReads: imagingUnacked,
+      openConsultCallbacks: consultUnacked,
+      totalOpen: criticalLabsOpen + imagingUnacked + consultUnacked,
+    };
+
+    const encounterById = new Map(encounters.map((enc) => [enc._id, enc]));
+
+    const criticalActionItems = [
+      ...labs
+        .filter((lab) => lab.isAbnormal && !lab.acknowledgedAt)
+        .slice(0, 4)
+        .map((lab) => {
+          const enc = encounterById.get(lab.encounterId);
+          return {
+            kind: "lab",
+            id: lab._id,
+            encounterId: lab.encounterId,
+            patientId: enc?.patientId,
+            patientName: enc?.patientName ?? "Unknown Patient",
+            title: `${lab.testName}: ${lab.value} ${lab.unit}`,
+          };
+        }),
+      ...imaging
+        .filter((study) => study.status === "Resulted" && !study.acknowledgedAt)
+        .slice(0, 4)
+        .map((study) => {
+          const enc = encounterById.get(study.encounterId);
+          return {
+            kind: "imaging",
+            id: study._id,
+            encounterId: study.encounterId,
+            patientId: enc?.patientId,
+            patientName: enc?.patientName ?? "Unknown Patient",
+            title: study.studyName,
+          };
+        }),
+      ...consults
+        .filter((c) => c.status === "ACTIVE" && !c.acknowledgedAt)
+        .slice(0, 4)
+        .map((c) => {
+          const enc = encounterById.get(c.encounterId);
+          return {
+            kind: "consult",
+            id: c._id,
+            encounterId: c.encounterId,
+            patientId: enc?.patientId,
+            patientName: enc?.patientName ?? "Unknown Patient",
+            title: `${c.specialty} consult callback`,
+          };
+        }),
+    ].slice(0, 8);
+
+    // 5) Predictive staffing heatmap
+    const activeStaff = users.filter((u) => u.status === "ACTIVE");
+    const arrivalsLastHour = kioskIntakes.filter((k) => k.checkedInAt >= oneHourAgo).length;
+    const highAcuityCount = activeEncounters.filter((enc) => (enc.acuity ?? 5) <= 2).length;
+    const staffingPressure = Math.max(0, activeEncounters.length - activeStaff.length * 2);
+    const staffingHeatmap = {
+      activeStaffCount: activeStaff.length,
+      arrivalsLastHour,
+      highAcuityCount,
+      pressureIndex: staffingPressure,
+      recommendation:
+        staffingPressure >= 10
+          ? "Reallocate one clinician to triage and one to discharge lane"
+          : staffingPressure >= 5
+            ? "Add flex support to triage queue"
+            : "Current staffing mix stable",
+    };
+
+    // 6) Bed turnover optimizer v2
+    const bedOptimizer = activeEncounters
+      .filter((enc) => !!enc.location)
+      .map((enc) => {
+        const stage = enc.flowStage ?? "triage";
+        const etaMinutes = stage === "discharge_ready" ? 20 : stage === "admit_ready" ? 45 : 90;
+        const confidence = stage === "discharge_ready" ? 0.82 : 0.58;
+        return {
+          encounterId: enc._id,
+          bedLabel: enc.location ?? "Unassigned",
+          flowStage: stage,
+          etaMinutes,
+          confidence,
+          preassignEligible: confidence >= 0.75,
+        };
+      })
+      .sort((a, b) => a.etaMinutes - b.etaMinutes)
+      .slice(0, 10);
+
+    // 7) Smart discharge packet automation readiness
+    const dischargeReadyEncounters = activeEncounters.filter((enc) => enc.flowStage === "discharge_ready");
+    const dischargeAutomation = dischargeReadyEncounters.map((enc) => {
+      const tasks = checklists.filter((row) => row.encounterId === enc._id && (row.category ?? "care") === "discharge");
+      const completedTasks = tasks.filter((row) => row.completed).length;
+      const educationDone = educationLogs.some((log) => log.encounterId === enc._id);
+      const completion = tasks.length === 0 ? (educationDone ? 100 : 0) : Math.round((completedTasks / tasks.length) * 100);
+      return {
+        encounterId: enc._id,
+        patientId: enc.patientId,
+        patientName: enc.patientName ?? "Unknown Patient",
+        checklistCompletionPercent: completion,
+        educationCompleted: educationDone,
+        packetReady: completion >= 80 && educationDone,
+      };
+    });
+
+    // 8) Quality + compliance scorecards
+    const activations24h = protocolActivations.filter((p) => p.activatedAt >= twentyFourHoursAgo);
+    const sepsis24h = activations24h.filter((p) => p.protocolId === "sepsis-bundle").length;
+    const stroke24h = activations24h.filter((p) => p.protocolId === "stroke-alert").length;
+    const handoffs24h = handoffs.filter((h) => (h.initiatedAt ?? 0) >= twentyFourHoursAgo);
+    const acceptedHandoffs24h = handoffs24h.filter((h) => (h.acceptedAt ?? 0) >= twentyFourHoursAgo).length;
+    const criticalLabsTotal = labs.filter((lab) => lab.isAbnormal).length;
+    const criticalLabsAcked = labs.filter((lab) => lab.isAbnormal && !!lab.acknowledgedAt).length;
+    const imagingResultedTotal = imaging.filter((study) => study.status === "Resulted").length;
+    const imagingAcked = imaging.filter((study) => study.status === "Resulted" && !!study.acknowledgedAt).length;
+    const consultsTotal = consults.filter((consult) => consult.status === "ACTIVE").length;
+    const consultsAcked = consults.filter((consult) => consult.status === "ACTIVE" && !!consult.acknowledgedAt).length;
+    const overallCriticalTotal = criticalLabsTotal + imagingResultedTotal + consultsTotal;
+    const overallCriticalAcked = criticalLabsAcked + imagingAcked + consultsAcked;
+    const boardableCount = activeEncounters.filter((enc) => enc.flowStage === "boarded").length;
+    const denominator = Math.max(activeEncounters.length, 1);
+
+    const qualityScorecards = {
+      sepsisBundleActivations24h: sepsis24h,
+      strokeAlertActivations24h: stroke24h,
+      handoffAcceptance24h: acceptedHandoffs24h,
+      handoffAcceptanceRate: handoffs24h.length === 0 ? 1 : acceptedHandoffs24h / handoffs24h.length,
+      criticalLabAckRate: criticalLabsTotal === 0 ? 1 : criticalLabsAcked / criticalLabsTotal,
+      imagingAckRate: imagingResultedTotal === 0 ? 1 : imagingAcked / imagingResultedTotal,
+      consultAckRate: consultsTotal === 0 ? 1 : consultsAcked / consultsTotal,
+      overallClosedLoopRate: overallCriticalTotal === 0 ? 1 : overallCriticalAcked / overallCriticalTotal,
+      boardingRate: boardableCount / denominator,
+      openCriticalResults: closedLoop.totalOpen,
+    };
+
+    const qualityBenchmarks = [
+      {
+        label: "Critical Lab Acks",
+        value: qualityScorecards.criticalLabAckRate,
+        target: 0.95,
+        unit: "%",
+        status: qualityScorecards.criticalLabAckRate >= 0.95 ? "on_track" : qualityScorecards.criticalLabAckRate >= 0.8 ? "watch" : "action_needed",
+      },
+      {
+        label: "Imaging Acks",
+        value: qualityScorecards.imagingAckRate,
+        target: 0.95,
+        unit: "%",
+        status: qualityScorecards.imagingAckRate >= 0.95 ? "on_track" : qualityScorecards.imagingAckRate >= 0.8 ? "watch" : "action_needed",
+      },
+      {
+        label: "Consult Acks",
+        value: qualityScorecards.consultAckRate,
+        target: 0.9,
+        unit: "%",
+        status: qualityScorecards.consultAckRate >= 0.9 ? "on_track" : qualityScorecards.consultAckRate >= 0.75 ? "watch" : "action_needed",
+      },
+      {
+        label: "Handoff Acceptance",
+        value: qualityScorecards.handoffAcceptanceRate,
+        target: 0.95,
+        unit: "%",
+        status: qualityScorecards.handoffAcceptanceRate >= 0.95 ? "on_track" : qualityScorecards.handoffAcceptanceRate >= 0.8 ? "watch" : "action_needed",
+      },
+      {
+        label: "Closed Loop",
+        value: qualityScorecards.overallClosedLoopRate,
+        target: 0.95,
+        unit: "%",
+        status: qualityScorecards.overallClosedLoopRate >= 0.95 ? "on_track" : qualityScorecards.overallClosedLoopRate >= 0.8 ? "watch" : "action_needed",
+      },
+      {
+        label: "Boarding Rate",
+        value: 1 - qualityScorecards.boardingRate,
+        target: 0.9,
+        unit: "%",
+        status: qualityScorecards.boardingRate <= 0.1 ? "on_track" : qualityScorecards.boardingRate <= 0.2 ? "watch" : "action_needed",
+      },
+    ];
+
+    // 9) Role-based mobile push routing (MVP queue)
+    const mobileRouting = {
+      toNurse: Math.max(0, criticalLabsOpen + Math.floor(slaEscalations.length / 2)),
+      toDoctor: Math.max(0, imagingUnacked + consultUnacked),
+      toUnitCoordinator: Math.max(0, disposition.boarded + disposition.transfer),
+      suppressionWindowMinutes: 10,
+    };
+
+    // 10) Simulation + replay mode insights
+    const replayTimeline = activations24h
+      .slice(0, 12)
+      .map((event) => ({
+        timestamp: event.activatedAt,
+        type: "protocol",
+        title: `${event.title} activated`,
+        actor: event.activatedBy,
+      }))
+      .sort((a, b) => b.timestamp - a.timestamp);
+
+    return {
+      generatedAt: now,
+      deteriorationWatchlist,
+      disposition,
+      dispositionCandidates,
+      slaEscalations,
+      closedLoop,
+      staffingHeatmap,
+      bedOptimizer,
+      dischargeAutomation,
+      qualityScorecards,
+      qualityBenchmarks,
+      mobileRouting,
+      replayTimeline,
+      criticalActionItems,
+    };
+  },
+});
+
+export const routeRoleNotification = mutation({
+  args: {
+    role: v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR")),
+    message: v.string(),
+    suppressionWindowMinutes: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const windowMinutes = Math.max(1, Math.min(60, Math.floor(args.suppressionWindowMinutes ?? 10)));
+    const since = now - windowMinutes * 60 * 1000;
+    const title = `Operational Route → ${args.role}`;
+
+    const recent = await ctx.db
+      .query("notifications")
+      .withIndex("by_timestamp", (q) => q.gte("timestamp", since))
+      .collect();
+
+    const duplicate = recent.find(
+      (notification) =>
+        notification.type === "SYSTEM" &&
+        notification.title === title &&
+        notification.message === args.message
+    );
+
+    if (duplicate) {
+      return {
+        routedAt: now,
+        role: args.role,
+        skipped: true,
+        suppressionWindowMinutes: windowMinutes,
+      };
+    }
+
+    await ctx.db.insert("notifications", {
+      userId: undefined,
+      title,
+      message: args.message,
+      type: "SYSTEM",
+      isRead: false,
+      timestamp: now,
+    });
+
+    return {
+      routedAt: now,
+      role: args.role,
+      skipped: false,
+      suppressionWindowMinutes: windowMinutes,
+    };
+  },
+});
+
+export const undoCriticalAcknowledgement = mutation({
+  args: {
+    kind: v.union(v.literal("lab"), v.literal("imaging"), v.literal("consult")),
+    id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    if (args.kind === "lab") {
+      await ctx.db.patch(args.id as never, {
+        criticalStatus: "new",
+        acknowledgedBy: undefined,
+        acknowledgedAt: undefined,
+        criticalAcknowledgementNote: undefined,
+      });
+      return { ok: true };
+    }
+
+    if (args.kind === "imaging") {
+      await ctx.db.patch(args.id as never, {
+        acknowledgedBy: undefined,
+        acknowledgedAt: undefined,
+      });
+      return { ok: true };
+    }
+
+    await ctx.db.patch(args.id as never, {
+      acknowledgedBy: undefined,
+      acknowledgedAt: undefined,
+      callbackNote: undefined,
+    });
+    return { ok: true };
+  },
+});
+
+export const triggerDeteriorationEscalation = mutation({
+  args: {
+    encounterId: v.id("encounters"),
+    patientName: v.string(),
+    actorName: v.string(),
+    actorRole: v.string(),
+    targetRole: v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR")),
+    riskScore: v.number(),
+    riskTier: v.union(v.literal("high"), v.literal("medium"), v.literal("low")),
+    reasons: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const encounter = await ctx.db.get(args.encounterId);
+    if (!encounter) throw new Error("Encounter not found");
+
+    const now = Date.now();
+    const noteContent = `[DETERIORATION_ESCALATION] ${JSON.stringify({
+      triggeredAt: now,
+      riskScore: args.riskScore,
+      riskTier: args.riskTier,
+      targetRole: args.targetRole,
+      reasons: args.reasons,
+    })}`;
+
+    await ctx.db.insert("notes", {
+      encounterId: args.encounterId,
+      content: noteContent,
+      author: args.actorName,
+      category: "Nursing",
+      isTemplate: false,
+    });
+
+    await ctx.db.patch(args.encounterId, {
+      delayReason: "awaiting_provider",
+      delayNote: `Deterioration escalated by ${args.actorName} (${args.actorRole}) to ${args.targetRole}. Risk ${args.riskScore} [${args.riskTier}].`,
+      flowStage: encounter.flowStage === "triage" || encounter.flowStage === "awaiting_bed" ? "workup_pending" : encounter.flowStage,
+      flowStageUpdatedAt: now,
+    });
+
+    await ctx.db.insert("notifications", {
+      userId: undefined,
+      title: `Deterioration Escalation → ${args.targetRole}`,
+      message: `${args.patientName} flagged at risk ${args.riskScore} (${args.riskTier}). Reasons: ${args.reasons.join(", ")}`,
+      type: "SYSTEM",
+      isRead: false,
+      timestamp: now,
+      patientId: encounter.patientId,
+    });
+
+    return { escalatedAt: now };
+  },
+});
+
+export const runSlaEscalationSweep = mutation({
+  args: {
+    actorName: v.string(),
+    dryRun: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const activeEncounters = await ctx.db
+      .query("encounters")
+      .withIndex("by_status")
+      .filter((q) => q.neq(q.field("status"), "discharged"))
+      .collect();
+
+    const activeStaff = (await ctx.db.query("users").collect()).filter((u) => u.status === "ACTIVE");
+    const flowOwnerRoles = new Set(["NURSE", "CCMA", "UNIT_COORDINATOR", "RAD_TECH", "SCRUB_TECH"]);
+    const providerRoles = new Set(["DOCTOR", "SURGEON", "ANESTHESIOLOGIST", "PHARMACIST", "RESPIRATORY_THERAPIST"]);
+
+    const defaultFlowOwner = activeStaff.find((u) => flowOwnerRoles.has(u.role))?.name ?? args.actorName;
+    const defaultProvider = activeStaff.find((u) => providerRoles.has(u.role))?.name ?? args.actorName;
+
+    const candidates = activeEncounters
+      .map((encounter) => {
+        const stageAgeMinutes = Math.floor((now - (encounter.flowStageUpdatedAt ?? encounter._creationTime)) / 60000);
+        const missingOwner = !encounter.flowOwner?.trim();
+        const missingProvider = !encounter.assignedProvider?.trim();
+        const breaching = stageAgeMinutes >= 15 && (missingOwner || missingProvider);
+
+        return {
+          encounter,
+          stageAgeMinutes,
+          missingOwner,
+          missingProvider,
+          breaching,
+        };
+      })
+      .filter((row) => row.breaching)
+      .sort((a, b) => b.stageAgeMinutes - a.stageAgeMinutes);
+
+    const preview = candidates.slice(0, 50).map((row) => ({
+      encounterId: row.encounter._id,
+      patientName: row.encounter.patientName ?? "Unknown Patient",
+      stageAgeMinutes: row.stageAgeMinutes,
+      assignFlowOwnerTo: row.missingOwner ? defaultFlowOwner : undefined,
+      assignProviderTo: row.missingProvider ? defaultProvider : undefined,
+    }));
+
+    if (args.dryRun) {
+      return {
+        mode: "preview",
+        candidateCount: candidates.length,
+        appliedCount: 0,
+        preview,
+      };
+    }
+
+    let appliedCount = 0;
+    for (const row of candidates) {
+      const patch: {
+        flowOwner?: string;
+        assignedProvider?: string;
+      } = {};
+
+      if (row.missingOwner) patch.flowOwner = defaultFlowOwner;
+      if (row.missingProvider) patch.assignedProvider = defaultProvider;
+      if (!patch.flowOwner && !patch.assignedProvider) continue;
+
+      await ctx.db.patch(row.encounter._id, patch);
+      appliedCount += 1;
+    }
+
+    return {
+      mode: "execute",
+      candidateCount: candidates.length,
+      appliedCount,
+      preview,
+    };
+  },
+});
+
+export const getShiftReplay = query({
+  args: {
+    windowHours: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const requestedWindow = args.windowHours ?? 24;
+    const windowHours = Math.max(1, Math.min(72, Math.floor(requestedWindow)));
+    const since = now - windowHours * 60 * 60 * 1000;
+
+    const [encounters, activations, handoffs, notes, notifications] = await Promise.all([
+      ctx.db.query("encounters").collect(),
+      ctx.db.query("protocolActivations").collect(),
+      ctx.db.query("shiftHandoffs").collect(),
+      ctx.db.query("notes").collect(),
+      ctx.db.query("notifications").collect(),
+    ]);
+
+    const encounterById = new Map(encounters.map((enc) => [enc._id, enc]));
+
+    const protocolEvents = activations
+      .filter((event) => event.activatedAt >= since)
+      .map((event) => ({
+        timestamp: event.activatedAt,
+        type: "protocol",
+        severity: "info",
+        title: `${event.title} activated`,
+        detail: `Source: ${event.source}`,
+        encounterId: event.encounterId,
+        patientId: event.patientId,
+        actor: event.activatedBy,
+      }));
+
+    const handoffEvents = handoffs
+      .filter((event) => (event.initiatedAt ?? 0) >= since || (event.acceptedAt ?? 0) >= since)
+      .flatMap((event) => {
+        const rows = [
+          {
+            timestamp: event.initiatedAt,
+            type: "handoff",
+            severity: "info",
+            title: `Handoff initiated (${event.patientCount} patients)`,
+            detail: `${event.fromUserName} → ${event.toUserName ?? "Unassigned"}`,
+            actor: event.fromUserName,
+          },
+        ];
+
+        if (event.acceptedAt) {
+          rows.push({
+            timestamp: event.acceptedAt,
+            type: "handoff",
+            severity: "success",
+            title: "Handoff accepted",
+            detail: `${event.toUserName ?? "Receiving staff"} accepted`,
+            actor: event.toUserName ?? "Unknown",
+          });
+        }
+
+        return rows
+          .filter((row) => row.timestamp >= since)
+          .map((row) => ({
+            ...row,
+            encounterId: event.patientEncounterIds[0],
+            patientId: encounterById.get(event.patientEncounterIds[0])?.patientId,
+          }));
+      });
+
+    const escalationEvents = notes
+      .filter((note) => note.content.startsWith("[DETERIORATION_ESCALATION]"))
+      .filter((note) => note._creationTime >= since)
+      .map((note) => {
+        const encounter = encounterById.get(note.encounterId);
+        return {
+          timestamp: note._creationTime,
+          type: "deterioration",
+          severity: "critical",
+          title: "Deterioration escalation",
+          detail: note.author,
+          encounterId: note.encounterId,
+          patientId: encounter?.patientId,
+          actor: note.author,
+        };
+      });
+
+    const alertEvents = notifications
+      .filter((note) => note.timestamp >= since)
+      .filter((note) => note.title.includes("Escalation") || note.title.includes("Critical") || note.title.includes("Operational Route"))
+      .map((note) => ({
+        timestamp: note.timestamp,
+        type: "alert",
+        severity: note.title.includes("Critical") || note.title.includes("Escalation") ? "critical" : "attention",
+        title: note.title,
+        detail: note.message,
+        encounterId: undefined,
+        patientId: note.patientId,
+        actor: "System",
+      }));
+
+    const events = [...protocolEvents, ...handoffEvents, ...escalationEvents, ...alertEvents]
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 100);
+
+    const bottlenecks = encounters
+      .filter((enc) => enc.status !== "discharged")
+      .map((enc) => {
+        const stageAgeMinutes = Math.floor((now - (enc.flowStageUpdatedAt ?? enc._creationTime)) / 60000);
+        return {
+          encounterId: enc._id,
+          patientId: enc.patientId,
+          patientName: enc.patientName ?? "Unknown Patient",
+          flowStage: enc.flowStage ?? "triage",
+          delayReason: enc.delayReason ?? "none",
+          stageAgeMinutes,
+        };
+      })
+      .filter((row) => row.stageAgeMinutes >= 45)
+      .sort((a, b) => b.stageAgeMinutes - a.stageAgeMinutes)
+      .slice(0, 6);
+
+    const stats = {
+      eventCount: events.length,
+      criticalEvents: events.filter((e) => e.severity === "critical").length,
+      handoffEvents: events.filter((e) => e.type === "handoff").length,
+      protocolEvents: events.filter((e) => e.type === "protocol").length,
+      bottleneckCount: bottlenecks.length,
+    };
+
+    return {
+      generatedAt: now,
+      windowHours,
+      stats,
+      events: events.slice(0, 24),
+      bottlenecks,
+    };
+  },
+});
