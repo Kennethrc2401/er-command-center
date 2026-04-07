@@ -1,5 +1,57 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+
+type StaffRole =
+  | "ADMIN"
+  | "DOCTOR"
+  | "NURSE"
+  | "CCMA"
+  | "SURGEON"
+  | "ANESTHESIOLOGIST"
+  | "PHARMACIST"
+  | "RESPIRATORY_THERAPIST"
+  | "RAD_TECH"
+  | "SCRUB_TECH"
+  | "UNIT_COORDINATOR";
+
+const AUTHORIZED_ROLES = new Set<StaffRole>([
+  "ADMIN",
+  "DOCTOR",
+  "NURSE",
+  "CCMA",
+  "SURGEON",
+  "ANESTHESIOLOGIST",
+  "PHARMACIST",
+  "RESPIRATORY_THERAPIST",
+  "RAD_TECH",
+  "SCRUB_TECH",
+  "UNIT_COORDINATOR",
+]);
+
+const INCIDENT_ROUTE_ALLOWED_ROLES = new Set<StaffRole>(["ADMIN", "UNIT_COORDINATOR", "NURSE"]);
+
+const resolveActor = async (ctx: MutationCtx | QueryCtx) => {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity?.email) {
+    throw new Error("Unauthenticated: Please log in to perform this action.");
+  }
+
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", identity.email!.toLowerCase()))
+    .unique();
+
+  if (!user || user.status !== "ACTIVE") {
+    throw new Error("Unauthorized: Active staff access is required.");
+  }
+
+  const role = (user.role as StaffRole) ?? "UNIT_COORDINATOR";
+  if (!AUTHORIZED_ROLES.has(role)) {
+    throw new Error(`Unauthorized: Role '${role}' cannot access watchlist operations.`);
+  }
+
+  return { user, role, name: user.name };
+};
 
 const ROOM_TURNOVER_OVERDUE_MINUTES = 20;
 
@@ -1694,6 +1746,100 @@ export const getOperationsIntelligenceSuite = query({
   },
 });
 
+export const getSharedWatchlist = query({
+  args: {
+    unit: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await resolveActor(ctx);
+    const unit = args.unit.trim() || "ER-4B";
+    const rows = await ctx.db
+      .query("sharedWatchlists")
+      .withIndex("by_unit", (q) => q.eq("unit", unit))
+      .collect();
+
+    const activeEncounterIds = new Set(
+      (
+        await ctx.db
+          .query("encounters")
+          .withIndex("by_status")
+          .filter((q) => q.neq(q.field("status"), "discharged"))
+          .collect()
+      ).map((encounter) => encounter._id)
+    );
+
+    const entries = await Promise.all(
+      rows
+        .filter((row) => activeEncounterIds.has(row.encounterId))
+        .map(async (row) => {
+          const encounter = await ctx.db.get(row.encounterId);
+          return {
+            encounterId: row.encounterId,
+            note: row.note,
+            pinnedBy: row.pinnedBy,
+            pinnedAt: row.pinnedAt,
+            updatedAt: row.updatedAt,
+            patientName: encounter?.patientName ?? "Unknown Patient",
+            acuity: encounter?.acuity ?? 5,
+            status: encounter?.status ?? "unknown",
+          };
+        })
+    );
+
+    return {
+      unit,
+      entries: entries.sort((a, b) => b.updatedAt - a.updatedAt),
+    };
+  },
+});
+
+export const upsertSharedWatchlistEntry = mutation({
+  args: {
+    unit: v.string(),
+    encounterId: v.id("encounters"),
+    pinned: v.boolean(),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const actor = await resolveActor(ctx);
+    const now = Date.now();
+    const unit = args.unit.trim() || "ER-4B";
+    const existing = await ctx.db
+      .query("sharedWatchlists")
+      .withIndex("by_unit_encounter", (q) => q.eq("unit", unit).eq("encounterId", args.encounterId))
+      .first();
+
+    if (!args.pinned) {
+      if (existing) {
+        await ctx.db.delete(existing._id);
+      }
+      return { ok: true, action: "removed", updatedAt: now };
+    }
+
+    const note = args.note?.trim() ? args.note.trim().slice(0, 240) : undefined;
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        note,
+        pinnedBy: actor.name,
+        updatedAt: now,
+      });
+      return { ok: true, action: "updated", updatedAt: now };
+    }
+
+    await ctx.db.insert("sharedWatchlists", {
+      unit,
+      encounterId: args.encounterId,
+      note,
+      pinnedBy: actor.name,
+      pinnedAt: now,
+      updatedAt: now,
+    });
+
+    return { ok: true, action: "added", updatedAt: now };
+  },
+});
+
 export const routeRoleNotification = mutation({
   args: {
     role: v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR")),
@@ -1701,6 +1847,16 @@ export const routeRoleNotification = mutation({
     suppressionWindowMinutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const actor = await resolveActor(ctx);
+    if (!INCIDENT_ROUTE_ALLOWED_ROLES.has(actor.role)) {
+      throw new Error("Unauthorized: Only ADMIN, UNIT_COORDINATOR, or NURSE roles may route incident alerts.");
+    }
+
+    const message = args.message.trim();
+    if (!message) {
+      throw new Error("Message is required to route an incident alert.");
+    }
+
     const now = Date.now();
     const windowMinutes = Math.max(1, Math.min(60, Math.floor(args.suppressionWindowMinutes ?? 10)));
     const since = now - windowMinutes * 60 * 1000;
@@ -1715,7 +1871,7 @@ export const routeRoleNotification = mutation({
       (notification) =>
         notification.type === "SYSTEM" &&
         notification.title === title &&
-        notification.message === args.message
+        notification.message === message
     );
 
     if (duplicate) {
@@ -1730,7 +1886,7 @@ export const routeRoleNotification = mutation({
     await ctx.db.insert("notifications", {
       userId: undefined,
       title,
-      message: args.message,
+      message,
       type: "SYSTEM",
       isRead: false,
       timestamp: now,

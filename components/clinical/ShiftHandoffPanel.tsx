@@ -19,7 +19,13 @@ import { CheckCircle2, XCircle, Clock, Users, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Id } from "@/convex/_generated/dataModel";
 
-export function ShiftHandoffPanel({ userId }: { userId: string }) {
+type ShiftHandoffPanelProps = {
+  userId: string;
+  userName: string;
+  userRole: string;
+};
+
+export function ShiftHandoffPanel({ userId, userName, userRole }: ShiftHandoffPanelProps) {
   const pendingHandoffs = useQuery(api.workflow.getPendingHandoffs, { userId: userId as Id<"users"> });
   const handoffHistory = useQuery(api.workflow.getHandoffHistory, { userId: userId as Id<"users"> });
   
@@ -40,8 +46,8 @@ export function ShiftHandoffPanel({ userId }: { userId: string }) {
       await acceptHandoff({
         handoffId: handoffId as Id<"shiftHandoffs">,
         toUserId: userId as Id<"users">,
-        toUserName: "Current User", // In real app, get from auth context
-        toUserRole: "DOCTOR", // In real app, get from auth context
+        toUserName: userName,
+        toUserRole: userRole,
         signInNotes: signInNotes || undefined,
       });
       toast.success("Handoff accepted successfully");
@@ -66,8 +72,8 @@ export function ShiftHandoffPanel({ userId }: { userId: string }) {
       await rejectHandoff({
         handoffId: handoffId as Id<"shiftHandoffs">,
         toUserId: userId as Id<"users">,
-        toUserName: "Current User", // In real app, get from auth context
-        toUserRole: "DOCTOR", // In real app, get from auth context
+        toUserName: userName,
+        toUserRole: userRole,
         rejectionReason,
       });
       toast.success("Handoff rejected");

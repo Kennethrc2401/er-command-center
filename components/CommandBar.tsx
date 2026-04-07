@@ -6,11 +6,16 @@ import { Command } from "cmdk";
 import { DialogTitle } from "@/components/ui/dialog";
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { 
-  Search, Activity, Beaker, LayoutDashboard,
-  FileText, Home, Info, ShieldCheck, FolderOpen, ClipboardList
+  Search, Activity, Beaker, BrainCircuit, LayoutDashboard,
+  FileText, Home, Info, ShieldCheck, FolderOpen, ClipboardList, Sparkles
 } from "lucide-react";
 
-export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: string) => void }) {
+type CommandBarProps = {
+  setTab?: (tab: string) => void;
+  onPatientAiToolSelect?: (tool: "differential" | "handoff" | "denial") => void;
+};
+
+export default function CommandBar({ setTab = () => {}, onPatientAiToolSelect }: CommandBarProps) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
 
@@ -33,6 +38,14 @@ export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: strin
   const runCommand = (command: () => void) => {
     command();
     setOpen(false);
+  };
+
+  const openPatientAiTool = (tool: "differential" | "handoff" | "denial") => {
+    if (onPatientAiToolSelect) {
+      onPatientAiToolSelect(tool);
+      return;
+    }
+    router.push(`/dashboard/ai-tools?tool=${tool}`);
   };
 
   return (
@@ -73,8 +86,19 @@ export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: strin
           <Command.Item onSelect={() => runCommand(() => router.push("/dashboard/or-scheduler"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
             <ClipboardList className="h-4 w-4 text-indigo-500" /> OR Scheduler
           </Command.Item>
+          <Command.Item onSelect={() => runCommand(() => router.push("/dashboard/ai-tools"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
+            <BrainCircuit className="h-4 w-4 text-cyan-600" /> AI Tools Hub
+          </Command.Item>
           <Command.Item onSelect={() => runCommand(() => router.push("/dashboard/admin"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
             <ShieldCheck className="h-4 w-4 text-emerald-500" /> Admin Suite
+          </Command.Item>
+          <Command.Item
+            onSelect={() =>
+              runCommand(() => window.dispatchEvent(new CustomEvent("open-global-scribe")))
+            }
+            className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700"
+          >
+            <Sparkles className="h-4 w-4 text-blue-500" /> Global AI Scribe
           </Command.Item>
         </Command.Group>
 
@@ -93,6 +117,15 @@ export default function CommandBar({ setTab = () => {} }: { setTab?: (tab: strin
           </Command.Item>
           <Command.Item onSelect={() => runCommand(() => setTab("discharge"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
             <Home className="h-4 w-4 text-emerald-600" /> Prepare Discharge
+          </Command.Item>
+          <Command.Item onSelect={() => runCommand(() => openPatientAiTool("differential"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
+            <BrainCircuit className="h-4 w-4 text-cyan-600" /> AI Differential Copilot
+          </Command.Item>
+          <Command.Item onSelect={() => runCommand(() => openPatientAiTool("handoff"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
+            <Sparkles className="h-4 w-4 text-blue-500" /> AI Handoff Compressor
+          </Command.Item>
+          <Command.Item onSelect={() => runCommand(() => openPatientAiTool("denial"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
+            <ShieldCheck className="h-4 w-4 text-amber-500" /> AI Denial Risk Copilot
           </Command.Item>
         </Command.Group>
       </Command.List>

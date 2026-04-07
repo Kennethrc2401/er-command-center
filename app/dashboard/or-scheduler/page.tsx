@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import ScribeAssistCard from "@/components/clinical/ScribeAssistCard";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
 import {
   Activity,
@@ -435,6 +436,18 @@ export default function OrSchedulerPage() {
                   placeholder="Equipment notes, team assignment, blood products, special prep..."
                   className="min-h-24"
                 />
+                <ScribeAssistCard
+                  mode="SCHEDULE"
+                  contextTitle={procedure.trim() || "OR case"}
+                  contextFacts={[
+                    `Patient: ${patientName.trim() || "TBD"}`,
+                    `Surgeon: ${surgeon.trim() || "TBD"}`,
+                    `Room: ${room.trim() || "TBD"}`,
+                    `Priority: ${priority}`,
+                  ]}
+                  onApply={setNotes}
+                  onRequestCurrentValue={() => notes}
+                />
               </div>
 
               <Button onClick={addCase} className="w-full gap-2 bg-blue-600 text-white hover:bg-blue-700">
@@ -692,6 +705,18 @@ export default function OrSchedulerPage() {
           <div className="space-y-2">
             <Label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Notes</Label>
             <Textarea value={editNotes} onChange={(event) => setEditNotes(event.target.value)} className="min-h-24" />
+            <ScribeAssistCard
+              mode="SCHEDULE"
+              contextTitle={editProcedure.trim() || "OR case"}
+              contextFacts={[
+                `Patient: ${editPatientName.trim() || "TBD"}`,
+                `Surgeon: ${editSurgeon.trim() || "TBD"}`,
+                `Room: ${editRoom.trim() || "TBD"}`,
+                `Priority: ${editPriority}`,
+              ]}
+              onApply={setEditNotes}
+              onRequestCurrentValue={() => editNotes}
+            />
           </div>
 
           {hasEditConflict && (

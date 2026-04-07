@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -16,7 +17,8 @@ import {
   Trash2, 
   ArrowUpRight,
   Monitor,
-  MapPin
+  MapPin,
+  BellRing
 } from "lucide-react";
 import NewPatientModal from "@/components/NewPatientModal";
 import TriageStats from "@/components/TriageStats";
@@ -41,14 +43,54 @@ import AssignmentQueue from "@/components/clinical/AssignmentQueue";
 import OperationsIntelligenceSuite from "@/components/clinical/OperationsIntelligenceSuite";
 import TriageTabs from "@/components/clinical/TriageTabs";
 import KioskHandoffQueue from "@/components/kiosk/KioskHandoffQueue";
+import { ShiftHandoffPanel } from "@/components/clinical/ShiftHandoffPanel";
+import { SignOutPanel } from "@/components/clinical/SignOutPanel";
+import ScribeAssistCard from "@/components/clinical/ScribeAssistCard";
 import { useAuth } from "@clerk/nextjs";
 import { useStaffSession } from "@/lib/hooks/useStaffSession";
+import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
 import { toast } from "sonner";
 import { calculateNEWS2 } from "@/lib/helpers/news2";
+import { saveAIToolsPrefill } from "@/lib/helpers/aiTools";
 
 const BED_PREFERENCE_KEY = "triage-bed-matrix-compact";
+const SHIFT_OPERATIONS_COLLAPSE_KEY = "triage-shift-operations-collapsed";
 const TOTAL_BEDS = 20;
 const BED_LOCATION_PATTERN = /^bed\s+(\d+)$/i;
+
+type IncidentTemplate = {
+  id: string;
+  label: string;
+  role: "NURSE" | "DOCTOR" | "UNIT_COORDINATOR";
+  message: string;
+};
+
+const INCIDENT_TEMPLATES: IncidentTemplate[] = [
+  {
+    id: "rapid-reassess-bed",
+    label: "Rapid Reassessment",
+    role: "NURSE",
+    message: "Bed assignment requires immediate RN reassessment and repeat vitals within 10 minutes.",
+  },
+  {
+    id: "boarding-bottleneck",
+    label: "Boarding Bottleneck",
+    role: "UNIT_COORDINATOR",
+    message: "Boarding queue threshold breached. Prioritize inpatient placement and escalate transport coordination.",
+  },
+  {
+    id: "critical-provider-review",
+    label: "Critical Provider Review",
+    role: "DOCTOR",
+    message: "High-acuity reassessment requested: evaluate immediate disposition risk and update escalation plan now.",
+  },
+  {
+    id: "imaging-delay",
+    label: "Imaging Delay Escalation",
+    role: "UNIT_COORDINATOR",
+    message: "Critical imaging backlog detected. Coordinate STAT prioritization with radiology and bedside teams.",
+  },
+];
 
 function normalizeBedLocation(location?: string): string | null {
   if (!location) return null;
@@ -103,8 +145,17 @@ export default function Page() {
 }
 
 function ERDashboardContent() {
+  const router = useRouter();
   const [searchTerm, setSearchTerm] = useState(""); 
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [isShiftOperationsCollapsed, setIsShiftOperationsCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(SHIFT_OPERATIONS_COLLAPSE_KEY) === "1";
+  });
+  const [incidentTemplateId, setIncidentTemplateId] = useState("custom");
+  const [incidentRole, setIncidentRole] = useState<"NURSE" | "DOCTOR" | "UNIT_COORDINATOR">("NURSE");
+  const [incidentMessage, setIncidentMessage] = useState("");
+  const [isRoutingIncident, setIsRoutingIncident] = useState(false);
   const [isCompactBeds, setIsCompactBeds] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(BED_PREFERENCE_KEY) === "1";
@@ -113,6 +164,8 @@ function ERDashboardContent() {
   const [selectedTriagePatient, setSelectedTriagePatient] = useState<Doc<"encounters"> | null>(null);
   const [vitalsEncounter, setVitalsEncounter] = useState<Doc<"encounters"> | null>(null);
   const { isDemoMode, toggleDemoMode } = usePresentationMode();
+  const staffSession = useStaffSession();
+  const { actorName, actorRole, isAdmin } = useResolvedActor();
 
   const { isPrivate } = usePrivacyMode();
 
@@ -120,6 +173,7 @@ function ERDashboardContent() {
 
   const assignBed = useMutation(api.encounters.assignBed);
   const clearBeds = useMutation(api.encounters.clearAllBeds);
+  const routeRoleNotification = useMutation(api.workflow.routeRoleNotification);
 
   const notifyBedAssignmentError = (error: unknown) => {
     const message = error instanceof Error ? error.message : "Unable to assign bed right now.";
@@ -162,6 +216,10 @@ function ERDashboardContent() {
     window.localStorage.setItem(BED_PREFERENCE_KEY, isCompactBeds ? "1" : "0");
   }, [isCompactBeds]);
 
+  useEffect(() => {
+    window.localStorage.setItem(SHIFT_OPERATIONS_COLLAPSE_KEY, isShiftOperationsCollapsed ? "1" : "0");
+  }, [isShiftOperationsCollapsed]);
+
   // Sync Timer
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(Date.now()), 30000);
@@ -198,6 +256,71 @@ function ERDashboardContent() {
     
     return matchesSearch && matchesMetric;
   });
+
+  const handoffUserId = staffSession.user?.userId ?? null;
+  const handoffUserIdSafe = handoffUserId ?? "";
+  const canUseHandoffTools = handoffUserIdSafe.length > 0 && (isAdmin || actorRole !== "UNKNOWN");
+  const canRouteIncidents = isAdmin || actorRole === "UNIT_COORDINATOR" || actorRole === "NURSE";
+
+  const applyIncidentTemplate = (templateId: string) => {
+    setIncidentTemplateId(templateId);
+    if (templateId === "custom") return;
+
+    const template = INCIDENT_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) return;
+
+    setIncidentRole(template.role);
+    setIncidentMessage(template.message);
+  };
+
+  const handleRouteIncident = async () => {
+    if (!canRouteIncidents) {
+      toast.error("Your current role is not permitted to route operational incident alerts");
+      return;
+    }
+
+    const trimmed = incidentMessage.trim();
+    if (!trimmed) {
+      toast.error("Add an incident message before routing");
+      return;
+    }
+
+    setIsRoutingIncident(true);
+    try {
+      const result = await routeRoleNotification({
+        role: incidentRole,
+        message: trimmed,
+        suppressionWindowMinutes: 15,
+      });
+
+      if (result.skipped) {
+        toast.info(`Duplicate message suppressed for ${result.suppressionWindowMinutes} minutes`);
+      } else {
+        toast.success(`Alert routed to ${result.role}`);
+      }
+      setIncidentMessage("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to route incident notification";
+      toast.error(message);
+    } finally {
+      setIsRoutingIncident(false);
+    }
+  };
+
+  const sendIncidentToAiTools = () => {
+    const summary = incidentMessage.trim();
+    saveAIToolsPrefill({
+      version: 1,
+      target: "handoff",
+      handoffSource: [
+        `Route Incident Draft`,
+        `Role: ${incidentRole}`,
+        `Actor: ${actorName}`,
+        summary ? `Message: ${summary}` : "Message: [Pending]",
+      ].join("\n"),
+    });
+    void router.push("/dashboard/ai-tools?tool=handoff");
+  };
 
     const formatPatientName = (name: string) => {
       if (!isDemoMode) return name;
@@ -353,6 +476,129 @@ function ERDashboardContent() {
         <ThroughputControlTower isPrivate={isPrivate} isDemoMode={isDemoMode} />
 
         <OperationsIntelligenceSuite />
+
+        <section className="space-y-5 rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Shift Operations</p>
+              <h3 className="text-lg font-black tracking-tight text-slate-900 dark:text-slate-100">Handoff + Rapid Routing</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                Acting as {actorName}
+              </Badge>
+              <button
+                onClick={() => setIsShiftOperationsCollapsed((prev) => !prev)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500 transition-colors hover:border-blue-300 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+              >
+                {isShiftOperationsCollapsed ? "Show" : "Hide"}
+              </button>
+            </div>
+          </div>
+
+          {isShiftOperationsCollapsed ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-3 dark:border-slate-700 dark:bg-slate-950/40">
+              <Badge className="bg-rose-600 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white">Rapid Route</Badge>
+              <Badge className="bg-blue-600 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white">Handoff Tools</Badge>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Templates: {INCIDENT_TEMPLATES.length} • Role Gate: {canRouteIncidents ? "Enabled" : "Restricted"}
+              </span>
+            </div>
+          ) : (
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[340px_1fr]">
+            <Card className="border-slate-200 dark:border-slate-700">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-sm font-black uppercase tracking-widest text-slate-700 dark:text-slate-100">
+                  <BellRing className="h-4 w-4 text-blue-600" /> Route Incident Alert
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Template</label>
+                <select
+                  value={incidentTemplateId}
+                  onChange={(event) => applyIncidentTemplate(event.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                >
+                  <option value="custom">Custom Message</option>
+                  {INCIDENT_TEMPLATES.map((template) => (
+                    <option key={template.id} value={template.id}>{template.label}</option>
+                  ))}
+                </select>
+
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Target Role</label>
+                <select
+                  value={incidentRole}
+                  onChange={(event) => setIncidentRole(event.target.value as "NURSE" | "DOCTOR" | "UNIT_COORDINATOR")}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                >
+                  <option value="NURSE">Nurse Team</option>
+                  <option value="DOCTOR">Physician Team</option>
+                  <option value="UNIT_COORDINATOR">Unit Coordinator</option>
+                </select>
+
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Alert Message</label>
+                <input
+                  value={incidentMessage}
+                  onChange={(event) => setIncidentMessage(event.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                  placeholder="Example: Bed 12 requires immediate RN reassessment"
+                />
+
+                <ScribeAssistCard
+                  mode="ALERT"
+                  contextTitle="ER Rapid Incident Route"
+                  contextFacts={[
+                    `Target Role: ${incidentRole}`,
+                    `Actor: ${actorName}`,
+                    "Unit: ER 4B",
+                  ]}
+                  onApply={setIncidentMessage}
+                  onRequestCurrentValue={() => incidentMessage}
+                />
+
+                <button
+                  onClick={() => void handleRouteIncident()}
+                  disabled={isRoutingIncident || !incidentMessage.trim() || !canRouteIncidents}
+                  className="w-full rounded-xl bg-blue-600 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isRoutingIncident ? "Routing..." : "Send Routed Alert"}
+                </button>
+
+                <button
+                  onClick={sendIncidentToAiTools}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-700 transition-all hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
+                >
+                  Send To AI Tools Hub
+                </button>
+
+                {!canRouteIncidents && (
+                  <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+                    Routing restricted to ADMIN, UNIT_COORDINATOR, and NURSE roles.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {canUseHandoffTools ? (
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                <SignOutPanel userId={handoffUserIdSafe} userName={actorName} userRole={actorRole} />
+                <ShiftHandoffPanel userId={handoffUserIdSafe} userName={actorName} userRole={actorRole} />
+              </div>
+            ) : (
+              <Card className="border-amber-200 bg-amber-50/70 dark:border-amber-700/40 dark:bg-amber-950/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-black uppercase tracking-widest text-amber-800 dark:text-amber-300">Handoff Login Required</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-amber-900 dark:text-amber-200">
+                    Shift handoff actions require a staff-session identity with a mapped internal user ID. Use Staff Login to enable sign-out and incoming handoff acceptance tools.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+          )}
+        </section>
 
         <section className="grid grid-cols-1 gap-6 xl:grid-cols-4">
           <OperationalAlertsPanel />

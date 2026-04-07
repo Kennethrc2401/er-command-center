@@ -4,6 +4,7 @@ import React from "react";
 import { SignInButton } from "@clerk/nextjs";
 import { 
   Monitor, 
+  BrainCircuit,
   ShieldCheck, 
   UserPlus, 
   ArrowRight,
@@ -74,12 +75,27 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
       color: "bg-cyan-600",
       role: "Perioperative"
     },
+    {
+      title: "AI Tools Hub",
+      desc: "Clinical, handoff, and denial-risk copilots in one workspace",
+      href: "/dashboard/ai-tools",
+      icon: BrainCircuit,
+      color: "bg-teal-600",
+      role: "Staff AI"
+    },
     ...(isAdmin ? [{
       title: "Executive Suite",
       desc: "Revenue analytics and compliance audits",
       href: "/dashboard/admin",
       icon: ShieldCheck,
       color: "bg-slate-900",
+      role: "Admin Only"
+    }, {
+      title: "POS Terminal",
+      desc: "Open drawer reconciliation and payment controls",
+      href: "/dashboard/admin/revenue#pos-terminal",
+      icon: ClipboardList,
+      color: "bg-amber-600",
       role: "Admin Only"
     }] : [])
   ];
@@ -89,7 +105,9 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
     "bg-emerald-500": "#10b981",
     "bg-violet-600": "#7c3aed",
     "bg-cyan-600": "#0891b2",
-    "bg-slate-900": "#0f172a"
+    "bg-teal-600": "#0d9488",
+    "bg-slate-900": "#0f172a",
+    "bg-amber-600": "#d97706"
   };
 
   return (

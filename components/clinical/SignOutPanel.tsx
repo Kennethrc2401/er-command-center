@@ -14,10 +14,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { LogOut, Loader2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { Id } from "@/convex/_generated/dataModel";
+import { Doc, Id } from "@/convex/_generated/dataModel";
 
 interface ProviderWorkload {
   name: string;
@@ -29,19 +29,57 @@ interface ProviderWorkload {
   openAlertCount: number;
 }
 
-export function SignOutPanel({ userId, userName }: { userId: string; userName: string }) {
+export function SignOutPanel({ userId, userName, userRole }: { userId: string; userName: string; userRole: string }) {
   const [showDialog, setShowDialog] = useState(false);
-  const [selectedPatients, setSelectedPatients] = useState<Set<string>>(new Set());
+  const [selectedPatients, setSelectedPatients] = useState<Set<Id<"encounters">>>(new Set());
   const [signOutNotes, setSignOutNotes] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
 
   const initiateHandoff = useMutation(api.workflow.initiateShiftHandoff);
   const workloads = useQuery(api.workflow.getProviderWorkload, {}) as ProviderWorkload[] | null;
+  const activeEncounters = useQuery(api.encounters.getActive) as Doc<"encounters">[] | undefined;
 
   if (!workloads) return null;
 
+  const assignedEncounters = useMemo(
+    () =>
+      (activeEncounters ?? []).filter((encounter) => {
+        const assignedProvider = encounter.assignedProvider?.trim();
+        const flowOwner = encounter.flowOwner?.trim();
+        return assignedProvider === userName || flowOwner === userName;
+      }),
+    [activeEncounters, userName]
+  );
+
   // Find current user's workload summary
-  const currentWorkload = workloads.find((w) => w.name === userId || w.name === userName);
+  const currentWorkload = workloads.find((w) => w.name === userName || w.name === userId);
+
+  useEffect(() => {
+    if (!showDialog) return;
+
+    const validIds = new Set(assignedEncounters.map((encounter) => encounter._id));
+    setSelectedPatients((current) => {
+      const next = new Set<Id<"encounters">>();
+      current.forEach((id) => {
+        if (validIds.has(id)) {
+          next.add(id);
+        }
+      });
+      return next;
+    });
+  }, [assignedEncounters, showDialog]);
+
+  const toggleSelectedEncounter = (encounterId: Id<"encounters">) => {
+    setSelectedPatients((current) => {
+      const next = new Set(current);
+      if (next.has(encounterId)) {
+        next.delete(encounterId);
+      } else {
+        next.add(encounterId);
+      }
+      return next;
+    });
+  };
 
   const handleSignOut = async () => {
     if (selectedPatients.size === 0) {
@@ -55,7 +93,7 @@ export function SignOutPanel({ userId, userName }: { userId: string; userName: s
       await initiateHandoff({
         fromUserId: userId as Id<"users">,
         fromUserName: userName,
-        fromUserRole: "DOCTOR", // In real app, get from auth context
+        fromUserRole: userRole,
         patientEncounterIds: patientIds,
         notes: signOutNotes || undefined,
       });
@@ -122,12 +160,15 @@ export function SignOutPanel({ userId, userName }: { userId: string; userName: s
               <Button
                 className="w-full mt-4 bg-blue-600 hover:bg-blue-700"
                 onClick={() => {
-                  // For now, set all patients as selected  (in a real app, would select specific ones)
-                  // This would require a more detailed query
-                  toast.info("Select specific patients in the handoff dialog");
+                  if (assignedEncounters.length === 0) {
+                    toast.error("No assigned encounters found for handoff");
+                    return;
+                  }
+
+                  setSelectedPatients(new Set(assignedEncounters.map((encounter) => encounter._id)));
                   setShowDialog(true);
                 }}
-                disabled={currentWorkload.assignedCount === 0}
+                disabled={assignedEncounters.length === 0}
               >
                 <LogOut className="w-4 h-4 mr-2" />
                 Initiate Handoff
@@ -154,6 +195,33 @@ export function SignOutPanel({ userId, userName }: { userId: string; userName: s
                 <li>• They will be marked for handoff with the incoming provider details</li>
                 <li>• The provider will receive a handoff notification to accept/reject</li>
               </ul>
+            </div>
+
+            <div className="max-h-52 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-3">
+              {assignedEncounters.length === 0 ? (
+                <p className="text-xs text-slate-500">No assigned encounters are currently eligible for handoff.</p>
+              ) : (
+                assignedEncounters.map((encounter) => {
+                  const isSelected = selectedPatients.has(encounter._id);
+                  return (
+                    <label
+                      key={encounter._id}
+                      className="flex cursor-pointer items-start gap-2 rounded border border-transparent bg-white p-2 text-xs transition-colors hover:border-blue-200"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelectedEncounter(encounter._id)}
+                        className="mt-0.5"
+                      />
+                      <span className="flex-1">
+                        <span className="block font-semibold text-slate-800">{encounter.patientName}</span>
+                        <span className="block text-slate-500">ESI {encounter.acuity} • {encounter.chiefComplaint}</span>
+                      </span>
+                    </label>
+                  );
+                })
+              )}
             </div>
 
             <Textarea

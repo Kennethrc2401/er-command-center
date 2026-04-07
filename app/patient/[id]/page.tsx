@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import { useUser } from "@clerk/nextjs";
@@ -81,8 +81,10 @@ import ChartDocumentsPanel from "@/components/clinical/ChartDocumentsPanel";
 import OutboundFaxComposer from "@/components/faxes/OutboundFaxComposer";
 import PatientInfoTab from "@/components/patient/PatientInfoTab";
 import CriticalWorkflowKpiCard from "@/components/clinical/CriticalWorkflowKpiCard";
+import { saveAIToolsPrefill } from "@/lib/helpers/aiTools";
 
 const WORKFLOW_PANEL_PREFERENCE_KEY = "patient-workflow-panels-visible";
+const CARE_MILESTONE_KEY_PREFIX = "patient-care-milestones";
 
 // DYNAMIC IMPORT: DischargeInlineComponent
 const DischargeInlineComponent = dynamic(
@@ -107,15 +109,42 @@ interface DetailedEncounter extends Omit<Doc<"encounters">, "insurance"> {
   estimatedDischargeTime?: number;
 }
 
+type CareMilestones = {
+  reassessment: boolean;
+  medRec: boolean;
+  education: boolean;
+  handoffReady: boolean;
+};
+
+const DEFAULT_CARE_MILESTONES: CareMilestones = {
+  reassessment: false,
+  medRec: false,
+  education: false,
+  handoffReady: false,
+};
+
 export default function PatientPage() {
   const params = useParams();
+  const router = useRouter();
   const patientId = params.id as Id<"patients">;
   const { user } = useUser();
   const staffSession = useStaffSession();
   const staffEmail = user?.primaryEmailAddress?.emailAddress;
   const runDiscovery = useMutation(api.insurance.discoverSecondaryCoverage);
   const runCriticalSweep = useMutation(api.labs.runEscalationSweep);
+  const createPosCharge = useMutation(api.pos.createPosCharge);
+  const capturePosPayment = useMutation(api.pos.capturePosPayment);
+  const voidPosCharge = useMutation(api.pos.voidPosCharge);
+  const refundPosPayment = useMutation(api.pos.refundPosPayment);
   const [isSearching, setIsSearching] = useState(false);
+  const [chargeDescription, setChargeDescription] = useState("ED copay");
+  const [chargeAmount, setChargeAmount] = useState("50.00");
+  const [paymentAmount, setPaymentAmount] = useState("50.00");
+  const [paymentMethod, setPaymentMethod] = useState<"card" | "cash" | "check" | "hsa" | "other">("card");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [isSavingCharge, setIsSavingCharge] = useState(false);
+  const [isCollectingPayment, setIsCollectingPayment] = useState(false);
+  const [selectedChargeId, setSelectedChargeId] = useState<string>("");
   const [activeTab, setActiveTab] = useState("vitals");
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [showDischarge, setShowDischarge] = useState(false);
@@ -123,6 +152,7 @@ export default function PatientPage() {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(WORKFLOW_PANEL_PREFERENCE_KEY) === "1";
   });
+  const [careMilestones, setCareMilestones] = useState<CareMilestones>(DEFAULT_CARE_MILESTONES);
   const [suggestedTriageOrders, setSuggestedTriageOrders] = useState<string[]>([]);
   const [nowTs, setNowTs] = useState(() => Date.now());
   const { isDemoMode, toggleDemoMode } = usePresentationMode();
@@ -171,6 +201,11 @@ export default function PatientPage() {
   
   // Find the active encounter safely
   const activeEncounter = (encounters?.find(e => e.status !== "discharged") || encounters?.[0]) as DetailedEncounter | undefined;
+  const posLedger = useQuery(
+    api.pos.getEncounterPosLedger,
+    activeEncounter ? { encounterId: activeEncounter._id } : "skip"
+  );
+  const posPermissions = useQuery(api.pos.getPosPermissions, {});
   
   const criticalLabs = useQuery(api.labs.getCriticalAlerts, 
     activeEncounter ? { encounterId: activeEncounter._id } : "skip"
@@ -183,6 +218,35 @@ export default function PatientPage() {
   const pendingLabsCount = useQuery(api.labs.getPendingCount, 
     activeEncounter ? { encounterId: activeEncounter._id } : "skip"
   ) ?? 0;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !activeEncounter?._id) return;
+
+    const storageKey = `${CARE_MILESTONE_KEY_PREFIX}:${activeEncounter._id}`;
+    const stored = window.localStorage.getItem(storageKey);
+    if (!stored) {
+      setCareMilestones(DEFAULT_CARE_MILESTONES);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as Partial<CareMilestones>;
+      setCareMilestones({
+        reassessment: Boolean(parsed.reassessment),
+        medRec: Boolean(parsed.medRec),
+        education: Boolean(parsed.education),
+        handoffReady: Boolean(parsed.handoffReady),
+      });
+    } catch {
+      setCareMilestones(DEFAULT_CARE_MILESTONES);
+    }
+  }, [activeEncounter?._id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !activeEncounter?._id) return;
+    const storageKey = `${CARE_MILESTONE_KEY_PREFIX}:${activeEncounter._id}`;
+    window.localStorage.setItem(storageKey, JSON.stringify(careMilestones));
+  }, [activeEncounter?._id, careMilestones]);
 
   useEffect(() => {
     if (!activeEncounter?._id) return;
@@ -235,6 +299,217 @@ export default function PatientPage() {
       ? `Signed ${new Date(legalSignedAt).toLocaleString()}`
       : "Awaiting legal consent completion";
 
+  const completedMilestoneCount = Object.values(careMilestones).filter(Boolean).length;
+  const careMilestonePercent = Math.round((completedMilestoneCount / 4) * 100);
+
+  const toggleMilestone = (field: keyof CareMilestones) => {
+    setCareMilestones((current) => ({
+      ...current,
+      [field]: !current[field],
+    }));
+  };
+
+  const handleCopyCareBrief = async () => {
+    const safePatientName = formatPatientName(patient?.name ?? "Unknown Patient");
+    const safeMrn = isDemoMode ? "• • • • •" : patient?.mrn ?? "Unknown";
+
+    const lines = [
+      `Patient Care Brief (${new Date().toLocaleString()})`,
+      `Patient: ${safePatientName}`,
+      `MRN: ${safeMrn}`,
+      `Pending Labs: ${pendingLabsCount}`,
+      `Unstable Vitals: ${isUnstable ? "Yes" : "No"}`,
+      `Legal Consent Complete: ${isLegalConsentComplete ? "Yes" : "No"}`,
+      `Milestones: ${completedMilestoneCount}/4`,
+      `Discharge Readiness: ${dischargeReadinessLabel}`,
+    ];
+
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      toast.success("Copied care brief to clipboard");
+    } catch {
+      toast.error("Unable to copy care brief");
+    }
+  };
+
+  const handleCopyBillingBrief = async () => {
+    const lines = [
+      `AdvancedMD Billing Handoff (${new Date().toLocaleString()})`,
+      `Patient: ${formatPatientName(patient?.name ?? "Unknown Patient")}`,
+      `MRN: ${isDemoMode ? "masked" : patient?.mrn ?? "Unknown"}`,
+      `Insurance on File: ${activeEncounter?.insurance ? "Yes" : "No"}`,
+      `Legal Consent Complete: ${isLegalConsentComplete ? "Yes" : "No"}`,
+      `Medication Reconciliation: ${careMilestones.medRec ? "Complete" : "Pending"}`,
+      `Education Reviewed: ${careMilestones.education ? "Complete" : "Pending"}`,
+      `Billing Readiness: ${billingReadinessLabel} (${billingReadinessPercent}%)`,
+      `Prepared By: ${actorName}`,
+    ];
+
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      toast.success("Copied billing handoff brief");
+    } catch {
+      toast.error("Unable to copy billing handoff brief");
+    }
+  };
+
+  const sendNotesToAiTools = () => {
+    saveAIToolsPrefill({
+      version: 1,
+      target: "differential",
+      chiefComplaint: displayedChiefComplaint,
+      vitalsSummary: `HR ${activeEncounter?.vitals.hr ?? "--"}, BP ${activeEncounter?.vitals.bp ?? "--"}, SpO2 ${activeEncounter?.vitals.spO2 ?? "--"}`,
+      clinicalContext: [
+        `Pending labs: ${pendingLabsCount}`,
+        `Acuity: ESI ${activeEncounter?.acuity ?? "--"}`,
+        `Unstable vitals: ${isUnstable ? "Yes" : "No"}`,
+      ].join(" | "),
+    });
+    void router.push("/dashboard/ai-tools?tool=differential");
+  };
+
+  const sendHandoffToAiTools = () => {
+    saveAIToolsPrefill({
+      version: 1,
+      target: "handoff",
+      handoffSource: [
+        `Patient: ${formatPatientName(patient?.name ?? "Unknown Patient")}`,
+        `MRN: ${isDemoMode ? "masked" : patient?.mrn ?? "Unknown"}`,
+        `Chief complaint: ${displayedChiefComplaint}`,
+        `Acuity: ESI ${activeEncounter?.acuity ?? "--"}`,
+        `Status: ${activeEncounter?.status ?? "unknown"}`,
+        `Pending labs: ${pendingLabsCount}`,
+        `Critical alerts: ${(criticalLabs ?? []).length}`,
+      ].join("\n"),
+    });
+    void router.push("/dashboard/ai-tools?tool=handoff");
+  };
+
+  const sendBillingToAiTools = () => {
+    saveAIToolsPrefill({
+      version: 1,
+      target: "denial",
+      codingSummary: [
+        `Billing readiness ${billingReadinessPercent}% (${billingReadinessLabel})`,
+        `Insurance on file: ${activeEncounter?.insurance ? "Yes" : "No"}`,
+        `Prepared by: ${actorName}`,
+      ].join(" | "),
+      documentationSummary: [
+        `Legal consent complete: ${isLegalConsentComplete ? "Yes" : "No"}`,
+        `Medication reconciliation: ${careMilestones.medRec ? "Complete" : "Pending"}`,
+        `Education reviewed: ${careMilestones.education ? "Complete" : "Pending"}`,
+      ].join(" | "),
+    });
+    void router.push("/dashboard/ai-tools?tool=denial");
+  };
+
+  const handleCreateCharge = async () => {
+    if (!activeEncounter || !patient) return;
+
+    const amountCents = Math.round(Number(chargeAmount) * 100);
+    if (!Number.isFinite(amountCents) || amountCents <= 0) {
+      toast.error("Enter a valid charge amount");
+      return;
+    }
+
+    setIsSavingCharge(true);
+    try {
+      await createPosCharge({
+        encounterId: activeEncounter._id,
+        patientId,
+        description: chargeDescription.trim() || "POS charge",
+        amountCents,
+      });
+      toast.success("POS charge created");
+      setChargeAmount("50.00");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to create charge");
+    } finally {
+      setIsSavingCharge(false);
+    }
+  };
+
+  const handleCollectPayment = async () => {
+    if (!selectedChargeId) {
+      toast.error("Select a charge first");
+      return;
+    }
+
+    const amountCents = Math.round(Number(paymentAmount) * 100);
+    if (!Number.isFinite(amountCents) || amountCents <= 0) {
+      toast.error("Enter a valid payment amount");
+      return;
+    }
+
+    setIsCollectingPayment(true);
+    try {
+      await capturePosPayment({
+        chargeId: selectedChargeId as Id<"posCharges">,
+        amountCents,
+        method: paymentMethod,
+        reference: paymentReference.trim() || undefined,
+      });
+      toast.success("Payment captured");
+      setPaymentReference("");
+      setPaymentAmount("50.00");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to capture payment");
+    } finally {
+      setIsCollectingPayment(false);
+    }
+  };
+
+  const handleVoidCharge = async (chargeId: Id<"posCharges">) => {
+    if (!posPermissions?.canManage) {
+      toast.error("Manager permission required to void charges");
+      return;
+    }
+
+    const reason = window.prompt("Void reason (optional):") ?? "";
+
+    try {
+      await voidPosCharge({
+        chargeId,
+        reason: reason.trim() || undefined,
+      });
+      toast.success("Charge voided");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to void charge");
+    }
+  };
+
+  const handleRefundPayment = async (paymentId: Id<"posPayments">, maxRefundableCents: number) => {
+    if (!posPermissions?.canManage) {
+      toast.error("Manager permission required to process refunds");
+      return;
+    }
+
+    const amountInput = window.prompt(
+      `Refund amount (max ${(maxRefundableCents / 100).toFixed(2)}):`,
+      (maxRefundableCents / 100).toFixed(2)
+    );
+    if (!amountInput) return;
+
+    const amountCents = Math.round(Number(amountInput) * 100);
+    if (!Number.isFinite(amountCents) || amountCents <= 0) {
+      toast.error("Enter a valid refund amount");
+      return;
+    }
+
+    const reason = window.prompt("Refund reason (optional):") ?? "";
+
+    try {
+      await refundPosPayment({
+        paymentId,
+        amountCents,
+        reason: reason.trim() || undefined,
+      });
+      toast.success("Refund processed");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to process refund");
+    }
+  };
+
   // --- 3. LOADING & ERROR STATES ---
   if (!patient || !encounters) {
     return (
@@ -286,6 +561,33 @@ export default function PatientPage() {
     if (latestVitals.temp > 103) return "Hyperpyrexia";
     return "Critical Vitals";
   };
+
+  const dischargeBlockers = [
+    pendingLabsCount > 0,
+    Boolean(isUnstable),
+    !isLegalConsentComplete,
+    !careMilestones.handoffReady,
+  ].filter(Boolean).length;
+  const dischargeReadinessLabel =
+    dischargeBlockers === 0
+      ? "Ready"
+      : dischargeBlockers <= 2
+        ? "Watch"
+        : "Blocked";
+
+  const billingReadinessScore = [
+    activeEncounter.insurance ? 1 : 0,
+    isLegalConsentComplete ? 1 : 0,
+    careMilestones.medRec ? 1 : 0,
+    careMilestones.education ? 1 : 0,
+  ].reduce((sum, value) => sum + value, 0);
+  const billingReadinessPercent = Math.round((billingReadinessScore / 4) * 100);
+  const billingReadinessLabel =
+    billingReadinessPercent >= 75
+      ? "Clean"
+      : billingReadinessPercent >= 50
+        ? "Review"
+        : "Risk";
 
   const formatPatientName = (name: string) => {
     if (!isDemoMode) return name;
@@ -443,6 +745,78 @@ export default function PatientPage() {
         </button>
       </div>
 
+      <section className="space-y-4 rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Patient Operations</p>
+            <h3 className="text-lg font-black tracking-tight text-slate-900 dark:text-slate-100">Care Milestones</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge className={`${careMilestonePercent >= 75 ? "bg-emerald-600" : careMilestonePercent >= 50 ? "bg-amber-500" : "bg-blue-600"} border-none px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white`}>
+              {careMilestonePercent}% Complete
+            </Badge>
+            <Badge className={`${dischargeReadinessLabel === "Ready" ? "bg-emerald-600" : dischargeReadinessLabel === "Watch" ? "bg-amber-500" : "bg-rose-600"} border-none px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white`}>
+              Discharge {dischargeReadinessLabel}
+            </Badge>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <button
+              onClick={() => toggleMilestone("reassessment")}
+              className={`rounded-2xl border px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest transition-colors ${careMilestones.reassessment ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}
+            >
+              RN/Provider Reassessment
+            </button>
+            <button
+              onClick={() => toggleMilestone("medRec")}
+              className={`rounded-2xl border px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest transition-colors ${careMilestones.medRec ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}
+            >
+              Medication Reconciliation
+            </button>
+            <button
+              onClick={() => toggleMilestone("education")}
+              className={`rounded-2xl border px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest transition-colors ${careMilestones.education ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}
+            >
+              Education Reviewed
+            </button>
+            <button
+              onClick={() => toggleMilestone("handoffReady")}
+              className={`rounded-2xl border px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest transition-colors ${careMilestones.handoffReady ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}
+            >
+              Handoff Packet Ready
+            </button>
+          </div>
+
+          <Card className="rounded-2xl border-slate-200 dark:border-slate-700">
+            <CardContent className="space-y-3 p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Quick Jump</p>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                <p>Pending Labs: {pendingLabsCount}</p>
+                <p>Consent: {isLegalConsentComplete ? "Complete" : "Pending"}</p>
+                <p>Vitals: {isUnstable ? "Escalation" : "Stable"}</p>
+              </div>
+              <Button onClick={() => setActiveTab("labs")} className="w-full rounded-xl bg-slate-900 py-5 text-[10px] font-black uppercase tracking-widest text-white hover:bg-slate-800">Go To Labs</Button>
+              <Button onClick={() => setActiveTab("notes")} className="w-full rounded-xl bg-blue-600 py-5 text-[10px] font-black uppercase tracking-widest text-white hover:bg-blue-500">Go To Notes</Button>
+              <Button onClick={() => setActiveTab("handoff")} className="w-full rounded-xl bg-emerald-600 py-5 text-[10px] font-black uppercase tracking-widest text-white hover:bg-emerald-500">Go To Handoff</Button>
+              <Button onClick={() => setActiveTab("billing")} className="w-full rounded-xl bg-violet-600 py-5 text-[10px] font-black uppercase tracking-widest text-white hover:bg-violet-500">Go To Billing</Button>
+              <Button onClick={() => void handleCopyCareBrief()} className="w-full rounded-xl border border-slate-200 bg-white py-5 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800">
+                Copy Care Brief
+              </Button>
+              <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 dark:border-violet-800 dark:bg-violet-950/30">
+                <p className="text-[9px] font-black uppercase tracking-widest text-violet-700 dark:text-violet-300">AdvancedMD Billing Readiness</p>
+                <p className="mt-1 text-lg font-black text-violet-700 dark:text-violet-300">{billingReadinessPercent}%</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-violet-700/80 dark:text-violet-300/80">Status: {billingReadinessLabel}</p>
+              </div>
+              <Button onClick={() => void handleCopyBillingBrief()} className="w-full rounded-xl border border-violet-200 bg-white py-5 text-[10px] font-black uppercase tracking-widest text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:bg-slate-900 dark:text-violet-300 dark:hover:bg-violet-950/30">
+                Copy Billing Handoff
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
       {showWorkflowPanels && (
         <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <CriticalWorkflowKpiCard encounterId={activeEncounter._id} />
@@ -466,7 +840,20 @@ export default function PatientPage() {
               </button>
             </div>
           </div>
-          <CommandBar setTab={setActiveTab} />
+          <CommandBar
+            setTab={setActiveTab}
+            onPatientAiToolSelect={(tool) => {
+              if (tool === "differential") {
+                sendNotesToAiTools();
+                return;
+              }
+              if (tool === "handoff") {
+                sendHandoffToAiTools();
+                return;
+              }
+              sendBillingToAiTools();
+            }}
+          />
           
           <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid h-auto group-data-[orientation=horizontal]/tabs:h-auto w-full grid-cols-4 gap-1 rounded-[2rem] border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-700 dark:bg-slate-900/80 sm:grid-cols-6 lg:grid-cols-7">
@@ -734,6 +1121,14 @@ export default function PatientPage() {
             <TabsContent value="notes" className="pt-4">
                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                   <div className="lg:col-span-2 space-y-6">
+                    <div className="flex justify-end">
+                      <Button
+                        onClick={sendNotesToAiTools}
+                        className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-cyan-700 hover:bg-cyan-100 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300 dark:hover:bg-cyan-900/50"
+                      >
+                        Send Notes Context To AI Tools
+                      </Button>
+                    </div>
                     <ClinicalNotes encounterId={activeEncounter._id} />
 
                     <div className="space-y-3">
@@ -801,6 +1196,14 @@ export default function PatientPage() {
             </TabsContent>
 
               <TabsContent value="billing" className="space-y-6 animate-in fade-in-50 pt-4">
+                <div className="flex justify-end">
+                  <Button
+                    onClick={sendBillingToAiTools}
+                    className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-cyan-700 hover:bg-cyan-100 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300 dark:hover:bg-cyan-900/50"
+                  >
+                    Send Billing Context To AI Tools
+                  </Button>
+                </div>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
                   
                   {/* LEFT COLUMN: INSURANCE & AUTHORIZATION (2/3) */}
@@ -868,6 +1271,147 @@ export default function PatientPage() {
                     {/* 3. POS Collections Card */}
                     {activeEncounter.insurance && <InsuranceFinancials insurance={activeEncounter.insurance as NonNullable<typeof activeEncounter.insurance>} />}
 
+                    <Card className="rounded-[2.5rem] border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 dark:text-slate-300">AdvancedMD POS Terminal</h4>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <Badge className="border border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                          {posPermissions?.actorRole ?? "UNKNOWN"}
+                        </Badge>
+                        <Badge className={`${posPermissions?.canManage ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"}`}>
+                          {posPermissions?.canManage ? "Manager Actions Enabled" : "Manager Actions Restricted"}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-4 space-y-3">
+                        <input
+                          value={chargeDescription}
+                          onChange={(event) => setChargeDescription(event.target.value.slice(0, 120))}
+                          placeholder="Charge description"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        />
+                        <input
+                          value={chargeAmount}
+                          onChange={(event) => setChargeAmount(event.target.value)}
+                          placeholder="Charge amount"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        />
+                        <Button
+                          onClick={() => void handleCreateCharge()}
+                          disabled={isSavingCharge || !posPermissions?.canCollect}
+                          className="w-full rounded-xl bg-blue-600 py-5 text-[10px] font-black uppercase tracking-widest text-white hover:bg-blue-700"
+                        >
+                          {isSavingCharge ? "Creating..." : "Create Charge"}
+                        </Button>
+                      </div>
+
+                      <div className="mt-5 space-y-3 border-t border-slate-200 pt-4 dark:border-slate-700">
+                        <select
+                          value={selectedChargeId}
+                          onChange={(event) => setSelectedChargeId(event.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        >
+                          <option value="">Select Charge</option>
+                          {(posLedger?.charges ?? []).filter((charge) => charge.status !== "paid" && charge.status !== "void").map((charge) => (
+                            <option key={charge._id} value={charge._id}>
+                              {charge.description} • ${(charge.remainingCents / 100).toFixed(2)} due
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          value={paymentAmount}
+                          onChange={(event) => setPaymentAmount(event.target.value)}
+                          placeholder="Payment amount"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        />
+                        <select
+                          value={paymentMethod}
+                          onChange={(event) => setPaymentMethod(event.target.value as "card" | "cash" | "check" | "hsa" | "other")}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        >
+                          <option value="card">Card</option>
+                          <option value="cash">Cash</option>
+                          <option value="check">Check</option>
+                          <option value="hsa">HSA</option>
+                          <option value="other">Other</option>
+                        </select>
+                        <input
+                          value={paymentReference}
+                          onChange={(event) => setPaymentReference(event.target.value.slice(0, 80))}
+                          placeholder="Reference (optional)"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        />
+                        <Button
+                          onClick={() => void handleCollectPayment()}
+                          disabled={isCollectingPayment || !posPermissions?.canCollect}
+                          className="w-full rounded-xl bg-emerald-600 py-5 text-[10px] font-black uppercase tracking-widest text-white hover:bg-emerald-500"
+                        >
+                          {isCollectingPayment ? "Collecting..." : "Collect Payment"}
+                        </Button>
+                      </div>
+
+                      <div className="mt-5 space-y-2 border-t border-slate-200 pt-4 dark:border-slate-700">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300">Charge Ledger</p>
+                        {(posLedger?.charges ?? []).length === 0 ? (
+                          <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">No POS charges posted yet.</p>
+                        ) : (
+                          (posLedger?.charges ?? []).slice(0, 6).map((charge) => (
+                            <div key={charge._id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs font-black text-slate-700 dark:text-slate-200">{charge.description}</p>
+                                <Badge className="border border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">{charge.status.toUpperCase()}</Badge>
+                              </div>
+                              <p className="mt-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                                ${(charge.amountCents / 100).toFixed(2)} billed • ${(charge.remainingCents / 100).toFixed(2)} due
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <Button
+                                  onClick={() => setSelectedChargeId(String(charge._id))}
+                                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-widest text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                >
+                                  Select
+                                </Button>
+                                {charge.paidCents === 0 && charge.status !== "void" && (
+                                  <Button
+                                    onClick={() => void handleVoidCharge(charge._id as Id<"posCharges">)}
+                                    disabled={!posPermissions?.canManage}
+                                    className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-rose-700 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-300"
+                                  >
+                                    Void
+                                  </Button>
+                                )}
+                              </div>
+
+                              {(charge.payments ?? []).length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                  {(charge.payments ?? []).slice(0, 3).map((payment) => (
+                                    <div key={payment._id} className="flex items-center justify-between text-[10px] font-semibold text-slate-500 dark:text-slate-300">
+                                      <span>{payment.method.toUpperCase()} ${(payment.netCents / 100).toFixed(2)}</span>
+                                      {payment.refundableCents > 0 && (
+                                        <Button
+                                          onClick={() => void handleRefundPayment(payment._id as Id<"posPayments">, payment.refundableCents)}
+                                          disabled={!posPermissions?.canManage}
+                                          className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                                        >
+                                          Refund
+                                        </Button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-300">Ledger Summary</p>
+                        <p className="mt-1 text-xs font-semibold text-slate-600 dark:text-slate-200">Billed: ${((posLedger?.summary.totalBilledCents ?? 0) / 100).toFixed(2)}</p>
+                        <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Paid: ${((posLedger?.summary.totalPaidCents ?? 0) / 100).toFixed(2)}</p>
+                        <p className="text-xs font-semibold text-rose-700 dark:text-rose-300">Outstanding: ${((posLedger?.summary.totalOutstandingCents ?? 0) / 100).toFixed(2)}</p>
+                      </div>
+                    </Card>
+
                     {/* 4. Billing Narrative Note */}
                     <Card className="rounded-[2.5rem] border-amber-100 bg-amber-50/30 p-6 dark:border-amber-700/30 dark:bg-amber-950/20">
                       <h4 className="text-[10px] font-black uppercase text-amber-800 mb-4 flex items-center gap-2 tracking-widest italic">
@@ -907,6 +1451,14 @@ export default function PatientPage() {
               </TabsContent>
 
             <TabsContent value="handoff" className="pt-4 space-y-6 animate-in fade-in-50">
+              <div className="flex justify-end">
+                <Button
+                  onClick={sendHandoffToAiTools}
+                  className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-cyan-700 hover:bg-cyan-100 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300 dark:hover:bg-cyan-900/50"
+                >
+                  Send Handoff Context To AI Tools
+                </Button>
+              </div>
               <div className="max-w-2xl mx-auto">
                 <SBARGenerator
                   patient={{

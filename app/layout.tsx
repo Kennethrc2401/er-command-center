@@ -5,6 +5,7 @@ import { Providers } from "@/components/ProvidersTemp";
 import AuthUIWrapper from "@/components/auth/AuthUIWrapper";
 import { Toaster } from "@/components/ui/sonner";
 import CommandBar from "@/components/CommandBar";
+import GlobalScribeDock from "@/components/clinical/GlobalScribeDock";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -32,6 +33,9 @@ export default function RootLayout({
             
             {/* Global command palette — Ctrl+/ on Windows, Cmd+K on Mac */}
             <CommandBar />
+
+            {/* Global AI Scribe launcher */}
+            <GlobalScribeDock />
 
             <Toaster position="top-right" richColors closeButton />
           </div>

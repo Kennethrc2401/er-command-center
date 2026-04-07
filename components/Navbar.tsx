@@ -8,6 +8,7 @@ import { api } from "@/convex/_generated/api";
 import { useEffect, useRef } from "react";
 import { 
   Activity, 
+  BrainCircuit,
   LayoutDashboard, 
   UserPlus, 
   ShieldCheck, 
@@ -16,7 +17,8 @@ import {
   Shield,
   ShieldOff,
   FileText,
-  ClipboardList
+  ClipboardList,
+  Sparkles
 } from "lucide-react";
 import NewPatientModal from "./NewPatientModal";
 import { LucideIcon } from "lucide-react";
@@ -117,6 +119,12 @@ export default function Navbar() {
               label="OR Scheduler"
               active={pathname.includes("/or-scheduler")}
             />
+            <NavLink
+              href="/dashboard/ai-tools"
+              icon={BrainCircuit}
+              label="AI Tools"
+              active={pathname.includes("/ai-tools")}
+            />
 
             {isAdmin && (
               <NavLink
@@ -147,6 +155,14 @@ export default function Navbar() {
         <NotificationBell userId={convexUser?._id} />
 
         <ThemeToggle />
+
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent("open-global-scribe"))}
+          className="flex items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-blue-700 transition-all hover:border-blue-300 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
+        >
+          <Sparkles className="h-4 w-4" />
+          <span className="hidden sm:inline">AI Scribe</span>
+        </button>
 
         {/* ➕ QUICK ACTION */}
         <NewPatientModal 

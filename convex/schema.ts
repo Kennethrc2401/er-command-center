@@ -247,6 +247,72 @@ export default defineSchema({
     adminTime: v.optional(v.number()),
     adminBy: v.optional(v.string()),
   }).index("by_encounter", ["encounterId"]),
+
+  posCharges: defineTable({
+    encounterId: v.id("encounters"),
+    patientId: v.id("patients"),
+    description: v.string(),
+    amountCents: v.number(),
+    paidCents: v.number(),
+    status: v.union(v.literal("open"), v.literal("partial"), v.literal("paid"), v.literal("void")),
+    createdBy: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastPaymentMethod: v.optional(v.union(v.literal("card"), v.literal("cash"), v.literal("check"), v.literal("hsa"), v.literal("other"))),
+    lastReference: v.optional(v.string()),
+  })
+    .index("by_encounter", ["encounterId"])
+    .index("by_status", ["status"])
+    .index("by_updated_at", ["updatedAt"]),
+
+  posPayments: defineTable({
+    chargeId: v.id("posCharges"),
+    encounterId: v.id("encounters"),
+    patientId: v.id("patients"),
+    amountCents: v.number(),
+    method: v.union(v.literal("card"), v.literal("cash"), v.literal("check"), v.literal("hsa"), v.literal("other")),
+    reference: v.optional(v.string()),
+    collectedBy: v.string(),
+    collectedAt: v.number(),
+  })
+    .index("by_charge", ["chargeId"])
+    .index("by_encounter", ["encounterId"])
+    .index("by_collected_at", ["collectedAt"]),
+
+  posRefunds: defineTable({
+    paymentId: v.id("posPayments"),
+    chargeId: v.id("posCharges"),
+    encounterId: v.id("encounters"),
+    patientId: v.id("patients"),
+    amountCents: v.number(),
+    reason: v.optional(v.string()),
+    refundedBy: v.string(),
+    refundedAt: v.number(),
+  })
+    .index("by_payment", ["paymentId"])
+    .index("by_charge", ["chargeId"])
+    .index("by_encounter", ["encounterId"])
+    .index("by_refunded_at", ["refundedAt"]),
+
+  posDrawerSessions: defineTable({
+    openedBy: v.string(),
+    openedAt: v.number(),
+    openingFloatCents: v.number(),
+    status: v.union(v.literal("open"), v.literal("closed")),
+    closedBy: v.optional(v.string()),
+    closedAt: v.optional(v.number()),
+    expectedCashCents: v.optional(v.number()),
+    actualCashCents: v.optional(v.number()),
+    varianceCents: v.optional(v.number()),
+    closeNote: v.optional(v.string()),
+    varianceAcknowledged: v.optional(v.boolean()),
+    varianceAcknowledgedBy: v.optional(v.string()),
+    varianceAcknowledgedAt: v.optional(v.number()),
+    varianceAcknowledgementNote: v.optional(v.string()),
+  })
+    .index("by_status", ["status"])
+    .index("by_opened_at", ["openedAt"])
+    .index("by_closed_at", ["closedAt"]),
   
   notifications: defineTable({
     // Keep null for backward compatibility with older notification rows.
@@ -782,6 +848,18 @@ export default defineSchema({
     })
       .index("by_handoff_timestamp", ["handoffId", "timestamp"])
       .index("by_actor_timestamp", ["actorUserId", "timestamp"]),
+
+    sharedWatchlists: defineTable({
+      unit: v.string(),
+      encounterId: v.id("encounters"),
+      note: v.optional(v.string()),
+      pinnedBy: v.string(),
+      pinnedAt: v.number(),
+      updatedAt: v.number(),
+    })
+      .index("by_unit", ["unit"])
+      .index("by_unit_encounter", ["unit", "encounterId"])
+      .index("by_updated_at", ["updatedAt"]),
 
     // ============ STANDING ORDERS & PROTOCOLS ============
     standingOrders: defineTable({

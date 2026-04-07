@@ -33,6 +33,7 @@ import type * as orders from "../orders.js";
 import type * as passkeys from "../passkeys.js";
 import type * as patientNormalization from "../patientNormalization.js";
 import type * as patients from "../patients.js";
+import type * as pos from "../pos.js";
 import type * as seed from "../seed.js";
 import type * as socialHistory from "../socialHistory.js";
 import type * as triage from "../triage.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   passkeys: typeof passkeys;
   patientNormalization: typeof patientNormalization;
   patients: typeof patients;
+  pos: typeof pos;
   seed: typeof seed;
   socialHistory: typeof socialHistory;
   triage: typeof triage;
