@@ -13,6 +13,7 @@ import {
   KeyRound,
   Loader2,
   ClipboardList,
+  BookOpen,
 } from "lucide-react";
 import Link from "next/link";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
@@ -83,6 +84,14 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
       color: "bg-teal-600",
       role: "Staff AI"
     },
+    {
+      title: "Study Notes",
+      desc: "Record, organize, and review academic class notes with AI topics",
+      href: "/dashboard/study-notes",
+      icon: BookOpen,
+      color: "bg-purple-600",
+      role: "Academic"
+    },
     ...(isAdmin ? [{
       title: "Executive Suite",
       desc: "Revenue analytics and compliance audits",
@@ -97,6 +106,13 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
       icon: ClipboardList,
       color: "bg-amber-600",
       role: "Admin Only"
+    }, {
+      title: "Insurance Ops",
+      desc: "Eligibility, prior auth, and claims response workbench",
+      href: "/dashboard/admin/insurance",
+      icon: ShieldCheck,
+      color: "bg-emerald-500",
+      role: "Admin Only"
     }] : [])
   ];
 
@@ -107,7 +123,8 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
     "bg-cyan-600": "#0891b2",
     "bg-teal-600": "#0d9488",
     "bg-slate-900": "#0f172a",
-    "bg-amber-600": "#d97706"
+    "bg-amber-600": "#d97706",
+    "bg-purple-600": "#9333ea"
   };
 
   return (

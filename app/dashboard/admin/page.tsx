@@ -357,6 +357,11 @@ export default function AdminDashboard() {
                   POS Terminal
                 </Button>
               </Link>
+              <Link href="/dashboard/admin/insurance">
+                <Button className="w-full justify-start rounded-2xl border border-emerald-200 bg-emerald-50 py-6 text-[10px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50">
+                  Insurance Ops (Availity)
+                </Button>
+              </Link>
               <Link href="/dashboard/admin/history">
                 <Button className="w-full justify-start rounded-2xl border border-slate-200 bg-white py-6 text-[10px] font-black uppercase tracking-widest text-slate-900 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800">
                   Throughput History

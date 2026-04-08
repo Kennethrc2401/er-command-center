@@ -198,7 +198,6 @@ export function generateOperationalScribeDraft(args: {
   const facts = (args.contextFacts ?? [])
     .map((fact) => fact.trim())
     .filter(Boolean);
-  const hasTranscript = cleanedTranscript.length > 0;
   const timeLabel = new Date().toLocaleString();
 
   if (args.mode === "ALERT") {

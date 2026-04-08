@@ -18,7 +18,8 @@ import {
   ShieldOff,
   FileText,
   ClipboardList,
-  Sparkles
+  Sparkles,
+  BookOpen
 } from "lucide-react";
 import NewPatientModal from "./NewPatientModal";
 import { LucideIcon } from "lucide-react";
@@ -124,6 +125,12 @@ export default function Navbar() {
               icon={BrainCircuit}
               label="AI Tools"
               active={pathname.includes("/ai-tools")}
+            />
+            <NavLink
+              href="/dashboard/study-notes"
+              icon={BookOpen}
+              label="Study Notes"
+              active={pathname.includes("/study-notes")}
             />
 
             {isAdmin && (

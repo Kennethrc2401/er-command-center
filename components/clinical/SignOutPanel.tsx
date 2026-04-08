@@ -39,8 +39,6 @@ export function SignOutPanel({ userId, userName, userRole }: { userId: string; u
   const workloads = useQuery(api.workflow.getProviderWorkload, {}) as ProviderWorkload[] | null;
   const activeEncounters = useQuery(api.encounters.getActive) as Doc<"encounters">[] | undefined;
 
-  if (!workloads) return null;
-
   const assignedEncounters = useMemo(
     () =>
       (activeEncounters ?? []).filter((encounter) => {
@@ -52,7 +50,7 @@ export function SignOutPanel({ userId, userName, userRole }: { userId: string; u
   );
 
   // Find current user's workload summary
-  const currentWorkload = workloads.find((w) => w.name === userName || w.name === userId);
+  const currentWorkload = workloads?.find((w) => w.name === userName || w.name === userId);
 
   useEffect(() => {
     if (!showDialog) return;
@@ -68,6 +66,8 @@ export function SignOutPanel({ userId, userName, userRole }: { userId: string; u
       return next;
     });
   }, [assignedEncounters, showDialog]);
+
+  if (!workloads) return null;
 
   const toggleSelectedEncounter = (encounterId: Id<"encounters">) => {
     setSelectedPatients((current) => {

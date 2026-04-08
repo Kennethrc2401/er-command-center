@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -87,7 +88,7 @@ function TriagePatientListContent() {
   const runSlaEscalationSweep = useMutation(api.workflow.runSlaEscalationSweep);
   const updateEncounterFlow = useMutation(api.encounters.updateEncounterFlow);
   const routeRoleNotification = useMutation(api.workflow.routeRoleNotification);
-  const upsertSharedWatchlist = useMutation((api as any).workflow.upsertSharedWatchlistEntry);
+  const upsertSharedWatchlist = useMutation(api.workflow.upsertSharedWatchlistEntry);
   const { actorName, actorRole, isAdmin } = useResolvedActor();
   const { isDemoMode, toggleDemoMode } = usePresentationMode();
   const [currentTime, setCurrentTime] = useState(() => Date.now());
@@ -171,7 +172,7 @@ function TriagePatientListContent() {
   });
   const [isRunningBulkAction, setIsRunningBulkAction] = useState(false);
 
-  const sharedWatchlist = useQuery((api as any).workflow.getSharedWatchlist, {
+  const sharedWatchlist = useQuery(api.workflow.getSharedWatchlist, {
     unit: shiftHeader.unit.trim() || "ER-4B",
   });
   const [lastBulkRun, setLastBulkRun] = useState<LastBulkRunSummary | null>(() => {
@@ -333,7 +334,7 @@ function TriagePatientListContent() {
 
   const criticalCount = useMemo(
     () => (activeEncounters ?? []).filter((encounter) => isEncounterCritical(encounter)).length,
-    [activeEncounters, currentTime]
+    [activeEncounters]
   );
 
   const queueMetrics = useMemo(() => {
@@ -500,7 +501,7 @@ function TriagePatientListContent() {
 
     void upsertSharedWatchlist({
       unit: shiftHeader.unit.trim() || "ER-4B",
-      encounterId: encounterId as any,
+      encounterId: encounterId as Id<"encounters">,
       pinned: nextPinned,
       note: nextPinned ? watchlistNotesByEncounter[encounterId] : undefined,
     }).catch(() => {
@@ -525,7 +526,7 @@ function TriagePatientListContent() {
     if (watchlistSet.has(encounterId)) {
       void upsertSharedWatchlist({
         unit: shiftHeader.unit.trim() || "ER-4B",
-        encounterId: encounterId as any,
+        encounterId: encounterId as Id<"encounters">,
         pinned: true,
         note: trimmed,
       }).catch(() => {
@@ -712,7 +713,7 @@ function TriagePatientListContent() {
           toast.error("Your role cannot assign flow owners.");
           return;
         }
-        await updateEncounterFlow({ encounterId: encounterId as any, flowOwner: actorName });
+        await updateEncounterFlow({ encounterId: encounterId as Id<"encounters">, flowOwner: actorName });
         toast.success("Flow owner assigned.");
         return;
       }
@@ -722,7 +723,7 @@ function TriagePatientListContent() {
           toast.error("Your role cannot assign providers.");
           return;
         }
-        await updateEncounterFlow({ encounterId: encounterId as any, assignedProvider: actorName });
+        await updateEncounterFlow({ encounterId: encounterId as Id<"encounters">, assignedProvider: actorName });
         toast.success("Provider assigned.");
         return;
       }

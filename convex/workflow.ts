@@ -917,9 +917,6 @@ export const getSpecialistMatches = query({
           .filter((q) => q.neq(q.field("status"), "discharged"))
           .collect();
 
-        const acuity = encounter.acuity ?? 3;
-        const acuityMultiplier = acuity <= 2 ? 5 : acuity <= 3 ? 2 : 1;
-
         // Calculate workload score
         let workloadScore = 0;
         for (const enc of workload) {
@@ -1217,7 +1214,7 @@ export const updateProviderPreference = mutation({
     successIndicator: v.boolean(),
   },
   handler: async (ctx, args) => {
-    let prefs = await ctx.db
+    const prefs = await ctx.db
       .query("providerPreferences")
       .withIndex("by_provider_category", (q) =>
         q.eq("providerId", args.providerId).eq("prefCategory", args.category)
@@ -1351,7 +1348,13 @@ export const recordBedTurnover = mutation({
     previousDischargeAt: v.number(),
     nextEncounterId: v.id("encounters"),
     nextAdmitAt: v.number(),
-    turnoverStatus: v.string(),
+    turnoverStatus: v.union(
+      v.literal("clean"),
+      v.literal("expedited_clean"),
+      v.literal("deep_clean"),
+      v.literal("maintenance"),
+      v.literal("blocked")
+    ),
   },
   handler: async (ctx, args) => {
     const turnoverTimeMs = args.nextAdmitAt - args.previousDischargeAt;
@@ -1363,7 +1366,7 @@ export const recordBedTurnover = mutation({
       nextEncounterId: args.nextEncounterId,
       nextAdmitAt: args.nextAdmitAt,
       turnoverTimeMs,
-      turnoverStatus: args.turnoverStatus as any,
+      turnoverStatus: args.turnoverStatus,
     });
 
     return turnoverHistoryId;

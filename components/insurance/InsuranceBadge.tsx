@@ -24,7 +24,9 @@ export default function InsuranceBadge({
     insurance?: InsuranceData | null 
   }) {
     const verify = useMutation(api.insurance.verifyInsuranceByEncounter);
+    const createInsuranceRecord = useMutation(api.insurance.createInsuranceRecordForEncounter);
     const [loading, setLoading] = useState(false);
+    const [creating, setCreating] = useState(false);
 
     const handleVerify = async () => {
     setLoading(true);
@@ -50,6 +52,11 @@ export default function InsuranceBadge({
           description: "Eligibility: ACTIVE | Plan: PPO | Ded. Remaining: $450.00",
           duration: 5000,
         });
+      } else if (result === "No Insurance Record") {
+        toast.info("Insurance record missing", {
+          description: "Create or attach an insurance profile before running eligibility.",
+          duration: 5000,
+        });
       } else {
         // 4. Denied: Validation Error
         toast.error("Eligibility Denied", {
@@ -66,6 +73,24 @@ export default function InsuranceBadge({
   };
 
   const status = insurance?.status || "pending";
+
+  const handleCreateInsuranceRecord = async () => {
+    setCreating(true);
+    try {
+      const result = await createInsuranceRecord({ encounterId });
+      if (result.created) {
+        toast.success("Insurance profile created", {
+          description: "You can now run eligibility verification.",
+        });
+      } else {
+        toast.info("Insurance profile already exists");
+      }
+    } catch {
+      toast.error("Unable to create insurance profile");
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-3 p-5 bg-white rounded-[2rem] border border-slate-200 shadow-sm">
@@ -110,9 +135,18 @@ export default function InsuranceBadge({
       </div>
 
       {!insurance && (
-        <p className="text-[9px] font-bold text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-100 italic">
-          ⚠️ Action Required: No insurance record found for this patient ID.
-        </p>
+        <div className="space-y-2">
+          <p className="text-[9px] font-bold text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-100 italic">
+            ⚠️ Action Required: No insurance record found for this patient ID.
+          </p>
+          <button
+            onClick={() => void handleCreateInsuranceRecord()}
+            disabled={creating}
+            className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+          >
+            {creating ? "Creating..." : "Create Insurance Record"}
+          </button>
+        </div>
       )}
     </div>
   );

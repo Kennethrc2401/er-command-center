@@ -404,6 +404,31 @@ export default defineSchema({
     authStatus: v.optional(v.union(v.literal("not_started"), v.literal("requested"), v.literal("approved"))),
     lastVerified: v.optional(v.number()),
   }).index("by_patient", ["patientId"]),
+  insuranceClaims: defineTable({
+    encounterId: v.id("encounters"),
+    patientId: v.id("patients"),
+    insuranceId: v.optional(v.id("insurance")),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("scrub"),
+      v.literal("submitted"),
+      v.literal("accepted"),
+      v.literal("denied"),
+      v.literal("paid")
+    ),
+    totalChargeCents: v.number(),
+    allowedAmountCents: v.optional(v.number()),
+    payerControlNumber: v.optional(v.string()),
+    denialReason: v.optional(v.string()),
+    submittedAt: v.optional(v.number()),
+    respondedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    updatedBy: v.string(),
+  })
+    .index("by_encounter", ["encounterId"])
+    .index("by_patient", ["patientId"])
+    .index("by_status", ["status"]),
   vitals: defineTable({
     encounterId: v.id("encounters"),
     patientId: v.optional(v.id("patients")), // Adding this makes querying easier later
@@ -1020,4 +1045,56 @@ export default defineSchema({
       cleanedAt: v.optional(v.number()),
     })
       .index("by_bed_discharge", ["bedLabel", "previousDischargeAt"]),
+
+    // ============ STUDY & ACADEMIC NOTES ============
+    studyClassSessions: defineTable({
+      userId: v.id("users"),
+      subject: v.string(), // e.g., "Calculus II", "Quantum Mechanics", "Data Structures"
+      className: v.string(), // e.g., "MATH-201", "CS-301"
+      professor: v.optional(v.string()),
+      startedAt: v.number(),
+      endedAt: v.optional(v.number()),
+      durationMinutes: v.optional(v.number()),
+      status: v.union(v.literal("recording"), v.literal("completed"), v.literal("paused")),
+    })
+      .index("by_user", ["userId"])
+      .index("by_subject", ["subject"])
+      .index("by_date", ["startedAt"]),
+
+    studyNotes: defineTable({
+      sessionId: v.id("studyClassSessions"),
+      userId: v.id("users"),
+      rawTranscription: v.string(), // Raw speech-to-text output
+      organizationStatus: v.union(v.literal("raw"), v.literal("organized"), v.literal("summarized")),
+      topics: v.array(v.string()), // e.g., ["derivatives", "integrals", "chain-rule"]
+      subject: v.string(),
+      content: v.string(), // Organized/editored content
+      summary: v.optional(v.string()), // AI-generated summary
+      keyPoints: v.optional(v.array(v.string())), // Extracted key points
+      definitions: v.optional(
+        v.array(
+          v.object({
+            term: v.string(),
+            definition: v.string(),
+          })
+        )
+      ),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+      exportedAt: v.optional(v.number()),
+      exportFormat: v.optional(v.union(v.literal("markdown"), v.literal("pdf"), v.literal("txt"))),
+    })
+      .index("by_session", ["sessionId"])
+      .index("by_user", ["userId"])
+      .index("by_subject", ["subject"])
+      .index("by_created", ["createdAt"]),
+
+    studyNoteTopics: defineTable({
+      noteId: v.id("studyNotes"),
+      topic: v.string(),
+      frequency: v.number(), // How many times mentioned
+      context: v.optional(v.string()), // Brief context where it appeared
+    })
+      .index("by_note", ["noteId"])
+      .index("by_topic", ["topic"]),
   })

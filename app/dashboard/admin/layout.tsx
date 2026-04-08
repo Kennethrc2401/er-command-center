@@ -10,7 +10,8 @@ import {
   BarChart4,
   Users2,
   ScrollText,
-  FolderCog
+  FolderCog,
+  FileCheck2
 } from "lucide-react";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -22,6 +23,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { name: "Identity Audit", href: "/dashboard/admin/audit", icon: ShieldCheck },
     { name: "Security Audit", href: "/dashboard/admin/security", icon: ScrollText },
     { name: "Documents Policy", href: "/dashboard/admin/documents", icon: FolderCog },
+    { name: "Insurance Ops", href: "/dashboard/admin/insurance", icon: FileCheck2 },
     { name: "Revenue Reports", href: "/dashboard/admin/revenue", icon: BarChart4 },
     { name: "Unit History", href: "/dashboard/admin/history", icon: History },
   ];

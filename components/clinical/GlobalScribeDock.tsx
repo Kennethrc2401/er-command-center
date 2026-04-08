@@ -113,7 +113,8 @@ function clinicalTemplate(title: string, facts: string, transcript: string) {
 
 export default function GlobalScribeDock() {
   const HISTORY_KEY = "global-scribe-history-v1";
-  const { actorRole, actorName } = useResolvedActor();
+  const { actorRole, actorName, isAuthenticated } = useResolvedActor();
+
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<GlobalMode>("CLINICAL");
   const [persona, setPersona] = useState<"AUTO" | "RN" | "MD" | "COORD">("AUTO");
@@ -270,6 +271,11 @@ export default function GlobalScribeDock() {
     setIsListening(false);
   }, []);
 
+  // Guard: Don't render if not authenticated (after all hooks are called)
+  if (!isAuthenticated) {
+    return null;
+  }
+
   return (
     <>
       <button
@@ -281,7 +287,7 @@ export default function GlobalScribeDock() {
       </button>
 
       {open ? (
-        <div className="fixed inset-0 z-[60] overflow-y-auto bg-slate-950/50 p-3 backdrop-blur-sm sm:p-6">
+        <div className="fixed inset-0 z-60 overflow-y-auto bg-slate-950/50 p-3 backdrop-blur-sm sm:p-6">
           <div className="mx-auto flex h-[calc(100dvh-1.5rem)] w-full max-w-6xl flex-col rounded-3xl border border-slate-200 bg-white p-4 shadow-2xl sm:h-[calc(100dvh-3rem)] sm:p-5 dark:border-slate-800 dark:bg-slate-950">
             <div className="flex items-center justify-between">
               <div>

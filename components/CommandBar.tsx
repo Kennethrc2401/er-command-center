@@ -7,7 +7,7 @@ import { DialogTitle } from "@/components/ui/dialog";
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { 
   Search, Activity, Beaker, BrainCircuit, LayoutDashboard,
-  FileText, Home, Info, ShieldCheck, FolderOpen, ClipboardList, Sparkles
+  FileText, Home, Info, ShieldCheck, FolderOpen, ClipboardList, Sparkles, BookOpen
 } from "lucide-react";
 
 type CommandBarProps = {
@@ -92,6 +92,9 @@ export default function CommandBar({ setTab = () => {}, onPatientAiToolSelect }:
           <Command.Item onSelect={() => runCommand(() => router.push("/dashboard/admin"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
             <ShieldCheck className="h-4 w-4 text-emerald-500" /> Admin Suite
           </Command.Item>
+          <Command.Item onSelect={() => runCommand(() => router.push("/dashboard/admin/insurance"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
+            <FileText className="h-4 w-4 text-emerald-600" /> Insurance Ops Hub
+          </Command.Item>
           <Command.Item
             onSelect={() =>
               runCommand(() => window.dispatchEvent(new CustomEvent("open-global-scribe")))
@@ -99,6 +102,9 @@ export default function CommandBar({ setTab = () => {}, onPatientAiToolSelect }:
             className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700"
           >
             <Sparkles className="h-4 w-4 text-blue-500" /> Global AI Scribe
+          </Command.Item>
+          <Command.Item onSelect={() => runCommand(() => router.push("/dashboard/study-notes"))} className="flex items-center p-3 rounded-xl hover:bg-slate-50 cursor-pointer gap-3 text-xs font-bold text-slate-700">
+            <BookOpen className="h-4 w-4 text-purple-500" /> Study Notes
           </Command.Item>
         </Command.Group>
 
