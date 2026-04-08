@@ -327,7 +327,7 @@ export default function AdminDashboard() {
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-3 dark:border-slate-700 dark:bg-slate-950/40">
             <span className="rounded-full bg-blue-600 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white">Quick Launch</span>
             <span className="rounded-full bg-emerald-600 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white">Snapshot Export</span>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Security, Audit, Staff, Revenue, History</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Security, Audit, Staff, Revenue, Research, History</span>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_300px]">
@@ -360,6 +360,11 @@ export default function AdminDashboard() {
               <Link href="/dashboard/admin/insurance">
                 <Button className="w-full justify-start rounded-2xl border border-emerald-200 bg-emerald-50 py-6 text-[10px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50">
                   Insurance Ops (Availity)
+                </Button>
+              </Link>
+              <Link href="/dashboard/admin/research">
+                <Button className="w-full justify-start rounded-2xl border border-blue-200 bg-blue-50 py-6 text-[10px] font-black uppercase tracking-widest text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-900/50">
+                  Clinical Research Hub
                 </Button>
               </Link>
               <Link href="/dashboard/admin/history">

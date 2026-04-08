@@ -7,11 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
+import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
 import { ArrowRight, ClipboardPlus, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
 export default function KioskHandoffQueue() {
   const { actorName } = useResolvedActor();
+  const isDemoMode = usePresentationMode((state) => state.isDemoMode);
   const queue = useQuery(api.kiosk.getQueue);
   const acknowledge = useMutation(api.kiosk.acknowledge);
   const markRoomed = useMutation(api.kiosk.markRoomed);
@@ -44,7 +46,7 @@ export default function KioskHandoffQueue() {
               <div className="flex items-start justify-between gap-3">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-black uppercase tracking-tight text-slate-900 dark:text-slate-100">{item.patientName}</p>
+                    <p className="text-sm font-black uppercase tracking-tight text-slate-900 dark:text-slate-100">{isDemoMode ? "Patient Hidden" : item.patientName}</p>
                     <Badge className={`${item.priority === "urgent" ? "bg-red-600" : "bg-blue-600"} text-white`}>
                       {item.priority}
                     </Badge>
@@ -57,9 +59,11 @@ export default function KioskHandoffQueue() {
                   <p className="text-xs text-slate-500 dark:text-slate-400">{item.chiefComplaint}</p>
                   {item.symptomSummary && <p className="text-[11px] text-slate-500 dark:text-slate-400">{item.symptomSummary}</p>}
                 </div>
-                <Link href={`/patient/${item.patientId}`} className="text-[10px] font-black uppercase tracking-wide text-blue-600 hover:text-blue-500">
-                  Chart
-                </Link>
+                {!isDemoMode ? (
+                  <Link href={`/patient/${item.patientId}`} className="text-[10px] font-black uppercase tracking-wide text-blue-600 hover:text-blue-500">
+                    Chart
+                  </Link>
+                ) : null}
               </div>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap gap-2">

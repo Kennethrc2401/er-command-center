@@ -14,6 +14,7 @@ import {
   Loader2,
   ClipboardList,
   BookOpen,
+  FlaskConical,
 } from "lucide-react";
 import Link from "next/link";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
@@ -113,6 +114,13 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
       icon: ShieldCheck,
       color: "bg-emerald-500",
       role: "Admin Only"
+    }, {
+      title: "Clinical Research",
+      desc: "Build de-identified operational cohorts and export findings",
+      href: "/dashboard/admin/research",
+      icon: FlaskConical,
+      color: "bg-indigo-600",
+      role: "Admin Only"
     }] : [])
   ];
 
@@ -124,7 +132,8 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
     "bg-teal-600": "#0d9488",
     "bg-slate-900": "#0f172a",
     "bg-amber-600": "#d97706",
-    "bg-purple-600": "#9333ea"
+    "bg-purple-600": "#9333ea",
+    "bg-indigo-600": "#4f46e5"
   };
 
   return (

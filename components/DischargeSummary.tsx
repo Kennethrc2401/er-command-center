@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { useReactToPrint } from "react-to-print";
+import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
 
 // UI Components
 import { Card, CardContent } from "@/components/ui/card";
@@ -31,6 +32,7 @@ export default function DischargeSummary({ encounterId }: { encounterId: Id<"enc
   
   const printRef = useRef<HTMLDivElement>(null);
   const sigPad = useRef<SignatureCanvas>(null);
+  const isDemoMode = usePresentationMode((state) => state.isDemoMode);
 
   // DATA QUERIES
   const encounter = useQuery(api.encounters.getById, encounterId ? { encounterId } : "skip");
@@ -39,9 +41,12 @@ export default function DischargeSummary({ encounterId }: { encounterId: Id<"enc
   const prescribedMeds = useQuery(api.medications.getByEncounter, encounterId ? { encounterId } : "skip");
   const finalizeDischarge = useMutation(api.encounters.dischargePatient);
 
+  const displayPatientName = isDemoMode ? "Patient Hidden" : patient?.name || "Patient";
+  const displayMrn = isDemoMode ? "MRN Hidden" : patient?.mrn || "--";
+
   const handlePrint = useReactToPrint({
     contentRef: printRef,
-    documentTitle: `Discharge_Summary_${patient?.name || "Patient"}`,
+    documentTitle: `Discharge_Summary_${displayPatientName}`,
   });
 
   const clearSignature = () => {
@@ -74,8 +79,8 @@ export default function DischargeSummary({ encounterId }: { encounterId: Id<"enc
 OFFICIAL PATIENT DISCHARGE INSTRUCTIONS
 ------------------------------------------------------------
 FACILITY: Hackensack Meridian ER - Unit 4B
-PATIENT: ${patient.name}
-MRN: ${patient.mrn}
+PATIENT: ${displayPatientName}
+MRN: ${displayMrn}
 DATE: ${new Date().toLocaleDateString()}
 
 REASON FOR VISIT: ${encounter.chiefComplaint}

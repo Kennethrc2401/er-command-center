@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { STAFF_SESSION_COOKIE, verifyStaffSessionToken } from "@/lib/staffSessionToken";
 import { getPasskeyExpectedOrigins, getPasskeyRpId } from "@/lib/passkeys";
+import { isAdminRequest } from "@/lib/auth/serverRouteGuards";
 
 export const runtime = "nodejs";
 
@@ -20,15 +19,7 @@ const isHostCompatibleWithRpId = (host: string, rpId: string) =>
   host === rpId || host.endsWith(`.${rpId}`);
 
 export async function GET(request: NextRequest) {
-  const staffToken = request.cookies.get(STAFF_SESSION_COOKIE)?.value;
-  const staffSession = await verifyStaffSessionToken(staffToken);
-
-  let isAdmin = staffSession?.role === "ADMIN";
-  if (!isAdmin) {
-    const clerkSession = await auth();
-    const clerkRole = (clerkSession.sessionClaims?.metadata as { role?: string } | undefined)?.role;
-    isAdmin = Boolean(clerkSession.userId && clerkRole === "admin");
-  }
+  const isAdmin = await isAdminRequest(request);
 
   if (!isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

@@ -36,6 +36,7 @@ export const start = mutation({
       isRead: false,
       timestamp: Date.now(),
       patientId: args.patientId,
+      suppressionKey: `consult-start:${args.encounterId}:${args.specialty.toLowerCase()}`,
     });
 
     return consultId;

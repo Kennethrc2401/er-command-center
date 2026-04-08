@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
@@ -8,12 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
+import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
 import { UserRound, BriefcaseMedical, ListChecks, Activity, Users, ArrowRightLeft } from "lucide-react";
 import { toast } from "sonner";
 
 type ClaimMode = "flowOwner" | "assignedProvider";
 
 const SELF_SELECTION_VALUE = "__me__";
+const ASSIGNMENT_PREFILL_KEY = "assignment-queue:prefill-staff-id";
+const ASSIGNMENT_PREFILL_EVENT = "assignment-queue:prefill";
 
 type ProviderWorkloadRow = {
   name: string;
@@ -32,7 +35,46 @@ export default function AssignmentQueue() {
   const assignmentRecommendations = useQuery(api.workflow.getAssignmentRecommendations);
   const updateEncounterFlow = useMutation(api.encounters.updateEncounterFlow);
   const { actorName, actorRole } = useResolvedActor();
-  const [selectedStaffId, setSelectedStaffId] = useState<string>("");
+  const isDemoMode = usePresentationMode((state) => state.isDemoMode);
+  const queueRootRef = useRef<HTMLDivElement>(null);
+  const [isPrefillHighlightVisible, setIsPrefillHighlightVisible] = useState(false);
+  const [selectedStaffId, setSelectedStaffId] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem(ASSIGNMENT_PREFILL_KEY) ?? "";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (!selectedStaffId) {
+      window.localStorage.removeItem(ASSIGNMENT_PREFILL_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(ASSIGNMENT_PREFILL_KEY, selectedStaffId);
+  }, [selectedStaffId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onPrefill = (event: Event) => {
+      const custom = event as CustomEvent<{ staffId?: string }>;
+      const staffId = custom.detail?.staffId?.trim();
+      if (!staffId) return;
+
+      setSelectedStaffId(staffId);
+      queueRootRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      queueRootRef.current?.focus();
+      setIsPrefillHighlightVisible(true);
+
+      window.setTimeout(() => {
+        setIsPrefillHighlightVisible(false);
+      }, 1400);
+    };
+
+    window.addEventListener(ASSIGNMENT_PREFILL_EVENT, onPrefill);
+    return () => window.removeEventListener(ASSIGNMENT_PREFILL_EVENT, onPrefill);
+  }, []);
 
   const claimableEncounters = useMemo(
     () =>
@@ -95,7 +137,12 @@ export default function AssignmentQueue() {
   };
 
   return (
-    <Card className="overflow-hidden rounded-[2.5rem] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <div ref={queueRootRef} tabIndex={-1} className="focus:outline-hidden">
+    <Card className={`overflow-hidden rounded-[2.5rem] border bg-white shadow-sm transition-all duration-500 dark:bg-slate-900 ${
+      isPrefillHighlightVisible
+        ? "border-blue-400 shadow-[0_0_0_3px_rgba(59,130,246,0.24)] dark:border-blue-500"
+        : "border-slate-200 dark:border-slate-800"
+    }`}>
       <CardHeader className="border-b border-slate-200 bg-slate-50/70 pb-4 dark:border-slate-800 dark:bg-slate-950/40">
         <CardTitle className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.2em] text-slate-600 dark:text-slate-200">
           <ListChecks className="h-4 w-4 text-blue-600" /> Assignment Queue
@@ -249,7 +296,7 @@ export default function AssignmentQueue() {
               <div key={encounter._id} className="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/50">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 space-y-1">
-                    <p className="truncate text-sm font-black uppercase tracking-tight text-slate-900 dark:text-slate-100">{encounter.patientName}</p>
+                    <p className="truncate text-sm font-black uppercase tracking-tight text-slate-900 dark:text-slate-100">{isDemoMode ? "Patient Hidden" : encounter.patientName}</p>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
                       {encounter.location} · {encounter.flowStage.replaceAll("_", " ")}
                     </p>
@@ -308,5 +355,6 @@ export default function AssignmentQueue() {
         </div>
       </CardContent>
     </Card>
+    </div>
   );
 }

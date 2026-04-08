@@ -8,6 +8,7 @@ import { BriefcaseMedical, Siren, UserRound } from "lucide-react";
 
 export default function ProviderWorkloadPanel() {
   const providers = useQuery(api.workflow.getProviderWorkload);
+  const fairnessSignals = useQuery(api.workflow.getProviderFairnessSignals, { limit: 4 });
 
   return (
     <Card className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -17,6 +18,19 @@ export default function ProviderWorkloadPanel() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 p-4">
+        {fairnessSignals && fairnessSignals.length > 0 ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-900/40 dark:bg-rose-950/20">
+            <p className="text-[9px] font-black uppercase tracking-widest text-rose-700">Recent Fairness Drift Signals</p>
+            <div className="mt-2 space-y-1">
+              {fairnessSignals.map((signal) => (
+                <p key={signal._id} className="text-[11px] font-semibold text-rose-800 dark:text-rose-300">
+                  {signal.providerName}: {signal.assignedCount} assigned, {signal.highAcuityCount} high-acuity
+                </p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {!providers || providers.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-5 text-center text-[10px] font-black uppercase tracking-[0.18em] text-slate-400 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-500">
             No provider assignments yet
@@ -34,11 +48,18 @@ export default function ProviderWorkloadPanel() {
                 <div className="flex gap-2">
                   <Badge className="bg-red-600 text-white">{provider.highAcuityCount} high acuity</Badge>
                   <Badge className="bg-amber-500 text-white">{provider.openAlertCount} alerts</Badge>
+                  {provider.fairnessRiskLevel !== "low" ? (
+                    <Badge className={provider.fairnessRiskLevel === "high" ? "bg-rose-700 text-white" : "bg-orange-600 text-white"}>
+                      {provider.fairnessRiskLevel === "high" ? "drift high" : "drift moderate"}
+                    </Badge>
+                  ) : null}
                 </div>
               </div>
               <div className="mt-3 flex items-center gap-4 text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 <span className="inline-flex items-center gap-1"><Siren className="h-3.5 w-3.5 text-amber-500" /> {provider.blockedCount} blocked</span>
                 <span className="inline-flex items-center gap-1"><UserRound className="h-3.5 w-3.5 text-blue-500" /> live workload view</span>
+                {provider.atAssignmentCapacity ? <span className="inline-flex items-center gap-1">capacity load high</span> : null}
+                {provider.atHighAcuityCapacity ? <span className="inline-flex items-center gap-1">high-acuity concentration</span> : null}
               </div>
             </div>
           ))

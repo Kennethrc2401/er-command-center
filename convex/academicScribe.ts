@@ -170,6 +170,21 @@ export const getTopicIndex = query({
   },
 });
 
+export const getStudyToolsState = query({
+  args: {
+    userId: v.id("users"),
+    subject: v.string(),
+  },
+  async handler(ctx, args) {
+    const existing = await ctx.db
+      .query("studyToolsState")
+      .withIndex("by_user_subject", (q) => q.eq("userId", args.userId).eq("subject", args.subject))
+      .first();
+
+    return existing ?? null;
+  },
+});
+
 // ============ MUTATIONS ============
 
 export const createStudySession = mutation({
@@ -383,5 +398,49 @@ export const deleteStudyNote = mutation({
     await ctx.db.delete(args.noteId);
 
     return { success: true };
+  },
+});
+
+export const upsertStudyToolsState = mutation({
+  args: {
+    userId: v.id("users"),
+    subject: v.string(),
+    masteryByTopic: v.record(
+      v.string(),
+      v.union(v.literal("NEW"), v.literal("LEARNING"), v.literal("CONFIDENT"))
+    ),
+    reviewCardState: v.record(
+      v.string(),
+      v.object({
+        intervalDays: v.number(),
+        dueAt: v.number(),
+        lastReviewedAt: v.optional(v.number()),
+      })
+    ),
+    completedActionItems: v.record(v.string(), v.boolean()),
+    sourceLinksByNote: v.record(v.string(), v.array(v.string())),
+  },
+  async handler(ctx, args) {
+    const existing = await ctx.db
+      .query("studyToolsState")
+      .withIndex("by_user_subject", (q) => q.eq("userId", args.userId).eq("subject", args.subject))
+      .first();
+
+    const payload = {
+      userId: args.userId,
+      subject: args.subject,
+      masteryByTopic: args.masteryByTopic,
+      reviewCardState: args.reviewCardState,
+      completedActionItems: args.completedActionItems,
+      sourceLinksByNote: args.sourceLinksByNote,
+      updatedAt: Date.now(),
+    };
+
+    if (existing) {
+      await ctx.db.patch(existing._id, payload);
+      return existing._id;
+    }
+
+    return await ctx.db.insert("studyToolsState", payload);
   },
 });

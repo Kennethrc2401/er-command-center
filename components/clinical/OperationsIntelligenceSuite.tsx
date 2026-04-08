@@ -24,12 +24,18 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+const ASSIGNMENT_PREFILL_KEY = "assignment-queue:prefill-staff-id";
+const ASSIGNMENT_PREFILL_EVENT = "assignment-queue:prefill";
+
 export default function OperationsIntelligenceSuite() {
   const intel = useQuery(api.workflow.getOperationsIntelligenceSuite);
+  const acknowledgementTimeline = useQuery(api.workflow.getOperationalAcknowledgementTimeline, { limit: 8 });
+  const incidentRouting = useQuery(api.workflow.getIncidentRoutingDiagnostics, { limit: 12 });
+  const providerWorkload = useQuery(api.workflow.getProviderWorkload);
+  const providerFairnessSignals = useQuery(api.workflow.getProviderFairnessSignals, { limit: 24 });
+  const assignmentRecommendations = useQuery(api.workflow.getAssignmentRecommendations);
   const updateEncounterFlow = useMutation(api.encounters.updateEncounterFlow);
-  const acknowledgeLab = useMutation(api.labs.acknowledgeLab);
-  const acknowledgeImaging = useMutation(api.imaging.acknowledgeResult);
-  const acknowledgeConsult = useMutation(api.consults.acknowledge);
+  const acknowledgeOperationalAlert = useMutation(api.workflow.acknowledgeOperationalAlert);
   const ensureDischargeChecklist = useMutation(api.checklists.ensureDischargeChecklist);
   const routeRoleNotification = useMutation(api.workflow.routeRoleNotification);
   const undoCriticalAcknowledgement = useMutation(api.workflow.undoCriticalAcknowledgement);
@@ -89,20 +95,15 @@ export default function OperationsIntelligenceSuite() {
     const key = `${item.kind}:${item.id}`;
     setPendingCritical((prev) => ({ ...prev, [key]: true }));
     try {
-      if (item.kind === "lab") {
-        await acknowledgeLab({
-          labId: item.id as Id<"labResults">,
-          staffName: actorName,
-        });
-      } else if (item.kind === "imaging") {
-        await acknowledgeImaging({
-          orderId: item.id as Id<"imagingOrders">,
-          staffName: actorName,
-        });
-      } else if (item.kind === "consult") {
-        await acknowledgeConsult({
-          id: item.id as Id<"teleConsults">,
-          staffName: actorName,
+      if (item.kind === "lab" || item.kind === "imaging" || item.kind === "consult") {
+        await acknowledgeOperationalAlert({
+          kind: item.kind,
+          ...(item.kind === "lab" ? { labId: item.id as Id<"labResults"> } : {}),
+          ...(item.kind === "imaging" ? { imagingOrderId: item.id as Id<"imagingOrders"> } : {}),
+          ...(item.kind === "consult" ? { consultId: item.id as Id<"teleConsults"> } : {}),
+          actorName,
+          actorRole: "SYSTEM",
+          source: "ops_suite",
         });
       }
       setDismissedCritical((prev) => ({ ...prev, [key]: true }));
@@ -277,6 +278,79 @@ export default function OperationsIntelligenceSuite() {
     });
   }, [replay, replayTypeFilter]);
 
+  const fairnessSparklinePoints = useMemo(() => {
+    const signalValues = (providerFairnessSignals ?? [])
+      .slice(0, 12)
+      .reverse()
+      .map((signal) => (signal.riskLevel === "high" ? 3 : signal.riskLevel === "moderate" ? 2 : 1));
+
+    if (signalValues.length === 0) return "";
+
+    const width = 220;
+    const height = 56;
+    const stepX = signalValues.length === 1 ? width : width / (signalValues.length - 1);
+
+    return signalValues
+      .map((value, index) => {
+        const x = Math.round(index * stepX);
+        const y = Math.round(height - (value / 3) * (height - 6));
+        return `${x},${y}`;
+      })
+      .join(" ");
+  }, [providerFairnessSignals]);
+
+  const fairnessRebalanceSuggestions = useMemo(() => {
+    const rows = (providerWorkload ?? []).filter((row) => row.fairnessRiskLevel !== "low");
+    if (rows.length === 0) {
+      return [
+        {
+          id: "balanced",
+          message: "Fairness load is currently balanced across active staff roles.",
+          targetStaffId: null,
+          targetStaffName: null,
+        },
+      ];
+    }
+
+    const nurseLikeRoles = new Set(["NURSE", "CCMA", "UNIT_COORDINATOR", "RAD_TECH", "SCRUB_TECH"]);
+    const providerLikeRoles = new Set(["DOCTOR", "SURGEON", "ANESTHESIOLOGIST", "PHARMACIST", "RESPIRATORY_THERAPIST"]);
+
+    const byRole = new Map<string, number>();
+    for (const row of rows) {
+      byRole.set(row.role, (byRole.get(row.role) ?? 0) + 1);
+    }
+
+    const sortedRoles = Array.from(byRole.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+
+    return sortedRoles.map(([role, count]) => {
+      const recommendation = nurseLikeRoles.has(role)
+        ? assignmentRecommendations?.flowOwner
+        : providerLikeRoles.has(role)
+          ? assignmentRecommendations?.assignedProvider
+          : assignmentRecommendations?.flowOwner ?? assignmentRecommendations?.assignedProvider;
+
+      return {
+        id: role,
+        message: `${role}: ${count} drift signal(s). Route next claims to ${recommendation?.name ?? "recommended low-load assignee"}.`,
+        targetStaffId: recommendation?._id ?? null,
+        targetStaffName: recommendation?.name ?? null,
+      };
+    });
+  }, [providerWorkload, assignmentRecommendations]);
+
+  const prefillAssignmentQueue = (staffId: string | null, staffName: string | null) => {
+    if (!staffId) {
+      toast.message("No recommended assignee is available right now.");
+      return;
+    }
+
+    window.localStorage.setItem(ASSIGNMENT_PREFILL_KEY, staffId);
+    window.dispatchEvent(new CustomEvent(ASSIGNMENT_PREFILL_EVENT, { detail: { staffId } }));
+    toast.success(`Assignment Queue prefilled for ${staffName ?? "recommended assignee"}.`);
+  };
+
   const exportReplayCsv = () => {
     if (!replay || filteredReplayEvents.length === 0) {
       toast.message("No replay events to export.");
@@ -327,6 +401,100 @@ export default function OperationsIntelligenceSuite() {
         <h2 className="text-xs font-black uppercase tracking-[0.2em] text-slate-700 dark:text-slate-200">Operations Intelligence Suite</h2>
         <Badge className="bg-slate-900 text-white">10/10 features live</Badge>
       </div>
+
+      <Card className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm"><ClipboardCheck className="h-4 w-4 text-emerald-600" /> Closed-Loop Acknowledgements</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-xs">
+          {!acknowledgementTimeline || acknowledgementTimeline.length === 0 ? (
+            <p className="text-slate-500">No recent acknowledgements yet.</p>
+          ) : (
+            acknowledgementTimeline.map((row) => (
+              <div key={row._id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-slate-700 dark:text-slate-200">{row.alertTitle}</p>
+                  <p className="text-[11px] text-slate-500">{row.acknowledgedBy} ({row.acknowledgedRole})</p>
+                </div>
+                <Badge className="bg-emerald-600 text-white">{new Date(row.acknowledgedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Badge>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm"><BellRing className="h-4 w-4 text-indigo-600" /> Incident Routing Diagnostics</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-xs">
+          {!incidentRouting ? (
+            <p className="text-slate-500">Loading routing diagnostics...</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                <Badge variant="outline">Total: {incidentRouting.total}</Badge>
+                <Badge className="bg-indigo-600 text-white">Routed: {incidentRouting.routed}</Badge>
+                <Badge className="bg-amber-500 text-white">Suppressed: {incidentRouting.skipped}</Badge>
+                <Badge variant="outline">Skip Rate: {incidentRouting.skipRatePercent}%</Badge>
+              </div>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                {incidentRouting.byRole.map((row) => (
+                  <div key={row.role} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-800 dark:bg-slate-950/40">
+                    <p className="font-semibold text-slate-700 dark:text-slate-200">{row.role}</p>
+                    <p className="text-[11px] text-slate-500">{row.total} total • {row.skipped} suppressed</p>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm"><Gauge className="h-4 w-4 text-rose-600" /> Fairness Drift Timeline</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-xs">
+          {!providerFairnessSignals ? (
+            <p className="text-slate-500">Loading fairness timeline...</p>
+          ) : providerFairnessSignals.length === 0 ? (
+            <p className="text-slate-500">No fairness drift signals captured yet.</p>
+          ) : (
+            <>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40">
+                <svg viewBox="0 0 220 56" className="h-14 w-full" role="img" aria-label="Fairness drift trend">
+                  <polyline
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    className="text-rose-500"
+                    points={fairnessSparklinePoints}
+                  />
+                </svg>
+                <p className="mt-1 text-[11px] text-slate-500">Low to high risk trend over latest captured windows.</p>
+              </div>
+              <div className="space-y-1.5">
+                {fairnessRebalanceSuggestions.map((item) => (
+                  <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] font-semibold text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
+                    <p>{item.message}</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-6 text-[10px]"
+                      onClick={() => prefillAssignmentQueue(item.targetStaffId, item.targetStaffName)}
+                      disabled={!item.targetStaffId}
+                    >
+                      Prefill Queue
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card className="rounded-2xl border-red-200 bg-red-50/60 dark:border-red-900/40 dark:bg-red-950/20">

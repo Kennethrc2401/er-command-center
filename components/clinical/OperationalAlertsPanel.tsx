@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
+import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
 import { AlertTriangle, CheckCheck, Microscope, ScanLine, Stethoscope, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
@@ -21,11 +22,10 @@ function alertIcon(kind: "room" | "lab" | "imaging" | "consult" | "assignment") 
 
 export default function OperationalAlertsPanel({ encounterId }: { encounterId?: Id<"encounters"> }) {
   const { actorName, actorRole } = useResolvedActor();
+  const isDemoMode = usePresentationMode((state) => state.isDemoMode);
   const alerts = useQuery(api.workflow.getOperationalAlerts, { encounterId });
   const assignmentRecommendations = useQuery(api.workflow.getAssignmentRecommendations);
-  const acknowledgeLab = useMutation(api.labs.acknowledgeLab);
-  const acknowledgeImaging = useMutation(api.imaging.acknowledgeResult);
-  const acknowledgeConsult = useMutation(api.consults.acknowledge);
+  const acknowledgeOperationalAlert = useMutation(api.workflow.acknowledgeOperationalAlert);
   const updateBoarding = useMutation(api.encounters.updateBoardingWorkflow);
   const updateEncounterFlow = useMutation(api.encounters.updateEncounterFlow);
 
@@ -46,15 +46,33 @@ export default function OperationalAlertsPanel({ encounterId }: { encounterId?: 
       }
 
       if (alert.kind === "lab" && alert.labId) {
-        await acknowledgeLab({ labId: alert.labId as Id<"labResults">, staffName: `${actorName} (${actorRole})` });
+        await acknowledgeOperationalAlert({
+          kind: "lab",
+          labId: alert.labId as Id<"labResults">,
+          actorName,
+          actorRole,
+          source: "ops_panel",
+        });
       }
 
       if (alert.kind === "imaging" && alert.imagingOrderId) {
-        await acknowledgeImaging({ orderId: alert.imagingOrderId as Id<"imagingOrders">, staffName: `${actorName} (${actorRole})` });
+        await acknowledgeOperationalAlert({
+          kind: "imaging",
+          imagingOrderId: alert.imagingOrderId as Id<"imagingOrders">,
+          actorName,
+          actorRole,
+          source: "ops_panel",
+        });
       }
 
       if (alert.kind === "consult" && alert.consultId) {
-        await acknowledgeConsult({ id: alert.consultId as Id<"teleConsults">, staffName: `${actorName} (${actorRole})` });
+        await acknowledgeOperationalAlert({
+          kind: "consult",
+          consultId: alert.consultId as Id<"teleConsults">,
+          actorName,
+          actorRole,
+          source: "ops_panel",
+        });
       }
 
       if (alert.kind === "assignment" && alert.encounterId) {
@@ -110,10 +128,14 @@ export default function OperationalAlertsPanel({ encounterId }: { encounterId?: 
                   </div>
                   {!encounterId && (
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">{alert.patientName}</span>
-                      <Link href={`/patient/${alert.patientId}`} className="text-[10px] font-black uppercase tracking-wide text-blue-600 hover:text-blue-500">
-                        Open Chart
-                      </Link>
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                        {isDemoMode ? "Patient Hidden" : alert.patientName}
+                      </span>
+                      {!isDemoMode ? (
+                        <Link href={`/patient/${alert.patientId}`} className="text-[10px] font-black uppercase tracking-wide text-blue-600 hover:text-blue-500">
+                          Open Chart
+                        </Link>
+                      ) : null}
                     </div>
                   )}
                   <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{alert.detail}</p>

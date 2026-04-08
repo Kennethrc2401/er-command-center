@@ -43,6 +43,42 @@ function shouldEscalateCritical(lab: {
   return true;
 }
 
+async function insertNotificationWithSuppression(
+  ctx: MutationCtx,
+  args: {
+    userId?: Doc<"notifications">["userId"];
+    title: string;
+    message: string;
+    type: "CRITICAL_LAB";
+    patientId?: Doc<"notifications">["patientId"];
+    suppressionKey: string;
+    suppressionWindowMs: number;
+  }
+) {
+  const now = Date.now();
+  const recent = await ctx.db
+    .query("notifications")
+    .withIndex("by_suppression_key_timestamp", (q) =>
+      q.eq("suppressionKey", args.suppressionKey).gte("timestamp", now - args.suppressionWindowMs)
+    )
+    .take(1);
+
+  if (recent.length > 0) return false;
+
+  await ctx.db.insert("notifications", {
+    userId: args.userId,
+    title: args.title,
+    message: args.message,
+    type: args.type,
+    isRead: false,
+    timestamp: now,
+    patientId: args.patientId,
+    suppressionKey: args.suppressionKey,
+  });
+
+  return true;
+}
+
 async function escalateCriticalLabs(
   ctx: MutationCtx,
   encounterId?: string
@@ -76,15 +112,14 @@ async function escalateCriticalLabs(
 
       const encounter = await ctx.db.get(lab.encounterId);
       const patientId = encounter?.patientId;
-
-      await ctx.db.insert("notifications", {
+      await insertNotificationWithSuppression(ctx, {
         userId: recipient?._id,
         title: "Critical Lab Escalated",
         message: `${lab.testName} remains unacknowledged and has been escalated to ${escalationRole} (${escalationCount}).`,
         type: "CRITICAL_LAB",
-        isRead: false,
-        timestamp: now,
         patientId,
+        suppressionKey: `critical-lab-escalated:${lab._id}:${escalationRole}`,
+        suppressionWindowMs: 5 * 60 * 1000,
       });
     })
   );
@@ -117,14 +152,14 @@ export const postResult = mutation({
     if (isCritical) {
       const encounter = await ctx.db.get(args.encounterId);
       const recipient = await findEscalationRecipient(ctx, "NURSE");
-      await ctx.db.insert("notifications", {
+      await insertNotificationWithSuppression(ctx, {
         userId: recipient?._id,
         title: "Critical Lab Result",
         message: `${args.testName} is critical and requires acknowledgement within 10 minutes. Routed to NURSE on duty.`,
         type: "CRITICAL_LAB",
-        isRead: false,
-        timestamp: now,
         patientId: encounter?.patientId,
+        suppressionKey: `critical-lab-new:${args.encounterId}:${args.testName.toLowerCase()}`,
+        suppressionWindowMs: 5 * 60 * 1000,
       });
     }
 
@@ -227,6 +262,7 @@ export const acknowledgeLab = mutation({
       isRead: false,
       timestamp: now,
       patientId: encounter?.patientId,
+      suppressionKey: `critical-lab-ack:${lab._id}`,
     });
   },
 });
@@ -262,6 +298,7 @@ export const resolveCriticalLab = mutation({
       isRead: false,
       timestamp: now,
       patientId: encounter?.patientId,
+      suppressionKey: `critical-lab-resolved:${lab._id}`,
     });
   },
 });

@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,6 +39,13 @@ type ActionItem = {
 };
 
 type SourceLinksByNote = Record<string, string[]>;
+
+type PersistedStudyToolsState = {
+  masteryByTopic: Record<string, MasteryLevel>;
+  reviewCardState: Record<string, ReviewCardState>;
+  completedActionItems: Record<string, boolean>;
+  sourceLinksByNote: SourceLinksByNote;
+};
 
 type SectionTone = {
   label: string;
@@ -245,34 +254,101 @@ interface StudyToolsPanelProps {
   subject: string;
   notes: EnrichedStudyNote[];
   onSelectNote: (noteId: string) => void;
+  userId?: Doc<"users">["_id"];
 }
 
 export default function StudyToolsPanel({
   subject,
   notes,
   onSelectNote,
+  userId,
 }: StudyToolsPanelProps) {
-  const storagePrefix = `study-tools:${normalize(subject)}`;
-  const subjectProfile = useMemo(() => getSubjectProfile(subject), [subject]);
-  const readStored = <T,>(suffix: string, fallback: T): T => {
-    if (typeof window === "undefined") return fallback;
-    try {
-      const raw = window.localStorage.getItem(`${storagePrefix}:${suffix}`);
-      if (!raw) return fallback;
-      return JSON.parse(raw) as T;
-    } catch {
-      return fallback;
-    }
+  const toolsState = useQuery(
+    api.academicScribe.getStudyToolsState,
+    userId
+      ? {
+          userId,
+          subject,
+        }
+      : "skip"
+  );
+  const upsertToolsState = useMutation(api.academicScribe.upsertStudyToolsState);
+
+  const persistToolsState = useCallback(
+    async (state: PersistedStudyToolsState) => {
+      if (!userId) return;
+
+      await upsertToolsState({
+        userId,
+        subject,
+        masteryByTopic: state.masteryByTopic,
+        reviewCardState: state.reviewCardState,
+        completedActionItems: state.completedActionItems,
+        sourceLinksByNote: state.sourceLinksByNote,
+      });
+    },
+    [upsertToolsState, userId, subject]
+  );
+
+  if (userId && toolsState === undefined) {
+    return (
+      <Card className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white/85 shadow-[0_18px_60px_-28px_rgba(15,23,42,0.28)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/80">
+        <CardContent className="pt-6">
+          <div className="text-sm text-slate-500 dark:text-slate-400">Loading synced study tools...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const initialState: PersistedStudyToolsState = {
+    masteryByTopic: (toolsState?.masteryByTopic as Record<string, MasteryLevel>) ?? {},
+    reviewCardState: toolsState?.reviewCardState ?? {},
+    completedActionItems: toolsState?.completedActionItems ?? {},
+    sourceLinksByNote: toolsState?.sourceLinksByNote ?? {},
   };
+
+  return (
+    <StudyToolsPanelBody
+      key={`${subject}:${toolsState?._id ?? "new"}`}
+      subject={subject}
+      notes={notes}
+      onSelectNote={onSelectNote}
+      userId={userId}
+      initialState={initialState}
+      onPersistState={persistToolsState}
+      initialLastSyncedAt={toolsState?.updatedAt}
+    />
+  );
+}
+
+interface StudyToolsPanelBodyProps extends StudyToolsPanelProps {
+  initialState: PersistedStudyToolsState;
+  onPersistState: (state: PersistedStudyToolsState) => Promise<unknown>;
+  initialLastSyncedAt?: number;
+}
+
+function StudyToolsPanelBody({
+  subject,
+  notes,
+  onSelectNote,
+  userId,
+  initialState,
+  onPersistState,
+  initialLastSyncedAt,
+}: StudyToolsPanelBodyProps) {
+  const subjectProfile = useMemo(() => getSubjectProfile(subject), [subject]);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [searchQuery, setSearchQuery] = useState("");
-  const [masteryByTopic, setMasteryByTopic] = useState<Record<string, MasteryLevel>>(() => readStored("mastery", {}));
-  const [reviewCardState, setReviewCardState] = useState<Record<string, ReviewCardState>>(() => readStored("review", {}));
-  const [completedActionItems, setCompletedActionItems] = useState<Record<string, boolean>>(() => readStored("actions", {}));
-  const [sourceLinksByNote, setSourceLinksByNote] = useState<SourceLinksByNote>(() => readStored("links", {}));
+  const [masteryByTopic, setMasteryByTopic] = useState<Record<string, MasteryLevel>>(initialState.masteryByTopic);
+  const [reviewCardState, setReviewCardState] = useState<Record<string, ReviewCardState>>(initialState.reviewCardState);
+  const [completedActionItems, setCompletedActionItems] = useState<Record<string, boolean>>(initialState.completedActionItems);
+  const [sourceLinksByNote, setSourceLinksByNote] = useState<SourceLinksByNote>(initialState.sourceLinksByNote);
   const [newSourceLinkByNote, setNewSourceLinkByNote] = useState<Record<string, string>>({});
   const [selectedPackIds, setSelectedPackIds] = useState<Set<string>>(new Set());
   const [visibleAnswers, setVisibleAnswers] = useState<Record<string, boolean>>({});
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | undefined>(initialLastSyncedAt);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState(false);
 
   const sectionCardClass =
     "overflow-hidden rounded-3xl border border-slate-200/80 bg-white/85 shadow-[0_18px_60px_-28px_rgba(15,23,42,0.28)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/80";
@@ -286,12 +362,86 @@ export default function StudyToolsPanel({
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(`${storagePrefix}:mastery`, JSON.stringify(masteryByTopic));
-    window.localStorage.setItem(`${storagePrefix}:review`, JSON.stringify(reviewCardState));
-    window.localStorage.setItem(`${storagePrefix}:actions`, JSON.stringify(completedActionItems));
-    window.localStorage.setItem(`${storagePrefix}:links`, JSON.stringify(sourceLinksByNote));
-  }, [storagePrefix, masteryByTopic, reviewCardState, completedActionItems, sourceLinksByNote]);
+    if (!userId) return;
+
+    let isCancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        if (!isCancelled) {
+          setIsSyncing(true);
+          setSyncError(false);
+        }
+
+        try {
+          await onPersistState({
+            masteryByTopic,
+            reviewCardState,
+            completedActionItems,
+            sourceLinksByNote,
+          });
+
+          if (!isCancelled) {
+            setLastSyncedAt(Date.now());
+          }
+        } catch {
+          if (!isCancelled) {
+            setSyncError(true);
+          }
+        } finally {
+          if (!isCancelled) {
+            setIsSyncing(false);
+          }
+        }
+      })();
+    }, 400);
+
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    userId,
+    subject,
+    masteryByTopic,
+    reviewCardState,
+    completedActionItems,
+    sourceLinksByNote,
+    onPersistState,
+  ]);
+
+  const formatRelativeSync = useCallback((timestamp: number) => {
+    const diffMs = Math.max(0, currentTime - timestamp);
+    const diffMinutes = Math.floor(diffMs / 60000);
+
+    if (diffMinutes <= 0) return "just now";
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+  }, [currentTime]);
+
+  const syncStatusText = useMemo(() => {
+    if (!userId) {
+      return "Sync unavailable";
+    }
+
+    if (isSyncing) {
+      return "Saving...";
+    }
+
+    if (syncError) {
+      return "Sync failed, retrying on next change";
+    }
+
+    if (!lastSyncedAt) {
+      return "Sync pending";
+    }
+
+    return `Synced ${formatRelativeSync(lastSyncedAt)} (${new Date(lastSyncedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})`;
+  }, [userId, isSyncing, syncError, lastSyncedAt, formatRelativeSync]);
 
   const smartQueue = useMemo(() => {
     return [...notes]
@@ -575,6 +725,7 @@ export default function StudyToolsPanel({
                 </Button>
               </div>
             </div>
+            <p className="mt-3 text-xs font-medium text-slate-500 dark:text-slate-400">{syncStatusText}</p>
           </CardHeader>
           <CardContent className="pt-5">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">

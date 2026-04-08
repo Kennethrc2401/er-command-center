@@ -1,4 +1,4 @@
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 
 type StaffRole =
@@ -54,6 +54,10 @@ const resolveActor = async (ctx: MutationCtx | QueryCtx) => {
 };
 
 const ROOM_TURNOVER_OVERDUE_MINUTES = 20;
+const MAX_ACTIVE_ASSIGNMENTS_PER_STAFF = 8;
+const MAX_HIGH_ACUITY_ASSIGNMENTS_PER_STAFF = 2;
+const FAIRNESS_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const FAIRNESS_CONSECUTIVE_WINDOW_MS = 30 * 60 * 1000;
 
 const PROTOCOL_BUNDLES: Record<string, { orders: Array<{ type: "LAB" | "IMAGING"; testName: string; priority: "ROUTINE" | "STAT" }>; tasks: string[]; flowStage?: "workup_pending" | "consult_pending"; delayReason?: "awaiting_labs" | "awaiting_imaging" | "awaiting_consult" | "none"; }> = {
   "stroke-alert": {
@@ -327,6 +331,20 @@ export const getRoomTurnoverQueue = query({
 export const getProviderWorkload = query({
   args: {},
   handler: async (ctx) => {
+    return await computeProviderWorkloadRows(ctx);
+  },
+});
+
+async function computeProviderWorkloadRows(ctx: QueryCtx | MutationCtx) {
+    const activeUsers = await ctx.db
+      .query("users")
+      .collect();
+    const userRoleByName = new Map(
+      activeUsers
+        .filter((user) => user.status === "ACTIVE")
+        .map((user) => [user.name, user.role])
+    );
+
     const activeEncounters = await ctx.db
       .query("encounters")
       .withIndex("by_status")
@@ -341,6 +359,7 @@ export const getProviderWorkload = query({
       blockedCount: number;
       readyDischargeCount: number;
       openAlertCount: number;
+      role: string;
     }>();
 
     for (const encounter of activeEncounters) {
@@ -353,6 +372,7 @@ export const getProviderWorkload = query({
         blockedCount: 0,
         readyDischargeCount: 0,
         openAlertCount: 0,
+        role: key === "Unassigned" ? "UNASSIGNED" : (userRoleByName.get(key) ?? "UNKNOWN"),
       };
 
       const [labs, imaging, consults] = await Promise.all([
@@ -376,12 +396,105 @@ export const getProviderWorkload = query({
       buckets.set(key, existing);
     }
 
-    return Array.from(buckets.values()).sort((left, right) => {
+    return Array.from(buckets.values())
+      .map((row) => {
+        const atAssignmentCapacity = row.assignedCount >= MAX_ACTIVE_ASSIGNMENTS_PER_STAFF;
+        const atHighAcuityCapacity = row.highAcuityCount >= MAX_HIGH_ACUITY_ASSIGNMENTS_PER_STAFF;
+
+        return {
+          ...row,
+          atAssignmentCapacity,
+          atHighAcuityCapacity,
+          fairnessRiskLevel: atAssignmentCapacity && atHighAcuityCapacity
+            ? "high"
+            : atAssignmentCapacity || atHighAcuityCapacity
+              ? "moderate"
+              : "low",
+        };
+      })
+      .sort((left, right) => {
       if (right.highAcuityCount !== left.highAcuityCount) return right.highAcuityCount - left.highAcuityCount;
       if (right.acuityWeightedLoad !== left.acuityWeightedLoad) return right.acuityWeightedLoad - left.acuityWeightedLoad;
       if (right.openAlertCount !== left.openAlertCount) return right.openAlertCount - left.openAlertCount;
       return right.assignedCount - left.assignedCount;
-    });
+      });
+}
+
+export const getProviderFairnessSignals = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(50, Math.floor(args.limit ?? 12)));
+    return await ctx.db
+      .query("providerFairnessSignals")
+      .withIndex("by_captured_at")
+      .order("desc")
+      .take(limit);
+  },
+});
+
+export const runProviderFairnessSweep = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const rows = await computeProviderWorkloadRows(ctx);
+
+    const highRiskRows = rows.filter((row) => row.fairnessRiskLevel === "high");
+    let alertCount = 0;
+
+    for (const row of highRiskRows) {
+      await ctx.db.insert("providerFairnessSignals", {
+        providerName: row.name,
+        riskLevel: row.fairnessRiskLevel as "low" | "moderate" | "high",
+        assignedCount: row.assignedCount,
+        highAcuityCount: row.highAcuityCount,
+        openAlertCount: row.openAlertCount,
+        capturedAt: now,
+      });
+
+      const recentSignals = await ctx.db
+        .query("providerFairnessSignals")
+        .withIndex("by_provider_captured_at", (q) => q.eq("providerName", row.name))
+        .order("desc")
+        .take(2);
+
+      const hasConsecutiveHigh =
+        recentSignals.length >= 2 &&
+        recentSignals[0].riskLevel === "high" &&
+        recentSignals[1].riskLevel === "high" &&
+        recentSignals[0].capturedAt - recentSignals[1].capturedAt <= FAIRNESS_CONSECUTIVE_WINDOW_MS;
+
+      if (!hasConsecutiveHigh) continue;
+
+      const suppressionKey = `provider-fairness-high:${row.name.toLowerCase()}`;
+      const recentNotification = await ctx.db
+        .query("notifications")
+        .withIndex("by_suppression_key_timestamp", (q) =>
+          q.eq("suppressionKey", suppressionKey).gte("timestamp", now - FAIRNESS_CONSECUTIVE_WINDOW_MS)
+        )
+        .take(1);
+
+      if (recentNotification.length > 0) continue;
+
+      await ctx.db.insert("notifications", {
+        userId: undefined,
+        title: "Provider Fairness Drift Alert",
+        message: `${row.name} remains high-risk across consecutive workload windows (${row.assignedCount} assigned, ${row.highAcuityCount} high-acuity).`,
+        type: "SYSTEM",
+        isRead: false,
+        timestamp: now,
+        suppressionKey,
+      });
+
+      alertCount += 1;
+    }
+
+    return {
+      capturedCount: highRiskRows.length,
+      alertCount,
+      sweepIntervalMinutes: FAIRNESS_SWEEP_INTERVAL_MS / 60000,
+    };
   },
 });
 
@@ -457,19 +570,38 @@ export const getAssignmentRecommendations = query({
           (workload.blockedCount ?? 0) * 3 +
           (workload.openAlertCount ?? 0) * 2;
 
+        const atAssignmentCapacity = workload.assignedCount >= MAX_ACTIVE_ASSIGNMENTS_PER_STAFF;
+        const atHighAcuityCapacity = workload.highAcuityCount >= MAX_HIGH_ACUITY_ASSIGNMENTS_PER_STAFF;
+        const fairnessPenalty =
+          (atAssignmentCapacity ? 200 : 0) +
+          (atHighAcuityCapacity ? 200 : 0);
+
         return {
           ...staff,
           ...workload,
-          loadScore,
+          atAssignmentCapacity,
+          atHighAcuityCapacity,
+          loadScore: loadScore + fairnessPenalty,
         };
       })
       .sort((left, right) => left.loadScore - right.loadScore || left.role.localeCompare(right.role) || left.name.localeCompare(right.name));
 
-    const pickByRoles = (roles: string[]) => scoredRoster.find((staff) => roles.includes(staff.role)) ?? scoredRoster[0] ?? null;
+    const pickByRoles = (roles: string[]) => {
+      const inRolePool = scoredRoster.filter((staff) => roles.includes(staff.role));
+      const notOverCapacity = inRolePool.filter(
+        (staff) => !staff.atAssignmentCapacity && !staff.atHighAcuityCapacity
+      );
+
+      return notOverCapacity[0] ?? inRolePool[0] ?? scoredRoster[0] ?? null;
+    };
 
     return {
       flowOwner: pickByRoles(["NURSE", "CCMA", "UNIT_COORDINATOR", "RAD_TECH", "SCRUB_TECH"]),
       assignedProvider: pickByRoles(["DOCTOR", "SURGEON", "ANESTHESIOLOGIST", "PHARMACIST", "RESPIRATORY_THERAPIST"]),
+      routingGuardrails: {
+        maxActiveAssignmentsPerStaff: MAX_ACTIVE_ASSIGNMENTS_PER_STAFF,
+        maxHighAcuityAssignmentsPerStaff: MAX_HIGH_ACUITY_ASSIGNMENTS_PER_STAFF,
+      },
     };
   },
 });
@@ -1864,20 +1996,27 @@ export const routeRoleNotification = mutation({
     const windowMinutes = Math.max(1, Math.min(60, Math.floor(args.suppressionWindowMinutes ?? 10)));
     const since = now - windowMinutes * 60 * 1000;
     const title = `Operational Route → ${args.role}`;
+    const suppressionKey = `route:${args.role}:${message.toLowerCase()}`;
 
     const recent = await ctx.db
       .query("notifications")
-      .withIndex("by_timestamp", (q) => q.gte("timestamp", since))
+      .withIndex("by_suppression_key_timestamp", (q) => q.eq("suppressionKey", suppressionKey).gte("timestamp", since))
       .collect();
 
-    const duplicate = recent.find(
-      (notification) =>
-        notification.type === "SYSTEM" &&
-        notification.title === title &&
-        notification.message === message
-    );
+    const duplicate = recent.find((notification) => notification.type === "SYSTEM");
 
     if (duplicate) {
+      await ctx.db.insert("notificationRoutingEvents", {
+        role: args.role,
+        actorName: actor.name,
+        actorRole: actor.role,
+        message,
+        suppressionKey,
+        suppressionWindowMinutes: windowMinutes,
+        skipped: true,
+        routedAt: now,
+      });
+
       return {
         routedAt: now,
         role: args.role,
@@ -1886,13 +2025,26 @@ export const routeRoleNotification = mutation({
       };
     }
 
-    await ctx.db.insert("notifications", {
+    const notificationId = await ctx.db.insert("notifications", {
       userId: undefined,
       title,
       message,
       type: "SYSTEM",
       isRead: false,
       timestamp: now,
+      suppressionKey,
+    });
+
+    await ctx.db.insert("notificationRoutingEvents", {
+      role: args.role,
+      actorName: actor.name,
+      actorRole: actor.role,
+      message,
+      suppressionKey,
+      suppressionWindowMinutes: windowMinutes,
+      skipped: false,
+      routedAt: now,
+      notificationId,
     });
 
     return {
@@ -1901,6 +2053,333 @@ export const routeRoleNotification = mutation({
       skipped: false,
       suppressionWindowMinutes: windowMinutes,
     };
+  },
+});
+
+export const getIncidentRoutingDiagnostics = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 20)));
+    const events = await ctx.db
+      .query("notificationRoutingEvents")
+      .withIndex("by_timestamp")
+      .order("desc")
+      .take(limit);
+
+    const total = events.length;
+    const skipped = events.filter((event) => event.skipped).length;
+    const routed = total - skipped;
+
+    const byRole = ["NURSE", "DOCTOR", "UNIT_COORDINATOR"].map((role) => {
+      const roleRows = events.filter((event) => event.role === role);
+      return {
+        role,
+        total: roleRows.length,
+        skipped: roleRows.filter((event) => event.skipped).length,
+      };
+    });
+
+    return {
+      total,
+      routed,
+      skipped,
+      skipRatePercent: total === 0 ? 0 : Math.round((skipped / total) * 100),
+      byRole,
+      recent: events,
+    };
+  },
+});
+
+export const runClinicalResearchQuestion = query({
+  args: {
+    questionId: v.union(
+      v.literal("los_by_acuity"),
+      v.literal("protocol_effectiveness"),
+      v.literal("boarding_delay_drivers"),
+      v.literal("critical_ack_latency")
+    ),
+    lookbackDays: v.number(),
+    minAcuity: v.optional(v.number()),
+    maxAcuity: v.optional(v.number()),
+    flowStage: v.optional(v.string()),
+    dispositionPlan: v.optional(v.string()),
+    includeIdentifiers: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const actor = await resolveActor(ctx);
+    if (actor.role !== "ADMIN") {
+      throw new Error("Unauthorized: Clinical research workspace is admin-only.");
+    }
+
+    const now = Date.now();
+    const lookbackDays = Math.max(1, Math.min(90, Math.floor(args.lookbackDays || 14)));
+    const since = now - lookbackDays * 24 * 60 * 60 * 1000;
+    const includeIdentifiers = Boolean(args.includeIdentifiers);
+
+    const encounters = await ctx.db
+      .query("encounters")
+      .collect();
+
+    const filtered = encounters.filter((encounter) => {
+      if (encounter._creationTime < since) return false;
+      if (typeof args.minAcuity === "number" && encounter.acuity < args.minAcuity) return false;
+      if (typeof args.maxAcuity === "number" && encounter.acuity > args.maxAcuity) return false;
+      if (args.flowStage && (encounter.flowStage ?? "unknown") !== args.flowStage) return false;
+      if (args.dispositionPlan && (encounter.dispositionPlan ?? "undecided") !== args.dispositionPlan) return false;
+      return true;
+    });
+
+    const protocolByEncounter = new Map<string, number>();
+    const protocolRows = await ctx.db.query("protocolActivations").collect();
+    for (const row of protocolRows) {
+      protocolByEncounter.set(row.encounterId, (protocolByEncounter.get(row.encounterId) ?? 0) + 1);
+    }
+
+    const criticalLabs = await ctx.db.query("labResults").collect();
+    const criticalByEncounter = new Map<string, { open: number; acknowledged: number; totalAckMinutes: number }>();
+    for (const lab of criticalLabs) {
+      if (!lab.isAbnormal || lab.status !== "final") continue;
+      const current = criticalByEncounter.get(lab.encounterId) ?? { open: 0, acknowledged: 0, totalAckMinutes: 0 };
+      if (lab.acknowledgedAt && lab.criticalRaisedAt) {
+        current.acknowledged += 1;
+        current.totalAckMinutes += Math.max(0, Math.floor((lab.acknowledgedAt - lab.criticalRaisedAt) / 60000));
+      } else {
+        current.open += 1;
+      }
+      criticalByEncounter.set(lab.encounterId, current);
+    }
+
+    const cohortRows = await Promise.all(
+      filtered.slice(0, 80).map(async (encounter, index) => {
+        const patient = includeIdentifiers ? await ctx.db.get(encounter.patientId) : null;
+        const losMinutes = Math.max(
+          0,
+          Math.floor(((encounter.dischargedAt ?? now) - encounter._creationTime) / 60000)
+        );
+
+        const doorToBedMinutes = encounter.bedAssignedAt
+          ? Math.max(0, Math.floor((encounter.bedAssignedAt - encounter._creationTime) / 60000))
+          : null;
+        const providerToDecisionMinutes = encounter.providerAssignedAt && encounter.dispositionDecisionAt
+          ? Math.max(0, Math.floor((encounter.dispositionDecisionAt - encounter.providerAssignedAt) / 60000))
+          : null;
+
+        const critical = criticalByEncounter.get(encounter._id) ?? { open: 0, acknowledged: 0, totalAckMinutes: 0 };
+
+        return {
+          encounterId: encounter._id,
+          patientLabel: includeIdentifiers
+            ? (patient?.name ?? encounter.patientName ?? "Unknown Patient")
+            : `Case ${String(index + 1).padStart(3, "0")}`,
+          mrn: includeIdentifiers ? (patient?.mrn ?? "--") : "Hidden",
+          acuity: encounter.acuity,
+          flowStage: encounter.flowStage ?? "unknown",
+          dispositionPlan: encounter.dispositionPlan ?? "undecided",
+          losMinutes,
+          doorToBedMinutes,
+          providerToDecisionMinutes,
+          protocolActivationCount: protocolByEncounter.get(encounter._id) ?? 0,
+          criticalOpenCount: critical.open,
+          avgCriticalAckMinutes:
+            critical.acknowledged > 0
+              ? Math.round(critical.totalAckMinutes / critical.acknowledged)
+              : null,
+        };
+      })
+    );
+
+    const avg = (values: number[]) =>
+      values.length === 0 ? null : Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+
+    const losValues = cohortRows.map((row) => row.losMinutes);
+    const doorToBedValues = cohortRows
+      .map((row) => row.doorToBedMinutes)
+      .filter((value): value is number => typeof value === "number");
+    const providerToDecisionValues = cohortRows
+      .map((row) => row.providerToDecisionMinutes)
+      .filter((value): value is number => typeof value === "number");
+    const ackValues = cohortRows
+      .map((row) => row.avgCriticalAckMinutes)
+      .filter((value): value is number => typeof value === "number");
+
+    const protocolEnabled = cohortRows.filter((row) => row.protocolActivationCount > 0);
+    const protocolDisabled = cohortRows.filter((row) => row.protocolActivationCount === 0);
+
+    const interpretationByQuestion: Record<string, string> = {
+      los_by_acuity:
+        "Assess whether acuity mix is driving overall length-of-stay and where throughput interventions should focus.",
+      protocol_effectiveness:
+        "Compare encounters with and without protocol activation to estimate operational benefit and identify candidate protocols for refinement.",
+      boarding_delay_drivers:
+        "Evaluate where boarded/admit-ready encounters accumulate and whether delays are dominated by inpatient bed or transport constraints.",
+      critical_ack_latency:
+        "Review critical result acknowledgement latency to determine whether escalation workflows are reducing acknowledgement lag.",
+    };
+
+    return {
+      questionId: args.questionId,
+      includeIdentifiers,
+      lookbackDays,
+      generatedAt: now,
+      cohortSize: cohortRows.length,
+      summary: {
+        avgLosMinutes: avg(losValues),
+        avgDoorToBedMinutes: avg(doorToBedValues),
+        avgProviderToDecisionMinutes: avg(providerToDecisionValues),
+        avgCriticalAckMinutes: avg(ackValues),
+        protocolEnabledCount: protocolEnabled.length,
+        protocolDisabledCount: protocolDisabled.length,
+        protocolEnabledAvgLosMinutes: avg(protocolEnabled.map((row) => row.losMinutes)),
+        protocolDisabledAvgLosMinutes: avg(protocolDisabled.map((row) => row.losMinutes)),
+      },
+      interpretation: interpretationByQuestion[args.questionId],
+      cohort: cohortRows.slice(0, 25),
+    };
+  },
+});
+
+export const acknowledgeOperationalAlert = mutation({
+  args: {
+    kind: v.union(v.literal("lab"), v.literal("imaging"), v.literal("consult")),
+    labId: v.optional(v.id("labResults")),
+    imagingOrderId: v.optional(v.id("imagingOrders")),
+    consultId: v.optional(v.id("teleConsults")),
+    actorName: v.string(),
+    actorRole: v.string(),
+    note: v.optional(v.string()),
+    source: v.optional(v.union(v.literal("ops_panel"), v.literal("ops_suite"), v.literal("other"))),
+  },
+  handler: async (ctx, args) => {
+    const actor = await resolveActor(ctx);
+    const actorName = args.actorName.trim() || actor.name;
+    const actorRole = args.actorRole.trim() || actor.role;
+    const note = args.note?.trim() ? args.note.trim().slice(0, 240) : undefined;
+    const now = Date.now();
+
+    if (args.kind === "lab") {
+      if (!args.labId) throw new Error("labId is required for lab acknowledgements.");
+      const lab = await ctx.db.get(args.labId);
+      if (!lab) throw new Error("Lab result not found");
+
+      await ctx.db.patch(args.labId, {
+        criticalStatus: "acknowledged",
+        acknowledgedBy: `${actorName} (${actorRole})`,
+        acknowledgedAt: now,
+        ...(note ? { criticalAcknowledgementNote: note } : {}),
+      });
+
+      const encounter = await ctx.db.get(lab.encounterId);
+      await ctx.db.insert("operationalAlertAcknowledgements", {
+        encounterId: lab.encounterId,
+        patientId: encounter?.patientId,
+        kind: "lab",
+        recordId: args.labId,
+        alertTitle: `Critical Lab: ${lab.testName}`,
+        acknowledgedBy: actorName,
+        acknowledgedRole: actorRole,
+        note,
+        acknowledgedAt: now,
+        source: args.source ?? "other",
+      });
+
+      return { ok: true, kind: "lab", acknowledgedAt: now };
+    }
+
+    if (args.kind === "imaging") {
+      if (!args.imagingOrderId) throw new Error("imagingOrderId is required for imaging acknowledgements.");
+      const order = await ctx.db.get(args.imagingOrderId);
+      if (!order) throw new Error("Imaging order not found");
+      if (order.status !== "Resulted") {
+        throw new Error("Only resulted imaging studies can be acknowledged.");
+      }
+
+      await ctx.db.patch(args.imagingOrderId, {
+        acknowledgedBy: `${actorName} (${actorRole})`,
+        acknowledgedAt: now,
+      });
+
+      const encounter = await ctx.db.get(order.encounterId);
+      await ctx.db.insert("operationalAlertAcknowledgements", {
+        encounterId: order.encounterId,
+        patientId: encounter?.patientId,
+        kind: "imaging",
+        recordId: args.imagingOrderId,
+        alertTitle: `Imaging Result: ${order.studyName}`,
+        acknowledgedBy: actorName,
+        acknowledgedRole: actorRole,
+        note,
+        acknowledgedAt: now,
+        source: args.source ?? "other",
+      });
+
+      return { ok: true, kind: "imaging", acknowledgedAt: now };
+    }
+
+    if (!args.consultId) throw new Error("consultId is required for consult acknowledgements.");
+    const consult = await ctx.db.get(args.consultId);
+    if (!consult) throw new Error("Consult not found");
+
+    await ctx.db.patch(args.consultId, {
+      acknowledgedBy: `${actorName} (${actorRole})`,
+      acknowledgedAt: now,
+      ...(note ? { callbackNote: note } : {}),
+    });
+
+    await ctx.db.insert("operationalAlertAcknowledgements", {
+      encounterId: consult.encounterId,
+      patientId: consult.patientId,
+      kind: "consult",
+      recordId: args.consultId,
+      alertTitle: `${consult.specialty} Consult Active`,
+      acknowledgedBy: actorName,
+      acknowledgedRole: actorRole,
+      note,
+      acknowledgedAt: now,
+      source: args.source ?? "other",
+    });
+
+    return { ok: true, kind: "consult", acknowledgedAt: now };
+  },
+});
+
+export const getOperationalAcknowledgementTimeline = query({
+  args: {
+    encounterId: v.optional(v.id("encounters")),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 25)));
+    if (args.encounterId) {
+      return await ctx.db
+        .query("operationalAlertAcknowledgements")
+        .withIndex("by_encounter_ack_time", (q) => q.eq("encounterId", args.encounterId as never))
+        .order("desc")
+        .take(limit);
+    }
+
+    const [labs, imaging, consults] = await Promise.all([
+      ctx.db
+        .query("operationalAlertAcknowledgements")
+        .withIndex("by_kind_ack_time", (q) => q.eq("kind", "lab"))
+        .order("desc")
+        .take(limit),
+      ctx.db
+        .query("operationalAlertAcknowledgements")
+        .withIndex("by_kind_ack_time", (q) => q.eq("kind", "imaging"))
+        .order("desc")
+        .take(limit),
+      ctx.db
+        .query("operationalAlertAcknowledgements")
+        .withIndex("by_kind_ack_time", (q) => q.eq("kind", "consult"))
+        .order("desc")
+        .take(limit),
+    ]);
+
+    return [...labs, ...imaging, ...consults]
+      .sort((a, b) => b.acknowledgedAt - a.acknowledgedAt)
+      .slice(0, limit);
   },
 });
 

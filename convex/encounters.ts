@@ -1241,6 +1241,15 @@ export const updateBoardingWorkflow = mutation({
 
     const now = Date.now();
     const patch: Partial<Doc<"encounters">> = {};
+    const effectiveInpatientBedLabel =
+      args.inpatientBedLabel !== undefined
+        ? args.inpatientBedLabel.trim() || undefined
+        : encounter.inpatientBedLabel;
+    const effectiveAssignedInpatientUnit =
+      args.assignedInpatientUnit !== undefined
+        ? args.assignedInpatientUnit.trim() || undefined
+        : encounter.assignedInpatientUnit;
+    const effectiveTransportStatus = args.transportStatus ?? encounter.transportStatus;
 
     if (args.assignedInpatientUnit !== undefined) {
       patch.assignedInpatientUnit = args.assignedInpatientUnit.trim() || undefined;
@@ -1262,29 +1271,47 @@ export const updateBoardingWorkflow = mutation({
 
     if (args.markAdmitAccepted && !encounter.admitAcceptedAt) {
       patch.admitAcceptedAt = now;
-      patch.dispositionPlan = encounter.dispositionPlan ?? "admit";
+      patch.dispositionPlan = "admit";
       patch.flowStage = "admit_ready";
       patch.flowStageUpdatedAt = now;
+      patch.delayReason = "awaiting_inpatient_bed";
     }
 
     if (args.markInpatientBedRequested && !encounter.inpatientBedRequestedAt) {
       patch.inpatientBedRequestedAt = now;
       patch.delayReason = "awaiting_inpatient_bed";
+      patch.flowStage = "admit_ready";
+      patch.flowStageUpdatedAt = now;
     }
 
     if (args.markInpatientBedAssigned) {
+      if (!effectiveInpatientBedLabel || !effectiveAssignedInpatientUnit) {
+        throw new Error("Inpatient unit and bed label are required before marking bed assigned.");
+      }
       patch.inpatientBedAssignedAt = now;
-      patch.delayReason = encounter.transportStatus === "completed" ? "none" : "awaiting_transport";
+      patch.delayReason = effectiveTransportStatus === "completed" ? "none" : "awaiting_transport";
       patch.flowStage = "boarded";
       patch.flowStageUpdatedAt = now;
       await ensureRoomTurnoverChecklist(ctx, { encounterId: args.encounterId, state: "boarded" });
     }
 
+    if (args.transportStatus === "requested" || args.transportStatus === "in_progress") {
+      patch.delayReason = "awaiting_transport";
+    }
+
+    if (args.transportStatus === "completed") {
+      patch.delayReason = "none";
+    }
+
     if (args.markHandoffCompleted) {
-      patch.handoffCompletedAt = now;
-      if ((args.transportStatus ?? encounter.transportStatus) === "completed") {
-        patch.delayReason = "none";
+      if (!encounter.inpatientBedAssignedAt && !args.markInpatientBedAssigned) {
+        throw new Error("Cannot complete handoff before inpatient bed is assigned.");
       }
+
+      patch.transportStatus = "completed";
+      patch.transportUpdatedAt = now;
+      patch.handoffCompletedAt = now;
+      patch.delayReason = "none";
     }
 
     await ctx.db.patch(args.encounterId, patch);

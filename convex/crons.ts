@@ -20,4 +20,11 @@ crons.interval(
   {}
 );
 
+crons.interval(
+  "provider_fairness_drift_sweep",
+  { minutes: 5 },
+  internal.workflow.runProviderFairnessSweep,
+  {}
+);
+
 export default crons;

@@ -504,6 +504,7 @@ export default function StudyNotesPage() {
               key={selectedSubject}
               subject={selectedSubject}
               notes={notesBySubject || []}
+              userId={convexUserId}
               onSelectNote={(noteId) => {
                 setSelectedNoteId(noteId);
                 setActiveTab("notebook");

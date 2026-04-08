@@ -323,8 +323,35 @@ export default defineSchema({
     isRead: v.boolean(),
     timestamp: v.number(),
     patientId: v.optional(v.id("patients")),
+    suppressionKey: v.optional(v.string()),
   })
-  .index("by_timestamp", ["timestamp"]),
+  .index("by_timestamp", ["timestamp"])
+  .index("by_suppression_key_timestamp", ["suppressionKey", "timestamp"]),
+
+  notificationRoutingEvents: defineTable({
+    role: v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR")),
+    actorName: v.string(),
+    actorRole: v.string(),
+    message: v.string(),
+    suppressionKey: v.string(),
+    suppressionWindowMinutes: v.number(),
+    skipped: v.boolean(),
+    routedAt: v.number(),
+    notificationId: v.optional(v.id("notifications")),
+  })
+    .index("by_timestamp", ["routedAt"])
+    .index("by_role_timestamp", ["role", "routedAt"]),
+
+  providerFairnessSignals: defineTable({
+    providerName: v.string(),
+    riskLevel: v.union(v.literal("low"), v.literal("moderate"), v.literal("high")),
+    assignedCount: v.number(),
+    highAcuityCount: v.number(),
+    openAlertCount: v.number(),
+    capturedAt: v.number(),
+  })
+    .index("by_provider_captured_at", ["providerName", "capturedAt"])
+    .index("by_captured_at", ["capturedAt"]),
   
   clinicalNotes: defineTable({
     encounterId: v.id("encounters"),
@@ -600,6 +627,20 @@ export default defineSchema({
     })
     .index("by_encounter", ["encounterId"])
     .index("by_status", ["status"]),
+    operationalAlertAcknowledgements: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.optional(v.id("patients")),
+      kind: v.union(v.literal("lab"), v.literal("imaging"), v.literal("consult")),
+      recordId: v.string(),
+      alertTitle: v.string(),
+      acknowledgedBy: v.string(),
+      acknowledgedRole: v.string(),
+      note: v.optional(v.string()),
+      acknowledgedAt: v.number(),
+      source: v.union(v.literal("ops_panel"), v.literal("ops_suite"), v.literal("other")),
+    })
+      .index("by_encounter_ack_time", ["encounterId", "acknowledgedAt"])
+      .index("by_kind_ack_time", ["kind", "acknowledgedAt"]),
     protocolActivations: defineTable({
       encounterId: v.id("encounters"),
       patientId: v.id("patients"),
@@ -1097,4 +1138,26 @@ export default defineSchema({
     })
       .index("by_note", ["noteId"])
       .index("by_topic", ["topic"]),
+
+    studyToolsState: defineTable({
+      userId: v.id("users"),
+      subject: v.string(),
+      masteryByTopic: v.record(
+        v.string(),
+        v.union(v.literal("NEW"), v.literal("LEARNING"), v.literal("CONFIDENT"))
+      ),
+      reviewCardState: v.record(
+        v.string(),
+        v.object({
+          intervalDays: v.number(),
+          dueAt: v.number(),
+          lastReviewedAt: v.optional(v.number()),
+        })
+      ),
+      completedActionItems: v.record(v.string(), v.boolean()),
+      sourceLinksByNote: v.record(v.string(), v.array(v.string())),
+      updatedAt: v.number(),
+    })
+      .index("by_user", ["userId"])
+      .index("by_user_subject", ["userId", "subject"]),
   })

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { usePresentationMode } from "@/lib/hooks/usePresentationMode";
 import { Search, Beaker, ArrowRight } from "lucide-react";
 
 interface GlobalSearchProps {
@@ -17,6 +18,7 @@ export default function GlobalSearch({
   className,
 }: GlobalSearchProps = {}) {
   const [query, setQuery] = useState("");
+  const isDemoMode = usePresentationMode((state) => state.isDemoMode);
   const results = useQuery(api.clinical.globalClinicalSearch, { searchTerm: query });
 
   const handleChange = (value: string) => {
@@ -53,11 +55,11 @@ export default function GlobalSearch({
                 <button key={p._id} className="w-full flex items-center justify-between p-4 hover:bg-slate-50 rounded-2xl transition-all group">
                   <div className="flex items-center gap-4">
                     <div className="h-10 w-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center font-black">
-                      {p.name[0]}
+                      {isDemoMode ? "?" : p.name[0]}
                     </div>
                     <div className="text-left">
-                      <p className="text-sm font-black text-slate-900">{p.name}</p>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{p.mrn}</p>
+                      <p className="text-sm font-black text-slate-900">{isDemoMode ? "Patient Hidden" : p.name}</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{isDemoMode ? "MRN Hidden" : p.mrn}</p>
                     </div>
                   </div>
                   <ArrowRight className="h-4 w-4 text-slate-200 group-hover:text-blue-500 transition-all" />

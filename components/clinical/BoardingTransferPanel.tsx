@@ -21,15 +21,27 @@ export default function BoardingTransferPanel({ encounter }: { encounter: Encoun
   const [transportStatus, setTransportStatus] = useState(encounter.transportStatus ?? "not_requested");
   const [roomTurnoverStatus, setRoomTurnoverStatus] = useState(encounter.roomTurnoverStatus ?? "not_started");
 
+  const runBoardingAction = async (payload: Parameters<typeof updateBoarding>[0], successMessage: string) => {
+    try {
+      await updateBoarding(payload);
+      toast.success(successMessage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to update boarding workflow";
+      toast.error(message);
+    }
+  };
+
   const saveContext = async () => {
-    await updateBoarding({
-      encounterId: encounter._id,
-      assignedInpatientUnit,
-      inpatientBedLabel,
-      transportStatus: transportStatus as "not_requested" | "requested" | "in_progress" | "completed",
-      roomTurnoverStatus: roomTurnoverStatus as "not_started" | "cleaning" | "ready",
-    });
-    toast.success("Boarding workflow updated");
+    await runBoardingAction(
+      {
+        encounterId: encounter._id,
+        assignedInpatientUnit,
+        inpatientBedLabel,
+        transportStatus: transportStatus as "not_requested" | "requested" | "in_progress" | "completed",
+        roomTurnoverStatus: roomTurnoverStatus as "not_started" | "cleaning" | "ready",
+      },
+      "Boarding workflow updated"
+    );
   };
 
   return (
@@ -78,10 +90,16 @@ export default function BoardingTransferPanel({ encounter }: { encounter: Encoun
         </div>
 
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-          <Button type="button" variant="outline" onClick={() => void updateBoarding({ encounterId: encounter._id, markAdmitAccepted: true })}>Admit Accepted</Button>
-          <Button type="button" variant="outline" onClick={() => void updateBoarding({ encounterId: encounter._id, markInpatientBedRequested: true })}>Bed Requested</Button>
-          <Button type="button" variant="outline" onClick={() => void updateBoarding({ encounterId: encounter._id, markInpatientBedAssigned: true })}>Bed Assigned</Button>
-          <Button type="button" variant="outline" onClick={() => void updateBoarding({ encounterId: encounter._id, markHandoffCompleted: true, transportStatus: "completed" })}>Handoff Done</Button>
+          <Button type="button" variant="outline" onClick={() => void runBoardingAction({ encounterId: encounter._id, markAdmitAccepted: true }, "Admit accepted")}>Admit Accepted</Button>
+          <Button type="button" variant="outline" onClick={() => void runBoardingAction({ encounterId: encounter._id, markInpatientBedRequested: true }, "Inpatient bed requested")}>Bed Requested</Button>
+          <Button type="button" variant="outline" onClick={() => void runBoardingAction({ encounterId: encounter._id, assignedInpatientUnit, inpatientBedLabel, markInpatientBedAssigned: true }, "Inpatient bed assigned")}>Bed Assigned</Button>
+          <Button type="button" variant="outline" onClick={() => void runBoardingAction({ encounterId: encounter._id, markHandoffCompleted: true }, "Handoff completed")}>Handoff Done</Button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+          <Button type="button" variant="outline" onClick={() => void runBoardingAction({ encounterId: encounter._id, transportStatus: "requested" }, "Transport requested")}>Request Transport</Button>
+          <Button type="button" variant="outline" onClick={() => void runBoardingAction({ encounterId: encounter._id, transportStatus: "in_progress" }, "Transport in progress")}>Start Transport</Button>
+          <Button type="button" variant="outline" onClick={() => void runBoardingAction({ encounterId: encounter._id, transportStatus: "completed" }, "Transport completed")}>Complete Transport</Button>
         </div>
 
         <Button type="button" className="w-full bg-violet-600 text-white hover:bg-violet-700" onClick={() => void saveContext()}>

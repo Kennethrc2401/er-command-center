@@ -11,7 +11,8 @@ import {
   Users2,
   ScrollText,
   FolderCog,
-  FileCheck2
+  FileCheck2,
+  FlaskConical
 } from "lucide-react";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -24,6 +25,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { name: "Security Audit", href: "/dashboard/admin/security", icon: ScrollText },
     { name: "Documents Policy", href: "/dashboard/admin/documents", icon: FolderCog },
     { name: "Insurance Ops", href: "/dashboard/admin/insurance", icon: FileCheck2 },
+    { name: "Clinical Research", href: "/dashboard/admin/research", icon: FlaskConical },
     { name: "Revenue Reports", href: "/dashboard/admin/revenue", icon: BarChart4 },
     { name: "Unit History", href: "/dashboard/admin/history", icon: History },
   ];
