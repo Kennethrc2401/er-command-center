@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Mic, StopCircle } from "lucide-react";
+import { Mic, StopCircle, BookmarkPlus } from "lucide-react";
 import { toast } from "sonner";
 import { extractTopicsFromTranscription } from "@/lib/helpers/academicAI";
 
@@ -42,6 +42,12 @@ type SpeechRecognitionErrorEventLike = {
   error: string;
 };
 
+type RecordingMarker = {
+  label: string;
+  elapsedSeconds: number;
+  createdAt: number;
+};
+
 interface RecordingInterfaceProps {
   subject: string;
   userId: Id<"users">;
@@ -62,6 +68,11 @@ export default function RecordingInterface({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
+  const [recordingMarkers, setRecordingMarkers] = useState<RecordingMarker[]>([]);
+  const [markerLabel, setMarkerLabel] = useState("Important point");
+  const [lastSpeechAt, setLastSpeechAt] = useState(0);
+  const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(null);
+  const [pauseSeconds, setPauseSeconds] = useState(0);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -72,7 +83,7 @@ export default function RecordingInterface({
   const endSession = useMutation(api.academicScribe.endStudySession);
   const createNote = useMutation(api.academicScribe.createStudyNote);
 
-  const startTimer = () => {
+  const startTimer = useCallback(() => {
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
     }
@@ -80,14 +91,14 @@ export default function RecordingInterface({
     timerIntervalRef.current = setInterval(() => {
       setElapsedTime((prev) => prev + 1);
     }, 1000);
-  };
+  }, []);
 
-  const stopTimer = () => {
+  const stopTimer = useCallback(() => {
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
-  };
+  }, []);
 
   // Initialize Web Speech API
   useEffect(() => {
@@ -108,6 +119,7 @@ export default function RecordingInterface({
           const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
             setTranscription((prev) => prev + transcript + " ");
+            setLastSpeechAt(Date.now());
           }
         }
       };
@@ -151,6 +163,10 @@ export default function RecordingInterface({
 
       setIsRecording(true);
       setIsPaused(false);
+      setRecordingMarkers([]);
+      setPauseStartedAt(null);
+      setPauseSeconds(0);
+      setLastSpeechAt(Date.now());
       setElapsedTime(0);
       setTranscription("");
 
@@ -163,7 +179,7 @@ export default function RecordingInterface({
     }
   };
 
-  const pauseRecording = async () => {
+  const pauseRecording = useCallback(async () => {
     if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
 
     try {
@@ -173,14 +189,15 @@ export default function RecordingInterface({
 
       recognitionRef.current.stop();
       stopTimer();
+      setPauseStartedAt(Date.now());
       setIsPaused(true);
       toast.info("Recording paused");
     } catch {
       toast.error("Failed to pause recording");
     }
-  };
+  }, [sessionId, stopTimer]);
 
-  const resumeRecording = async () => {
+  const resumeRecording = useCallback(async () => {
     if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
 
     try {
@@ -189,13 +206,17 @@ export default function RecordingInterface({
       }
 
       recognitionRef.current.start();
+      if (pauseStartedAt) {
+        setPauseSeconds((current) => current + Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000)));
+      }
+      setPauseStartedAt(null);
       startTimer();
       setIsPaused(false);
       toast.success("Recording resumed");
     } catch {
       toast.error("Failed to resume recording");
     }
-  };
+  }, [pauseStartedAt, sessionId, startTimer]);
 
   const stopRecording = async () => {
     if (!mediaRecorderRef.current || !sessionId) return;
@@ -237,6 +258,12 @@ export default function RecordingInterface({
           rawTranscription: transcription,
           subject,
           topics,
+          recordingMarkers,
+          transcriptStats: {
+            totalSeconds: elapsedTime,
+            pauseSeconds: pauseSeconds + (pauseStartedAt ? Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000)) : 0),
+            markerCount: recordingMarkers.length,
+          },
         });
 
         setIsTranscribing(false);
@@ -255,12 +282,79 @@ export default function RecordingInterface({
     }
   };
 
+  const discardRecording = async () => {
+    if (!mediaRecorderRef.current || !sessionId) return;
+
+    try {
+      if (mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Speech recognition may already be stopped.
+      }
+
+      stopTimer();
+
+      const elapsedMinutes = Math.max(1, Math.round(elapsedTime / 60));
+      await endSession({
+        sessionId: sessionId as Id<"studyClassSessions">,
+        durationMinutes: elapsedMinutes,
+      });
+
+      setIsRecording(false);
+      setIsPaused(false);
+      setTranscription("");
+      setRecordingMarkers([]);
+      setPauseStartedAt(null);
+      setPauseSeconds(0);
+      setLastSpeechAt(0);
+      setElapsedTime(0);
+      setSessionId(null);
+
+      toast.info("Recording discarded and reset.");
+    } catch {
+      toast.error("Failed to discard recording");
+    }
+  };
+
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
     return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
+
+  const addMarker = (label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+
+    setRecordingMarkers((current) => [
+      ...current,
+      {
+        label: trimmed,
+        elapsedSeconds: elapsedTime,
+        createdAt: Date.now(),
+      },
+    ]);
+    toast.success(`Marker added at ${formatTime(elapsedTime)}`);
+  };
+
+  useEffect(() => {
+    if (!isRecording || isPaused || !lastSpeechAt) return;
+
+    const silenceThresholdSeconds = 120;
+    const silentFor = Math.max(0, Date.now() - lastSpeechAt) / 1000;
+    const timeoutId = window.setTimeout(() => {
+      void pauseRecording();
+      toast.message("Auto-paused after extended silence. Resume when you are ready.");
+    }, Math.max(0, (silenceThresholdSeconds - silentFor) * 1000));
+
+    return () => window.clearTimeout(timeoutId);
+  }, [elapsedTime, isRecording, isPaused, lastSpeechAt, pauseRecording]);
 
   return (
     <div className="space-y-4">
@@ -323,6 +417,34 @@ export default function RecordingInterface({
             </div>
           )}
 
+          {isRecording && (
+            <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Input
+                  value={markerLabel}
+                  onChange={(event) => setMarkerLabel(event.target.value)}
+                  placeholder="Marker label"
+                  className="sm:flex-1"
+                />
+                <Button type="button" variant="outline" onClick={() => addMarker(markerLabel)} className="gap-2">
+                  <BookmarkPlus className="h-4 w-4" />
+                  Add Marker
+                </Button>
+              </div>
+              {recordingMarkers.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {recordingMarkers.map((marker) => (
+                    <Badge key={`${marker.createdAt}-${marker.elapsedSeconds}`} variant="secondary" className="gap-1">
+                      <span>{formatTime(marker.elapsedSeconds)}</span>
+                      <span>•</span>
+                      <span>{marker.label}</span>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex gap-2">
             {!isRecording ? (
               <Button
@@ -354,6 +476,14 @@ export default function RecordingInterface({
                   <StopCircle className="w-5 h-5" />
                   Stop Recording
                 </Button>
+                <Button
+                  onClick={discardRecording}
+                  size="lg"
+                  variant="outline"
+                  className="flex-1 gap-2 border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/30"
+                >
+                  Reset
+                </Button>
               </>
             )}
           </div>
@@ -367,6 +497,14 @@ export default function RecordingInterface({
           {isRecording && isPaused && (
             <div className="mt-3 p-2 bg-amber-100 dark:bg-amber-950/30 rounded text-sm text-amber-800 dark:text-amber-200">
               Recording is paused. Resume when you return from break.
+            </div>
+          )}
+
+          {isRecording && (
+            <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-3">
+              <p>Markers: {recordingMarkers.length}</p>
+              <p>Paused time: {Math.max(0, pauseSeconds)}s</p>
+              <p>Auto-pause: {isPaused ? "Idle" : "Active"}</p>
             </div>
           )}
         </CardContent>

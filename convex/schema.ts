@@ -1122,6 +1122,22 @@ export default defineSchema({
       ),
       createdAt: v.number(),
       updatedAt: v.number(),
+      recordingMarkers: v.optional(
+        v.array(
+          v.object({
+            label: v.string(),
+            elapsedSeconds: v.number(),
+            createdAt: v.number(),
+          })
+        )
+      ),
+      transcriptStats: v.optional(
+        v.object({
+          totalSeconds: v.number(),
+          pauseSeconds: v.number(),
+          markerCount: v.number(),
+        })
+      ),
       exportedAt: v.optional(v.number()),
       exportFormat: v.optional(v.union(v.literal("markdown"), v.literal("pdf"), v.literal("txt"))),
     })

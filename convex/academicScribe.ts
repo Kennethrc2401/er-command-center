@@ -241,6 +241,22 @@ export const createStudyNote = mutation({
     rawTranscription: v.string(),
     subject: v.string(),
     topics: v.optional(v.array(v.string())),
+    recordingMarkers: v.optional(
+      v.array(
+        v.object({
+          label: v.string(),
+          elapsedSeconds: v.number(),
+          createdAt: v.number(),
+        })
+      )
+    ),
+    transcriptStats: v.optional(
+      v.object({
+        totalSeconds: v.number(),
+        pauseSeconds: v.number(),
+        markerCount: v.number(),
+      })
+    ),
   },
   async handler(ctx, args) {
     const now = Date.now();
@@ -255,6 +271,8 @@ export const createStudyNote = mutation({
       topics: args.topics || [],
       createdAt: now,
       updatedAt: now,
+      recordingMarkers: args.recordingMarkers ?? [],
+      transcriptStats: args.transcriptStats,
     });
 
     // Create topic entries if provided
