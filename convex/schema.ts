@@ -1126,6 +1126,15 @@ export default defineSchema({
         v.array(
           v.object({
             label: v.string(),
+            markerType: v.optional(
+              v.union(
+                v.literal("Exam"),
+                v.literal("Definition"),
+                v.literal("Formula"),
+                v.literal("Action Item"),
+                v.literal("General")
+              )
+            ),
             elapsedSeconds: v.number(),
             createdAt: v.number(),
           })

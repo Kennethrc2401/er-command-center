@@ -245,6 +245,15 @@ export const createStudyNote = mutation({
       v.array(
         v.object({
           label: v.string(),
+          markerType: v.optional(
+            v.union(
+              v.literal("Exam"),
+              v.literal("Definition"),
+              v.literal("Formula"),
+              v.literal("Action Item"),
+              v.literal("General")
+            )
+          ),
           elapsedSeconds: v.number(),
           createdAt: v.number(),
         })
@@ -419,6 +428,34 @@ export const deleteStudyNote = mutation({
     // Delete note
     await ctx.db.delete(args.noteId);
 
+    return { success: true };
+  },
+});
+
+export const discardStudySession = mutation({
+  args: {
+    sessionId: v.id("studyClassSessions"),
+  },
+  async handler(ctx, args) {
+    const notes = await ctx.db
+      .query("studyNotes")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    for (const note of notes) {
+      const topics = await ctx.db
+        .query("studyNoteTopics")
+        .withIndex("by_note", (q) => q.eq("noteId", note._id))
+        .collect();
+
+      for (const topic of topics) {
+        await ctx.db.delete(topic._id);
+      }
+
+      await ctx.db.delete(note._id);
+    }
+
+    await ctx.db.delete(args.sessionId);
     return { success: true };
   },
 });

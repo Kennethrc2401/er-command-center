@@ -891,6 +891,29 @@ function StudyToolsPanelBody({
       .sort((a, b) => b.avgAccuracy - a.avgAccuracy);
   }, [performanceHistory]);
 
+  const weeklyDigest = useMemo(() => {
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const weeklyHistory = performanceHistory.filter((entry) => entry.date >= sevenDaysAgo);
+    const avgAccuracy = weeklyHistory.length > 0
+      ? Math.round(weeklyHistory.reduce((sum, entry) => sum + entry.accuracy, 0) / weeklyHistory.length)
+      : 0;
+    const weakCount = weakestTopics.length;
+    const backlog = pendingActionCount;
+    const streak = studyStreak.currentStreak;
+
+    const focus = weakCount > 0
+      ? `Prioritize ${weakestTopics[0].topic} and ${weakestTopics[Math.min(1, weakCount - 1)].topic}.`
+      : "Maintain review cadence with spaced cards.";
+
+    return {
+      avgAccuracy,
+      weakCount,
+      backlog,
+      streak,
+      focus,
+    };
+  }, [performanceHistory, weakestTopics, pendingActionCount, studyStreak.currentStreak]);
+
   const exportPack = (format: "markdown" | "txt") => {
     const selectedNotes = notes.filter((note) => selectedPackIds.has(note._id));
     if (selectedNotes.length === 0) return;
@@ -1555,6 +1578,35 @@ function StudyToolsPanelBody({
               </CardContent>
             </Card>
           )}
+
+          <Card className={`${sectionCardClass} border-t-4 border-t-emerald-500`}>
+            <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+              <CardTitle>Weekly Mastery Digest</CardTitle>
+              <CardDescription>One-view summary of momentum, weak spots, and what to do next.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 pt-5 sm:grid-cols-2 text-sm">
+              <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+                <p className="text-xs uppercase text-emerald-700 dark:text-emerald-300">Weekly Accuracy</p>
+                <p className="text-xl font-black text-emerald-700 dark:text-emerald-300">{weeklyDigest.avgAccuracy}%</p>
+              </div>
+              <div className="rounded-xl border border-amber-200/60 bg-amber-50/40 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
+                <p className="text-xs uppercase text-amber-700 dark:text-amber-300">Weak Topics</p>
+                <p className="text-xl font-black text-amber-700 dark:text-amber-300">{weeklyDigest.weakCount}</p>
+              </div>
+              <div className="rounded-xl border border-cyan-200/60 bg-cyan-50/40 p-3 dark:border-cyan-900/50 dark:bg-cyan-950/20">
+                <p className="text-xs uppercase text-cyan-700 dark:text-cyan-300">Action Backlog</p>
+                <p className="text-xl font-black text-cyan-700 dark:text-cyan-300">{weeklyDigest.backlog}</p>
+              </div>
+              <div className="rounded-xl border border-violet-200/60 bg-violet-50/40 p-3 dark:border-violet-900/50 dark:bg-violet-950/20">
+                <p className="text-xs uppercase text-violet-700 dark:text-violet-300">Current Streak</p>
+                <p className="text-xl font-black text-violet-700 dark:text-violet-300">{weeklyDigest.streak}d</p>
+              </div>
+              <div className="sm:col-span-2 rounded-xl border border-slate-200/70 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase text-slate-500">Recommended Focus</p>
+                <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{weeklyDigest.focus}</p>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
       </div>

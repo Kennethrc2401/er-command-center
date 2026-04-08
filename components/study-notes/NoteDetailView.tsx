@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
@@ -18,12 +18,13 @@ import {
   generateNoteSummary,
   formatNoteForExport,
   createTopicHierarchy,
+  organizeTranscriptionByTopics,
 } from "@/lib/helpers/academicAI";
 
 interface NoteDetailViewProps {
   note: Omit<Doc<"studyNotes">, "topics"> & {
     topics?: Array<{ topic: string; frequency: number; context?: string }>;
-    recordingMarkers?: Array<{ label: string; elapsedSeconds: number; createdAt: number }>;
+    recordingMarkers?: Array<{ label: string; markerType?: "Exam" | "Definition" | "Formula" | "Action Item" | "General"; elapsedSeconds: number; createdAt: number }>;
     transcriptStats?: { totalSeconds: number; pauseSeconds: number; markerCount: number };
   };
   onClose: () => void;
@@ -39,6 +40,7 @@ export default function NoteDetailView({
   const [editedContent, setEditedContent] = useState(note.content);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcriptSearch, setTranscriptSearch] = useState("");
+  const [cleanupDraft, setCleanupDraft] = useState(editedContent || note.content);
 
   const updateContent = useMutation(api.academicScribe.updateStudyNoteContent);
   const updateSummary = useMutation(api.academicScribe.updateNoteSummary);
@@ -53,6 +55,51 @@ export default function NoteDetailView({
     note.summary ||
     generateNoteSummary(note.content || "", noteTopics);
   const hierarchy = createTopicHierarchy(noteTopics, note.subject);
+  const cleanDraft = organizeTranscriptionByTopics(note.rawTranscription || note.content || "", noteTopics);
+  const markerGroups = useMemo(() => {
+    const groups = new Map<string, Array<{ label: string; markerType?: string; elapsedSeconds: number; createdAt: number }>>();
+    (note.recordingMarkers ?? []).forEach((marker) => {
+      const type = marker.markerType ?? "General";
+      const existing = groups.get(type) ?? [];
+      existing.push(marker);
+      groups.set(type, existing);
+    });
+    return Array.from(groups.entries());
+  }, [note.recordingMarkers]);
+
+  const cleanupCandidates = useMemo(() => {
+    const source = cleanupDraft || "";
+    const candidates: Array<{ from: string; to: string; reason: string }> = [];
+    const rules: Array<{ from: RegExp; replacement: string; reason: string }> = [
+      { from: /\bdefinately\b/gi, replacement: "definitely", reason: "Common transcription misspelling" },
+      { from: /\bteh\b/gi, replacement: "the", reason: "Keyboard/transcription typo" },
+      { from: /\brecieve\b/gi, replacement: "receive", reason: "Common misspelling" },
+      { from: /\buh+\b/gi, replacement: "", reason: "Filler term" },
+      { from: /\bum+\b/gi, replacement: "", reason: "Filler term" },
+      { from: /\binaudible\b/gi, replacement: "[review required]", reason: "Unclear audio token" },
+    ];
+
+    for (const rule of rules) {
+      const match = source.match(rule.from);
+      if (!match) continue;
+      candidates.push({ from: match[0], to: rule.replacement, reason: rule.reason });
+    }
+
+    return candidates.slice(0, 10);
+  }, [cleanupDraft]);
+
+  const nextStudyPlan = useMemo(() => {
+    const targets = keyPoints.slice(0, 3);
+    const flashcards = definitions.slice(0, 5).map((item) => ({ front: item.term, back: item.definition }));
+    const quiz = keyPoints.slice(0, 3).map((item, idx) => `Q${idx + 1}: Explain "${item}" in one sentence.`);
+    const reminders = [1, 3, 7].map((day) => {
+      const date = new Date();
+      date.setDate(date.getDate() + day);
+      return `${date.toLocaleDateString()} - ${day === 1 ? "Quick review" : day === 3 ? "Practice recall" : "Mini test"}`;
+    });
+
+    return { targets, flashcards, quiz, reminders };
+  }, [definitions, keyPoints]);
   const transcriptLines = (editedContent || note.content || "")
     .split(/\n+/)
     .map((line) => line.trim())
@@ -84,6 +131,7 @@ export default function NoteDetailView({
         content: editedContent,
         organizationStatus: "organized",
       });
+      setCleanupDraft(editedContent);
       toast.success("Content saved");
       setIsEditing(false);
     } catch {
@@ -91,6 +139,20 @@ export default function NoteDetailView({
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const applyCleanupSuggestion = (from: string, to: string) => {
+    if (!from) return;
+    const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const next = cleanupDraft.replace(new RegExp(escaped, "gi"), to);
+    setCleanupDraft(next);
+    setEditedContent(next);
+  };
+
+  const applyCleanDraftToEditor = () => {
+    setEditedContent(cleanDraft);
+    setCleanupDraft(cleanDraft);
+    toast.success("Clean draft copied to editor. Save to keep changes.");
   };
 
   const handleGenerateSummary = async () => {
@@ -198,7 +260,7 @@ export default function NoteDetailView({
 
       {/* Main Tabs */}
       <Tabs defaultValue="content" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 gap-2 sm:grid-cols-5">
+        <TabsList className="grid w-full grid-cols-2 gap-2 sm:grid-cols-6">
           <TabsTrigger value="content" className="gap-2">
             <FileText className="w-4 h-4" />
             <span className="hidden sm:inline">Content</span>
@@ -210,6 +272,10 @@ export default function NoteDetailView({
           <TabsTrigger value="summary" className="gap-2">
             <BookMarked className="w-4 h-4" />
             <span className="hidden sm:inline">Summary</span>
+          </TabsTrigger>
+          <TabsTrigger value="compare" className="gap-2">
+            <FileText className="w-4 h-4" />
+            <span className="hidden sm:inline">Compare</span>
           </TabsTrigger>
           <TabsTrigger value="topics" className="gap-2">
             Topics ({note.topics?.length || 0})
@@ -314,15 +380,44 @@ export default function NoteDetailView({
                     <CardTitle className="text-base flex items-center gap-2"><Bookmark className="h-4 w-4" /> Recording Markers</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    {note.recordingMarkers.map((marker) => (
-                      <div key={`${marker.createdAt}-${marker.elapsedSeconds}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-800">
-                        <span className="font-medium">{marker.label}</span>
-                        <Badge variant="secondary">{Math.floor(marker.elapsedSeconds / 60)}:{String(marker.elapsedSeconds % 60).padStart(2, "0")}</Badge>
+                    {markerGroups.map(([type, markers]) => (
+                      <div key={type} className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{type}</p>
+                        {markers.map((marker) => (
+                          <div key={`${marker.createdAt}-${marker.elapsedSeconds}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-800">
+                            <span className="font-medium">{marker.label}</span>
+                            <Badge variant="secondary">{Math.floor(marker.elapsedSeconds / 60)}:{String(marker.elapsedSeconds % 60).padStart(2, "0")}</Badge>
+                          </div>
+                        ))}
                       </div>
                     ))}
                   </CardContent>
                 </Card>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="compare" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Transcript vs Clean Notes</CardTitle>
+                  <CardDescription>Compare raw transcript with organized clean draft.</CardDescription>
+                </div>
+                <Button onClick={applyCleanDraftToEditor} size="sm" variant="outline">Use Clean Draft</Button>
+              </div>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+                <p className="mb-2 text-xs font-semibold uppercase text-slate-500">Raw Transcript</p>
+                <p className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{note.rawTranscription || note.content}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+                <p className="mb-2 text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-300">Clean Draft</p>
+                <p className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{cleanDraft}</p>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -425,6 +520,57 @@ export default function NoteDetailView({
                   <span>{point}</span>
                 </div>
               ))}
+            </CardContent>
+          </Card>
+
+          <Card className="border-amber-200 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/30">
+            <CardHeader>
+              <CardTitle className="text-base">Post-Class Cleanup Queue</CardTitle>
+              <CardDescription>Quick fixes for likely transcription mistakes.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {cleanupCandidates.length > 0 ? cleanupCandidates.map((candidate, idx) => (
+                <div key={`${candidate.from}-${idx}`} className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-white p-3 text-sm dark:border-amber-900 dark:bg-slate-900">
+                  <p><span className="font-semibold">{candidate.from}</span> → <span className="font-semibold">{candidate.to || "(remove)"}</span></p>
+                  <p className="text-xs text-slate-500">{candidate.reason}</p>
+                  <Button size="sm" variant="outline" onClick={() => applyCleanupSuggestion(candidate.from, candidate.to)}>Apply</Button>
+                </div>
+              )) : (
+                <p className="text-sm text-slate-500">No obvious cleanup items detected.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-violet-200 bg-violet-50/60 dark:border-violet-900 dark:bg-violet-950/30">
+            <CardHeader>
+              <CardTitle className="text-base">Next Study Plan</CardTitle>
+              <CardDescription>Auto-generated targets, flashcards, mini-quiz, and reminders.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase text-violet-700 dark:text-violet-300">Review Targets</p>
+                {nextStudyPlan.targets.map((target, idx) => (
+                  <p key={`${target}-${idx}`}>{idx + 1}. {target}</p>
+                ))}
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase text-violet-700 dark:text-violet-300">Flashcards</p>
+                {nextStudyPlan.flashcards.map((card, idx) => (
+                  <p key={`${card.front}-${idx}`}>Q: {card.front} · A: {card.back}</p>
+                ))}
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase text-violet-700 dark:text-violet-300">Mini Quiz</p>
+                {nextStudyPlan.quiz.map((item) => (
+                  <p key={item}>{item}</p>
+                ))}
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase text-violet-700 dark:text-violet-300">Reminder Schedule</p>
+                {nextStudyPlan.reminders.map((item) => (
+                  <p key={item}>{item}</p>
+                ))}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

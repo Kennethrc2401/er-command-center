@@ -12,6 +12,54 @@ import { Mic, StopCircle, BookmarkPlus } from "lucide-react";
 import { toast } from "sonner";
 import { extractTopicsFromTranscription } from "@/lib/helpers/academicAI";
 
+const RECORDING_DRAFT_STORAGE_KEY = "study-notes:recording-draft";
+
+type MarkerType = "Exam" | "Definition" | "Formula" | "Action Item" | "General";
+
+type ClassModePreset = {
+  id: string;
+  label: string;
+  subjectHint: string;
+  defaultClassName: string;
+  defaultMarkerLabel: string;
+  defaultMarkerType: MarkerType;
+  autoPauseThresholdSeconds: number;
+  preferredExportFormat: "markdown" | "txt";
+};
+
+const CLASS_MODE_PRESETS: ClassModePreset[] = [
+  {
+    id: "med-lecture",
+    label: "Med Lecture",
+    subjectHint: "Medicine / Nursing",
+    defaultClassName: "Clinical Lecture",
+    defaultMarkerLabel: "Exam hint",
+    defaultMarkerType: "Exam",
+    autoPauseThresholdSeconds: 150,
+    preferredExportFormat: "markdown",
+  },
+  {
+    id: "formula-heavy",
+    label: "Formula Heavy",
+    subjectHint: "Math / Physics / Engineering",
+    defaultClassName: "Problem-Solving Session",
+    defaultMarkerLabel: "Formula",
+    defaultMarkerType: "Formula",
+    autoPauseThresholdSeconds: 120,
+    preferredExportFormat: "markdown",
+  },
+  {
+    id: "review-session",
+    label: "Review Session",
+    subjectHint: "Exam Review",
+    defaultClassName: "Exam Review",
+    defaultMarkerLabel: "Action item",
+    defaultMarkerType: "Action Item",
+    autoPauseThresholdSeconds: 90,
+    preferredExportFormat: "txt",
+  },
+];
+
 type SpeechRecognitionLike = {
   continuous: boolean;
   interimResults: boolean;
@@ -44,6 +92,7 @@ type SpeechRecognitionErrorEventLike = {
 
 type RecordingMarker = {
   label: string;
+  markerType: MarkerType;
   elapsedSeconds: number;
   createdAt: number;
 };
@@ -61,27 +110,49 @@ export default function RecordingInterface({
   isRecording,
   setIsRecording,
 }: RecordingInterfaceProps) {
+  const defaultPreset = CLASS_MODE_PRESETS[0];
   const [className, setClassName] = useState(`${subject} Class`);
   const [professor, setProfessor] = useState("");
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(defaultPreset.id);
+  const [autoPauseThresholdSeconds, setAutoPauseThresholdSeconds] = useState<number>(defaultPreset.autoPauseThresholdSeconds);
+  const [preferredExportFormat, setPreferredExportFormat] = useState<"markdown" | "txt">(defaultPreset.preferredExportFormat);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [transcription, setTranscription] = useState("");
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [recordingMarkers, setRecordingMarkers] = useState<RecordingMarker[]>([]);
-  const [markerLabel, setMarkerLabel] = useState("Important point");
+  const [markerLabel, setMarkerLabel] = useState(defaultPreset.defaultMarkerLabel);
+  const [markerType, setMarkerType] = useState<MarkerType>(defaultPreset.defaultMarkerType);
   const [lastSpeechAt, setLastSpeechAt] = useState(0);
   const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(null);
   const [pauseSeconds, setPauseSeconds] = useState(0);
+  const [audioQuality, setAudioQuality] = useState<"Good" | "Fair" | "Poor" | "Unknown">("Unknown");
+  const [hasRecoverableDraft, setHasRecoverableDraft] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const raw = window.localStorage.getItem(RECORDING_DRAFT_STORAGE_KEY);
+    if (!raw) return false;
+
+    try {
+      const parsed = JSON.parse(raw) as { transcription?: string };
+      return Boolean(parsed?.transcription);
+    } catch {
+      return false;
+    }
+  });
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const qualityIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const createSession = useMutation(api.academicScribe.createStudySession);
   const endSession = useMutation(api.academicScribe.endStudySession);
   const createNote = useMutation(api.academicScribe.createStudyNote);
+  const discardSession = useMutation(api.academicScribe.discardStudySession);
 
   const startTimer = useCallback(() => {
     if (timerIntervalRef.current) {
@@ -99,6 +170,104 @@ export default function RecordingInterface({
       timerIntervalRef.current = null;
     }
   }, []);
+
+  const stopAudioMeter = useCallback(() => {
+    if (qualityIntervalRef.current) {
+      clearInterval(qualityIntervalRef.current);
+      qualityIntervalRef.current = null;
+    }
+
+    if (audioContextRef.current) {
+      void audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
+    analyserRef.current = null;
+    setAudioQuality("Unknown");
+  }, []);
+
+  const startAudioMeter = useCallback((stream: MediaStream) => {
+    try {
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+
+      qualityIntervalRef.current = setInterval(() => {
+        if (!analyserRef.current) return;
+        const buffer = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(buffer);
+        const avg = buffer.reduce((sum, value) => sum + value, 0) / buffer.length;
+
+        if (avg > 28) {
+          setAudioQuality("Good");
+        } else if (avg > 14) {
+          setAudioQuality("Fair");
+        } else {
+          setAudioQuality("Poor");
+        }
+      }, 2000);
+    } catch {
+      setAudioQuality("Unknown");
+    }
+  }, []);
+
+  const applyClassPreset = useCallback((presetId: string) => {
+    const preset = CLASS_MODE_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+
+    setSelectedPresetId(preset.id);
+    setClassName(preset.defaultClassName);
+    setMarkerLabel(preset.defaultMarkerLabel);
+    setMarkerType(preset.defaultMarkerType);
+    setAutoPauseThresholdSeconds(preset.autoPauseThresholdSeconds);
+    setPreferredExportFormat(preset.preferredExportFormat);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("study-notes:preferred-export-format", preset.preferredExportFormat);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isRecording) return;
+
+    const intervalId = window.setInterval(() => {
+      const payload = {
+        className,
+        professor,
+        markerLabel,
+        markerType,
+        selectedPresetId,
+        autoPauseThresholdSeconds,
+        preferredExportFormat,
+        transcription,
+        elapsedTime,
+        recordingMarkers,
+        pauseSeconds,
+        updatedAt: Date.now(),
+      };
+      window.localStorage.setItem(RECORDING_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+    }, 20000);
+
+    return () => window.clearInterval(intervalId);
+  }, [
+    isRecording,
+    className,
+    professor,
+    markerLabel,
+    markerType,
+    selectedPresetId,
+    autoPauseThresholdSeconds,
+    preferredExportFormat,
+    transcription,
+    elapsedTime,
+    recordingMarkers,
+    pauseSeconds,
+  ]);
 
   // Initialize Web Speech API
   useEffect(() => {
@@ -155,6 +324,7 @@ export default function RecordingInterface({
       };
 
       mediaRecorder.start();
+      startAudioMeter(stream);
 
       // Start speech-to-text
       if (recognitionRef.current) {
@@ -169,6 +339,7 @@ export default function RecordingInterface({
       setLastSpeechAt(Date.now());
       setElapsedTime(0);
       setTranscription("");
+      setHasRecoverableDraft(false);
 
       // Start timer
       startTimer();
@@ -177,6 +348,51 @@ export default function RecordingInterface({
     } catch {
       toast.error("Failed to start recording");
     }
+  };
+
+  const restoreDraft = () => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(RECORDING_DRAFT_STORAGE_KEY);
+    if (!raw) return;
+
+    try {
+      const parsed = JSON.parse(raw) as {
+        className?: string;
+        professor?: string;
+        markerLabel?: string;
+        markerType?: MarkerType;
+        selectedPresetId?: string;
+        autoPauseThresholdSeconds?: number;
+        preferredExportFormat?: "markdown" | "txt";
+        transcription?: string;
+        elapsedTime?: number;
+        recordingMarkers?: RecordingMarker[];
+        pauseSeconds?: number;
+      };
+
+      if (parsed.className) setClassName(parsed.className);
+      if (parsed.professor) setProfessor(parsed.professor);
+      if (parsed.markerLabel) setMarkerLabel(parsed.markerLabel);
+      if (parsed.markerType) setMarkerType(parsed.markerType);
+      if (parsed.selectedPresetId) setSelectedPresetId(parsed.selectedPresetId);
+      if (parsed.autoPauseThresholdSeconds) setAutoPauseThresholdSeconds(parsed.autoPauseThresholdSeconds);
+      if (parsed.preferredExportFormat) setPreferredExportFormat(parsed.preferredExportFormat);
+      if (parsed.transcription) setTranscription(parsed.transcription);
+      if (parsed.elapsedTime) setElapsedTime(parsed.elapsedTime);
+      if (parsed.recordingMarkers) setRecordingMarkers(parsed.recordingMarkers);
+      if (parsed.pauseSeconds) setPauseSeconds(parsed.pauseSeconds);
+
+      toast.success("Recovered your last recording draft.");
+      setHasRecoverableDraft(false);
+    } catch {
+      toast.error("Could not restore draft.");
+    }
+  };
+
+  const clearDraft = () => {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(RECORDING_DRAFT_STORAGE_KEY);
+    setHasRecoverableDraft(false);
   };
 
   const pauseRecording = useCallback(async () => {
@@ -237,6 +453,7 @@ export default function RecordingInterface({
 
       // Stop timer
       stopTimer();
+      stopAudioMeter();
 
       setIsRecording(false);
       setIsPaused(false);
@@ -274,6 +491,7 @@ export default function RecordingInterface({
         // Reset form
         setTranscription("");
         setSessionId(null);
+        clearDraft();
       } else {
         toast.error("No transcription captured");
       }
@@ -298,11 +516,10 @@ export default function RecordingInterface({
       }
 
       stopTimer();
+      stopAudioMeter();
 
-      const elapsedMinutes = Math.max(1, Math.round(elapsedTime / 60));
-      await endSession({
+      await discardSession({
         sessionId: sessionId as Id<"studyClassSessions">,
-        durationMinutes: elapsedMinutes,
       });
 
       setIsRecording(false);
@@ -314,6 +531,7 @@ export default function RecordingInterface({
       setLastSpeechAt(0);
       setElapsedTime(0);
       setSessionId(null);
+      clearDraft();
 
       toast.info("Recording discarded and reset.");
     } catch {
@@ -336,6 +554,7 @@ export default function RecordingInterface({
       ...current,
       {
         label: trimmed,
+        markerType,
         elapsedSeconds: elapsedTime,
         createdAt: Date.now(),
       },
@@ -346,7 +565,7 @@ export default function RecordingInterface({
   useEffect(() => {
     if (!isRecording || isPaused || !lastSpeechAt) return;
 
-    const silenceThresholdSeconds = 120;
+    const silenceThresholdSeconds = autoPauseThresholdSeconds;
     const silentFor = Math.max(0, Date.now() - lastSpeechAt) / 1000;
     const timeoutId = window.setTimeout(() => {
       void pauseRecording();
@@ -354,10 +573,69 @@ export default function RecordingInterface({
     }, Math.max(0, (silenceThresholdSeconds - silentFor) * 1000));
 
     return () => window.clearTimeout(timeoutId);
-  }, [elapsedTime, isRecording, isPaused, lastSpeechAt, pauseRecording]);
+  }, [elapsedTime, isRecording, isPaused, lastSpeechAt, autoPauseThresholdSeconds, pauseRecording]);
 
   return (
     <div className="space-y-4">
+      {hasRecoverableDraft && !isRecording && (
+        <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30">
+          <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-amber-900 dark:text-amber-100">A previous draft was found from an interrupted session.</p>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={clearDraft}>Dismiss</Button>
+              <Button size="sm" onClick={restoreDraft}>Restore Draft</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!isRecording && (
+        <Card className="border-cyan-200 bg-cyan-50/70 dark:border-cyan-900 dark:bg-cyan-950/30">
+          <CardContent className="space-y-3 pt-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm font-semibold text-cyan-900 dark:text-cyan-100">Class Mode Preset</p>
+              <Badge variant="secondary">Preferred Export: {preferredExportFormat.toUpperCase()}</Badge>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium">Preset</label>
+                <select
+                  className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+                  value={selectedPresetId}
+                  onChange={(event) => applyClassPreset(event.target.value)}
+                >
+                  {CLASS_MODE_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>{preset.label} ({preset.subjectHint})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium">Auto-Pause (seconds)</label>
+                <Input
+                  type="number"
+                  min={30}
+                  max={300}
+                  value={autoPauseThresholdSeconds}
+                  onChange={(event) => setAutoPauseThresholdSeconds(Math.max(30, Math.min(300, Number(event.target.value) || 120)))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium">Default Marker Type</label>
+                <select
+                  className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+                  value={markerType}
+                  onChange={(event) => setMarkerType(event.target.value as MarkerType)}
+                >
+                  {(["Exam", "Definition", "Formula", "Action Item", "General"] as MarkerType[]).map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Session Setup */}
       {!isRecording && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -426,6 +704,15 @@ export default function RecordingInterface({
                   placeholder="Marker label"
                   className="sm:flex-1"
                 />
+                  <select
+                    className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+                    value={markerType}
+                    onChange={(event) => setMarkerType(event.target.value as MarkerType)}
+                  >
+                    {(["Exam", "Definition", "Formula", "Action Item", "General"] as MarkerType[]).map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 <Button type="button" variant="outline" onClick={() => addMarker(markerLabel)} className="gap-2">
                   <BookmarkPlus className="h-4 w-4" />
                   Add Marker
@@ -436,6 +723,8 @@ export default function RecordingInterface({
                   {recordingMarkers.map((marker) => (
                     <Badge key={`${marker.createdAt}-${marker.elapsedSeconds}`} variant="secondary" className="gap-1">
                       <span>{formatTime(marker.elapsedSeconds)}</span>
+                      <span>•</span>
+                      <span>{marker.markerType}</span>
                       <span>•</span>
                       <span>{marker.label}</span>
                     </Badge>
@@ -504,7 +793,7 @@ export default function RecordingInterface({
             <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-3">
               <p>Markers: {recordingMarkers.length}</p>
               <p>Paused time: {Math.max(0, pauseSeconds)}s</p>
-              <p>Auto-pause: {isPaused ? "Idle" : "Active"}</p>
+              <p>Audio quality: {audioQuality}</p>
             </div>
           )}
         </CardContent>
