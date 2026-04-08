@@ -66,6 +66,9 @@ type SpeechRecognitionLike = {
   lang: string;
   start: () => void;
   stop: () => void;
+  abort?: () => void;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
   onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
   onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
 };
@@ -125,6 +128,7 @@ export default function RecordingInterface({
   const [markerLabel, setMarkerLabel] = useState(defaultPreset.defaultMarkerLabel);
   const [markerType, setMarkerType] = useState<MarkerType>(defaultPreset.defaultMarkerType);
   const [lastSpeechAt, setLastSpeechAt] = useState(0);
+  const [lastAudioActivityAt, setLastAudioActivityAt] = useState(0);
   const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(null);
   const [pauseSeconds, setPauseSeconds] = useState(0);
   const [audioQuality, setAudioQuality] = useState<"Good" | "Fair" | "Poor" | "Unknown">("Unknown");
@@ -145,6 +149,10 @@ export default function RecordingInterface({
   const audioChunksRef = useRef<Blob[]>([]);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const recognitionRestartTimeoutRef = useRef<number | NodeJS.Timeout | null>(null);
+  const recognitionShouldRunRef = useRef(false);
+  const isRecordingRef = useRef(false);
+  const isPausedRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const qualityIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -186,6 +194,53 @@ export default function RecordingInterface({
     setAudioQuality("Unknown");
   }, []);
 
+  const clearRecognitionRestart = useCallback(() => {
+    if (recognitionRestartTimeoutRef.current) {
+      clearTimeout(recognitionRestartTimeoutRef.current);
+      recognitionRestartTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+  }, [isPaused]);
+
+  const startRecognition = useCallback((allowRetry = true) => {
+    const recognition = recognitionRef.current;
+    if (!recognition || !recognitionShouldRunRef.current || !isRecordingRef.current || isPausedRef.current) {
+      return false;
+    }
+
+    try {
+      recognition.start();
+      return true;
+    } catch (error) {
+      const errorName = error instanceof DOMException ? error.name : "";
+      if (allowRetry && errorName === "InvalidStateError") {
+        clearRecognitionRestart();
+        recognitionRestartTimeoutRef.current = window.setTimeout(() => {
+          void startRecognition(false);
+        }, 300);
+      }
+      return false;
+    }
+  }, [clearRecognitionRestart]);
+
+  const stopRecognition = useCallback(() => {
+    recognitionShouldRunRef.current = false;
+    clearRecognitionRestart();
+
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // Speech recognition may already be stopping or stopped.
+    }
+  }, [clearRecognitionRestart]);
+
   const startAudioMeter = useCallback((stream: MediaStream) => {
     try {
       const audioContext = new AudioContext();
@@ -202,6 +257,10 @@ export default function RecordingInterface({
         const buffer = new Uint8Array(analyserRef.current.frequencyBinCount);
         analyserRef.current.getByteFrequencyData(buffer);
         const avg = buffer.reduce((sum, value) => sum + value, 0) / buffer.length;
+
+        if (avg > 10) {
+          setLastAudioActivityAt(Date.now());
+        }
 
         if (avg > 28) {
           setAudioQuality("Good");
@@ -283,22 +342,42 @@ export default function RecordingInterface({
       recognitionRef.current.interimResults = true;
       recognitionRef.current.lang = "en-US";
 
+      recognitionRef.current.onstart = () => {
+        setLastSpeechAt(Date.now());
+      };
+
+      recognitionRef.current.onend = () => {
+        if (recognitionShouldRunRef.current && isRecordingRef.current && !isPausedRef.current) {
+          clearRecognitionRestart();
+          recognitionRestartTimeoutRef.current = window.setTimeout(() => {
+            void startRecognition(false);
+          }, 300);
+        }
+      };
+
       recognitionRef.current.onresult = (event: SpeechRecognitionResultEventLike) => {
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
+          if (transcript.trim()) {
+            setLastSpeechAt(Date.now());
+          }
+
           if (event.results[i].isFinal) {
             setTranscription((prev) => prev + transcript + " ");
-            setLastSpeechAt(Date.now());
           }
         }
       };
 
       recognitionRef.current.onerror = (event: SpeechRecognitionErrorEventLike) => {
+        if (event.error === "no-speech" || event.error === "aborted") {
+          return;
+        }
+
         console.error("Speech recognition error:", event.error);
         toast.error(`Transcription error: ${event.error}`);
       };
     }
-  }, []);
+  }, [clearRecognitionRestart, startRecognition]);
 
   const startRecording = async () => {
     try {
@@ -323,13 +402,19 @@ export default function RecordingInterface({
         audioChunksRef.current.push(event.data);
       };
 
+      mediaRecorder.onstop = () => {
+        if (recognitionShouldRunRef.current && isRecordingRef.current && !isPausedRef.current) {
+          toast.message("Audio capture ended unexpectedly. You can restart the session if needed.");
+        }
+      };
+
       mediaRecorder.start();
       startAudioMeter(stream);
 
       // Start speech-to-text
-      if (recognitionRef.current) {
-        recognitionRef.current.start();
-      }
+      recognitionShouldRunRef.current = true;
+      clearRecognitionRestart();
+      void startRecognition();
 
       setIsRecording(true);
       setIsPaused(false);
@@ -337,6 +422,7 @@ export default function RecordingInterface({
       setPauseStartedAt(null);
       setPauseSeconds(0);
       setLastSpeechAt(Date.now());
+      setLastAudioActivityAt(Date.now());
       setElapsedTime(0);
       setTranscription("");
       setHasRecoverableDraft(false);
@@ -399,11 +485,14 @@ export default function RecordingInterface({
     if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
 
     try {
+      recognitionShouldRunRef.current = false;
+      clearRecognitionRestart();
+
       if (mediaRecorderRef.current.state === "recording") {
         mediaRecorderRef.current.pause();
       }
 
-      recognitionRef.current.stop();
+      stopRecognition();
       stopTimer();
       setPauseStartedAt(Date.now());
       setIsPaused(true);
@@ -411,17 +500,20 @@ export default function RecordingInterface({
     } catch {
       toast.error("Failed to pause recording");
     }
-  }, [sessionId, stopTimer]);
+  }, [clearRecognitionRestart, sessionId, stopRecognition, stopTimer]);
 
   const resumeRecording = useCallback(async () => {
     if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
 
     try {
+      recognitionShouldRunRef.current = true;
+
       if (mediaRecorderRef.current.state === "paused") {
         mediaRecorderRef.current.resume();
       }
 
-      recognitionRef.current.start();
+      clearRecognitionRestart();
+      void startRecognition();
       if (pauseStartedAt) {
         setPauseSeconds((current) => current + Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000)));
       }
@@ -432,12 +524,15 @@ export default function RecordingInterface({
     } catch {
       toast.error("Failed to resume recording");
     }
-  }, [pauseStartedAt, sessionId, startTimer]);
+  }, [clearRecognitionRestart, pauseStartedAt, sessionId, startRecognition, startTimer]);
 
   const stopRecording = async () => {
     if (!mediaRecorderRef.current || !sessionId) return;
 
     try {
+      recognitionShouldRunRef.current = false;
+      clearRecognitionRestart();
+
       // Stop media recorder
       if (mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
@@ -445,11 +540,7 @@ export default function RecordingInterface({
       mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
 
       // Stop speech recognition
-      try {
-        recognitionRef.current?.stop();
-      } catch {
-        // Speech recognition may already be stopped during pause.
-      }
+      stopRecognition();
 
       // Stop timer
       stopTimer();
@@ -461,7 +552,7 @@ export default function RecordingInterface({
       // End session
       await endSession({
         sessionId: sessionId as Id<"studyClassSessions">,
-        durationMinutes: Math.max(1, Math.round(elapsedTime / 60)),
+        durationMinutes: Math.max(1, Math.round((elapsedTime - pauseSeconds) / 60)),
       });
 
       // Create note with transcription
@@ -497,6 +588,9 @@ export default function RecordingInterface({
       }
     } catch {
       toast.error("Failed to stop recording");
+    } finally {
+      setIsRecording(false);
+      setIsPaused(false);
     }
   };
 
@@ -504,16 +598,15 @@ export default function RecordingInterface({
     if (!mediaRecorderRef.current || !sessionId) return;
 
     try {
+      recognitionShouldRunRef.current = false;
+      clearRecognitionRestart();
+
       if (mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
       mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
 
-      try {
-        recognitionRef.current?.stop();
-      } catch {
-        // Speech recognition may already be stopped.
-      }
+      stopRecognition();
 
       stopTimer();
       stopAudioMeter();
@@ -536,6 +629,9 @@ export default function RecordingInterface({
       toast.info("Recording discarded and reset.");
     } catch {
       toast.error("Failed to discard recording");
+    } finally {
+      setIsRecording(false);
+      setIsPaused(false);
     }
   };
 
@@ -563,17 +659,46 @@ export default function RecordingInterface({
   };
 
   useEffect(() => {
-    if (!isRecording || isPaused || !lastSpeechAt) return;
+    if (!isRecording || isPaused) return;
+
+    const lastActivityAt = Math.max(lastSpeechAt, lastAudioActivityAt);
+    if (!lastActivityAt) return;
 
     const silenceThresholdSeconds = autoPauseThresholdSeconds;
-    const silentFor = Math.max(0, Date.now() - lastSpeechAt) / 1000;
+    const silentFor = Math.max(0, Date.now() - lastActivityAt) / 1000;
     const timeoutId = window.setTimeout(() => {
       void pauseRecording();
       toast.message("Auto-paused after extended silence. Resume when you are ready.");
     }, Math.max(0, (silenceThresholdSeconds - silentFor) * 1000));
 
     return () => window.clearTimeout(timeoutId);
-  }, [elapsedTime, isRecording, isPaused, lastSpeechAt, autoPauseThresholdSeconds, pauseRecording]);
+  }, [elapsedTime, isRecording, isPaused, lastSpeechAt, lastAudioActivityAt, autoPauseThresholdSeconds, pauseRecording]);
+
+  useEffect(() => {
+    return () => {
+      recognitionShouldRunRef.current = false;
+      clearRecognitionRestart();
+      stopTimer();
+      stopAudioMeter();
+
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore cleanup errors.
+      }
+
+      const mediaRecorder = mediaRecorderRef.current;
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        try {
+          mediaRecorder.stop();
+        } catch {
+          // Ignore cleanup errors.
+        }
+      }
+
+      mediaRecorder?.stream.getTracks().forEach((track) => track.stop());
+    };
+  }, [clearRecognitionRestart, stopAudioMeter, stopTimer]);
 
   return (
     <div className="space-y-4">
