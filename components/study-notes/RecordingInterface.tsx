@@ -481,6 +481,7 @@ export default function RecordingInterface({
       // Start speech-to-text
       console.log("🎤 Recording: About to start speech recognition");
       recognitionShouldRunRef.current = true;
+      isRecordingRef.current = true;  // Set ref immediately before calling startRecognition
       clearRecognitionRestart();
       const recognitionStarted = startRecognition();
       console.log("🎤 Recording: Speech recognition start result:", recognitionStarted);
@@ -593,6 +594,8 @@ export default function RecordingInterface({
     try {
       console.log("▶️  Resume: User resumed recording");
       recognitionShouldRunRef.current = true;
+      isRecordingRef.current = true;  // Set ref immediately before calling startRecognition
+      isPausedRef.current = false;    // Set ref immediately before calling startRecognition
 
       if (mediaRecorderRef.current.state === "paused") {
         mediaRecorderRef.current.resume();
