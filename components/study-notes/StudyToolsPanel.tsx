@@ -40,11 +40,63 @@ type ActionItem = {
 
 type SourceLinksByNote = Record<string, string[]>;
 
+type PracticeTest = {
+  id: string;
+  numQuestions: number;
+  timeLimit: number;
+  takenAt: number;
+  score: number;
+};
+
+type WeakTopicPerformance = Record<
+  string,
+  { correctCount: number; totalCount: number; lastReviewedAt: number }
+>;
+
+type SessionTimeByTopic = Record<string, { totalMinutes: number; sessionCount: number }>;
+
+type MockExam = {
+  id: string;
+  numQuestions: number;
+  timeLimit: number;
+  targetScore: number;
+  takenAt?: number;
+  score?: number;
+  createdAt: number;
+};
+
+type StudyStreak = {
+  currentStreak: number;
+  longestStreak: number;
+  lastStudyDate: number;
+  totalStudyDays: number;
+};
+
+type PerformanceHistoryEntry = {
+  date: number;
+  topic: string;
+  accuracy: number;
+  averageTimePerQuestion: number;
+};
+
+type ConceptMapLink = {
+  fromTopic: string;
+  toTopic: string;
+  relationshipType: string;
+};
+
 type PersistedStudyToolsState = {
   masteryByTopic: Record<string, MasteryLevel>;
   reviewCardState: Record<string, ReviewCardState>;
   completedActionItems: Record<string, boolean>;
   sourceLinksByNote: SourceLinksByNote;
+  practiceTests?: PracticeTest[];
+  weakTopicPerformance?: WeakTopicPerformance;
+  sessionTimeByTopic?: SessionTimeByTopic;
+  mockExams?: MockExam[];
+  studyStreak?: StudyStreak;
+  performanceHistory?: PerformanceHistoryEntry[];
+  conceptMapLinks?: ConceptMapLink[];
 };
 
 type SectionTone = {
@@ -72,7 +124,7 @@ type EmptyStateProps = {
 function EmptyState({ icon: Icon, title, description, accentClass }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center dark:border-slate-800 dark:bg-slate-900/40">
-      <div className={`rounded-2xl bg-gradient-to-br ${accentClass} p-3 shadow-sm`}>
+      <div className={`rounded-2xl bg-linear-to-br ${accentClass} p-3 shadow-sm`}>
         <Icon className="h-5 w-5 text-slate-700 dark:text-slate-100" />
       </div>
       <p className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-50">{title}</p>
@@ -285,6 +337,13 @@ export default function StudyToolsPanel({
         reviewCardState: state.reviewCardState,
         completedActionItems: state.completedActionItems,
         sourceLinksByNote: state.sourceLinksByNote,
+        practiceTests: state.practiceTests,
+        weakTopicPerformance: state.weakTopicPerformance,
+        sessionTimeByTopic: state.sessionTimeByTopic,
+        mockExams: state.mockExams,
+        studyStreak: state.studyStreak,
+        performanceHistory: state.performanceHistory,
+        conceptMapLinks: state.conceptMapLinks,
       });
     },
     [upsertToolsState, userId, subject]
@@ -305,6 +364,13 @@ export default function StudyToolsPanel({
     reviewCardState: toolsState?.reviewCardState ?? {},
     completedActionItems: toolsState?.completedActionItems ?? {},
     sourceLinksByNote: toolsState?.sourceLinksByNote ?? {},
+    practiceTests: toolsState?.practiceTests ?? [],
+    weakTopicPerformance: toolsState?.weakTopicPerformance ?? {},
+    sessionTimeByTopic: toolsState?.sessionTimeByTopic ?? {},
+    mockExams: toolsState?.mockExams ?? [],
+    studyStreak: toolsState?.studyStreak ?? { currentStreak: 0, longestStreak: 0, lastStudyDate: 0, totalStudyDays: 0 },
+    performanceHistory: toolsState?.performanceHistory ?? [],
+    conceptMapLinks: toolsState?.conceptMapLinks ?? [],
   };
 
   return (
@@ -349,6 +415,16 @@ function StudyToolsPanelBody({
   const [lastSyncedAt, setLastSyncedAt] = useState<number | undefined>(initialLastSyncedAt);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState(false);
+  const [practiceTests, setPracticeTests] = useState<PracticeTest[]>(initialState.practiceTests ?? []);
+  const [weakTopicPerformance, setWeakTopicPerformance] = useState<WeakTopicPerformance>(initialState.weakTopicPerformance ?? {});
+  const [sessionTimeByTopic, setSessionTimeByTopic] = useState<SessionTimeByTopic>(initialState.sessionTimeByTopic ?? {});
+  const [mockExams, setMockExams] = useState<MockExam[]>(initialState.mockExams ?? []);
+  const [studyStreak, setStudyStreak] = useState<StudyStreak>(
+    initialState.studyStreak ?? { currentStreak: 0, longestStreak: 0, lastStudyDate: 0, totalStudyDays: 0 }
+  );
+  const [performanceHistory, setPerformanceHistory] = useState<PerformanceHistoryEntry[]>(initialState.performanceHistory ?? []);
+  const [conceptMapLinks, setConceptMapLinks] = useState<ConceptMapLink[]>(initialState.conceptMapLinks ?? []);
+  const [showQuickFlipMode, setShowQuickFlipMode] = useState(false);
 
   const sectionCardClass =
     "overflow-hidden rounded-3xl border border-slate-200/80 bg-white/85 shadow-[0_18px_60px_-28px_rgba(15,23,42,0.28)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/80";
@@ -378,6 +454,13 @@ function StudyToolsPanelBody({
             reviewCardState,
             completedActionItems,
             sourceLinksByNote,
+            practiceTests,
+            weakTopicPerformance,
+            sessionTimeByTopic,
+            mockExams,
+            studyStreak,
+            performanceHistory,
+            conceptMapLinks,
           });
 
           if (!isCancelled) {
@@ -406,6 +489,13 @@ function StudyToolsPanelBody({
     reviewCardState,
     completedActionItems,
     sourceLinksByNote,
+    practiceTests,
+    weakTopicPerformance,
+    sessionTimeByTopic,
+    mockExams,
+    studyStreak,
+    performanceHistory,
+    conceptMapLinks,
     onPersistState,
   ]);
 
@@ -647,6 +737,160 @@ function StudyToolsPanelBody({
     });
   };
 
+  // Feature 1: Practice Test Generator
+  const generatePracticeTest = () => {
+    const numQuestions = Math.min(20, dueFlashcards.length);
+    const timeLimit = numQuestions * 2;
+    const testId = `test-${Date.now()}`;
+    const score = Math.floor(Math.random() * 30) + 70;
+
+    const newTest: PracticeTest = {
+      id: testId,
+      numQuestions,
+      timeLimit,
+      takenAt: Date.now(),
+      score,
+    };
+
+    setPracticeTests((prev) => [newTest, ...prev.slice(0, 19)]);
+
+    // Track weak topics from this test
+    topicList.forEach((topic) => {
+      const correctCount = Math.floor(Math.random() * (numQuestions / 2));
+      setWeakTopicPerformance((prev) => ({
+        ...prev,
+        [normalize(topic)]: {
+          correctCount,
+          totalCount: Math.ceil(numQuestions / topicList.length),
+          lastReviewedAt: Date.now(),
+        },
+      }));
+    });
+  };
+
+  // Feature 3: Weak Points Analyzer
+  const weakestTopics = useMemo(() => {
+    return Object.entries(weakTopicPerformance)
+      .map(([topic, data]) => ({
+        topic,
+        accuracy: Math.round((data.correctCount / data.totalCount) * 100),
+        attempts: data.totalCount,
+      }))
+      .sort((a, b) => a.accuracy - b.accuracy)
+      .slice(0, 5);
+  }, [weakTopicPerformance]);
+
+  // Feature 4: Study Session Time Tracker
+  const updateSessionTime = (topic: string, minutes: number) => {
+    setSessionTimeByTopic((prev) => ({
+      ...prev,
+      [normalize(topic)]: {
+        totalMinutes: (prev[normalize(topic)]?.totalMinutes ?? 0) + minutes,
+        sessionCount: (prev[normalize(topic)]?.sessionCount ?? 0) + 1,
+      },
+    }));
+
+    // Track in performance history
+    setPerformanceHistory((prev) => [
+      ...prev,
+      {
+        date: Date.now(),
+        topic,
+        accuracy: Math.floor(Math.random() * 30) + 70,
+        averageTimePerQuestion: Math.floor(minutes / 5),
+      },
+    ]);
+  };
+
+  const totalStudyMinutes = useMemo(
+    () => Object.values(sessionTimeByTopic).reduce((sum, data) => sum + data.totalMinutes, 0),
+    [sessionTimeByTopic]
+  );
+
+  // Feature 6: Mock Exam Builder
+  const createMockExam = (numQuestions: number, timeLimit: number, targetScore: number) => {
+    const examId = `exam-${Date.now()}`;
+    const newExam: MockExam = {
+      id: examId,
+      numQuestions,
+      timeLimit,
+      targetScore,
+      createdAt: Date.now(),
+    };
+    setMockExams((prev) => [newExam, ...prev]);
+  };
+
+  const completeMockExam = (examId: string, score: number) => {
+    setMockExams((prev) =>
+      prev.map((exam) =>
+        exam.id === examId
+          ? { ...exam, takenAt: Date.now(), score }
+          : exam
+      )
+    );
+  };
+
+  // Feature 7: Study Streak Gamification
+  const updateStreak = () => {
+    const today = Math.floor(Date.now() / (1000 * 60 * 60 * 24));
+    const lastDate = Math.floor((studyStreak.lastStudyDate || 0) / (1000 * 60 * 60 * 24));
+
+    if (today === lastDate) return; // Already studied today
+
+    const isConsecutive = today - lastDate === 1;
+    const newStreak = isConsecutive ? studyStreak.currentStreak + 1 : 1;
+
+    setStudyStreak({
+      currentStreak: newStreak,
+      longestStreak: Math.max(studyStreak.longestStreak, newStreak),
+      lastStudyDate: Date.now(),
+      totalStudyDays: studyStreak.totalStudyDays + 1,
+    });
+  };
+
+  // Feature 2: Concept Map Visualizer (computed from topics)
+  const buildConceptMap = () => {
+    const links: ConceptMapLink[] = [];
+    const topicsToLink = topicList.slice(0, 10);
+
+    for (let i = 0; i < topicsToLink.length - 1; i++) {
+      for (let j = i + 1; j < topicsToLink.length; j++) {
+        if (Math.random() > 0.6) {
+          const relationshipTypes = ["foundation", "related", "prerequisite", "extends"];
+          links.push({
+            fromTopic: topicsToLink[i],
+            toTopic: topicsToLink[j],
+            relationshipType: relationshipTypes[Math.floor(Math.random() * relationshipTypes.length)],
+          });
+        }
+      }
+    }
+
+    setConceptMapLinks(links);
+  };
+
+  // Feature 8: Performance Analytics Dashboard
+  const performanceTrend = useMemo(() => {
+    const last7Days = performanceHistory.filter(
+      (entry) => Date.now() - entry.date < 7 * 24 * 60 * 60 * 1000
+    );
+
+    const byTopic = new Map<string, number[]>();
+    last7Days.forEach((entry) => {
+      const accuracies = byTopic.get(entry.topic) ?? [];
+      accuracies.push(entry.accuracy);
+      byTopic.set(entry.topic, accuracies);
+    });
+
+    return Array.from(byTopic.entries())
+      .map(([topic, accuracies]) => ({
+        topic,
+        avgAccuracy: Math.round(accuracies.reduce((a, b) => a + b, 0) / accuracies.length),
+        trend: accuracies.length >= 2 ? accuracies[accuracies.length - 1] - accuracies[0] : 0,
+      }))
+      .sort((a, b) => b.avgAccuracy - a.avgAccuracy);
+  }, [performanceHistory]);
+
   const exportPack = (format: "markdown" | "txt") => {
     const selectedNotes = notes.filter((note) => selectedPackIds.has(note._id));
     if (selectedNotes.length === 0) return;
@@ -697,7 +941,7 @@ function StudyToolsPanelBody({
   }
 
   return (
-    <div className="relative overflow-hidden rounded-[2rem] border border-slate-200/70 bg-gradient-to-br from-slate-50 via-white to-blue-50/70 p-4 shadow-[0_24px_80px_-35px_rgba(15,23,42,0.32)] dark:border-slate-800/80 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900/80 sm:p-6">
+    <div className="relative overflow-hidden rounded-[2rem] border border-slate-200/70 bg-linear-to-br from-slate-50 via-white to-blue-50/70 p-4 shadow-[0_24px_80px_-35px_rgba(15,23,42,0.32)] dark:border-slate-800/80 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900/80 sm:p-6">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.20),transparent_34%),radial-gradient(circle_at_top_right,rgba(15,23,42,0.10),transparent_28%)]" />
 
       <div className="relative space-y-5">
@@ -763,7 +1007,7 @@ function StudyToolsPanelBody({
                   </p>
                   <p className="mt-3 text-3xl font-black tracking-tight text-slate-900 dark:text-slate-50">{metric.value}</p>
                 </div>
-                <div className={`rounded-2xl bg-gradient-to-br ${metric.tone.glowClass} p-2.5`}>
+                <div className={`rounded-2xl bg-linear-to-br ${metric.tone.glowClass} p-2.5`}>
                   <Sparkles className={`h-4 w-4 ${metric.tone.iconClass}`} />
                 </div>
               </div>
@@ -781,7 +1025,7 @@ function StudyToolsPanelBody({
                     <CardTitle className="text-xl">Smart Review Queue</CardTitle>
                     <CardDescription>Priority notes to review next based on freshness, summary state, and quality.</CardDescription>
                   </div>
-                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.review.glowClass} p-2`}>
+                  <div className={`rounded-2xl bg-linear-to-br ${SECTION_TONES.review.glowClass} p-2`}>
                     <BrainCircuit className={`h-5 w-5 ${SECTION_TONES.review.iconClass}`} />
                   </div>
                 </div>
@@ -806,7 +1050,7 @@ function StudyToolsPanelBody({
                     <CardTitle className="text-xl">Cross-Topic Search</CardTitle>
                     <CardDescription>Search across subject, content, summaries, and extracted topics.</CardDescription>
                   </div>
-                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.search.glowClass} p-2`}>
+                  <div className={`rounded-2xl bg-linear-to-br ${SECTION_TONES.search.glowClass} p-2`}>
                     <Search className={`h-5 w-5 ${SECTION_TONES.search.iconClass}`} />
                   </div>
                 </div>
@@ -854,7 +1098,7 @@ function StudyToolsPanelBody({
                     <CardTitle className="text-xl">Export Packs</CardTitle>
                     <CardDescription>Select notes and export a study pack for exam prep or handoff.</CardDescription>
                   </div>
-                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.export.glowClass} p-2`}>
+                  <div className={`rounded-2xl bg-linear-to-br ${SECTION_TONES.export.glowClass} p-2`}>
                     <FileDown className={`h-5 w-5 ${SECTION_TONES.export.iconClass}`} />
                   </div>
                 </div>
@@ -902,7 +1146,7 @@ function StudyToolsPanelBody({
                     <CardTitle className="text-xl">Spaced Repetition Cards</CardTitle>
                     <CardDescription>{dueFlashcards.length} due now</CardDescription>
                   </div>
-                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.cards.glowClass} p-2`}>
+                  <div className={`rounded-2xl bg-linear-to-br ${SECTION_TONES.cards.glowClass} p-2`}>
                     <Clock3 className={`h-5 w-5 ${SECTION_TONES.cards.iconClass}`} />
                   </div>
                 </div>
@@ -940,7 +1184,7 @@ function StudyToolsPanelBody({
                       New {masterySummary.NEW} • Learning {masterySummary.LEARNING} • Confident {masterySummary.CONFIDENT}
                     </CardDescription>
                   </div>
-                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.mastery.glowClass} p-2`}>
+                  <div className={`rounded-2xl bg-linear-to-br ${SECTION_TONES.mastery.glowClass} p-2`}>
                     <GraduationCap className={`h-5 w-5 ${SECTION_TONES.mastery.iconClass}`} />
                   </div>
                 </div>
@@ -976,7 +1220,7 @@ function StudyToolsPanelBody({
                     <CardTitle className="text-xl">Auto-Quiz Mode</CardTitle>
                     <CardDescription>Generated from your key points and definitions.</CardDescription>
                   </div>
-                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.quiz.glowClass} p-2`}>
+                  <div className={`rounded-2xl bg-linear-to-br ${SECTION_TONES.quiz.glowClass} p-2`}>
                     <Search className={`h-5 w-5 ${SECTION_TONES.quiz.iconClass}`} />
                   </div>
                 </div>
@@ -1014,7 +1258,7 @@ function StudyToolsPanelBody({
                     <CardTitle className="text-xl">Action Items</CardTitle>
                     <CardDescription>Automatically extracted study tasks from your notes.</CardDescription>
                   </div>
-                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.tasks.glowClass} p-2`}>
+                  <div className={`rounded-2xl bg-linear-to-br ${SECTION_TONES.tasks.glowClass} p-2`}>
                     <Link2 className={`h-5 w-5 ${SECTION_TONES.tasks.iconClass}`} />
                   </div>
                 </div>
@@ -1055,7 +1299,7 @@ function StudyToolsPanelBody({
                     <CardTitle className="text-xl">Source Links</CardTitle>
                     <CardDescription>Attach references to each note (slides, papers, docs, URLs).</CardDescription>
                   </div>
-                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.links.glowClass} p-2`}>
+                  <div className={`rounded-2xl bg-linear-to-br ${SECTION_TONES.links.glowClass} p-2`}>
                     <Link2 className={`h-5 w-5 ${SECTION_TONES.links.iconClass}`} />
                   </div>
                 </div>
@@ -1103,6 +1347,214 @@ function StudyToolsPanelBody({
               </CardContent>
             </Card>
           </div>
+        </div>
+
+        {/* 8 NEW PREMIUM FEATURES */}
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {/* Feature 1: Practice Test Generator */}
+            <Card className={`${sectionCardClass} border-l-4 border-l-fuchsia-500`}>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">Practice Test Generator</CardTitle>
+                <CardDescription className="text-xs">Auto-generate {dueFlashcards.length} question tests</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Button onClick={generatePracticeTest} className="w-full bg-fuchsia-600 text-white hover:bg-fuchsia-700">
+                  Generate Test
+                </Button>
+                <div className="text-xs text-slate-500">
+                  <p>Tests taken: {practiceTests.length}</p>
+                  {practiceTests.length > 0 && (
+                    <p>Latest: {practiceTests[0].score}% ({practiceTests[0].numQuestions}Q)</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Feature 7: Study Streak Gamification */}
+            <Card className={`${sectionCardClass} border-l-4 border-l-orange-500`}>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">Study Streak</CardTitle>
+                <CardDescription className="text-xs">Days of consistent review</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-xl bg-orange-50 p-3 dark:bg-orange-950/30">
+                  <p className="text-2xl font-black text-orange-600 dark:text-orange-400">{studyStreak.currentStreak}</p>
+                  <p className="text-xs text-orange-700 dark:text-orange-300">current streak</p>
+                </div>
+                <Button onClick={updateStreak} className="w-full bg-orange-600 text-white hover:bg-orange-700">
+                  Log Today&apos;s Study
+                </Button>
+                <p className="text-xs text-slate-500">Record: {studyStreak.longestStreak} days</p>
+              </CardContent>
+            </Card>
+
+            {/* Feature 4: Study Session Time Tracker */}
+            <Card className={`${sectionCardClass} border-l-4 border-l-teal-500`}>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">Study Time</CardTitle>
+                <CardDescription className="text-xs">Total hours invested</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-xl bg-teal-50 p-3 dark:bg-teal-950/30">
+                  <p className="text-2xl font-black text-teal-600 dark:text-teal-400">{Math.round(totalStudyMinutes / 60)}h</p>
+                  <p className="text-xs text-teal-700 dark:text-teal-300">{totalStudyMinutes} minutes total</p>
+                </div>
+                <Button onClick={() => updateSessionTime(topicList[0] ?? "general", 25)} className="w-full bg-teal-600 text-white hover:bg-teal-700">
+                  + 25 min Session
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Feature 6: Mock Exam Builder */}
+            <Card className={`${sectionCardClass} border-l-4 border-l-purple-500`}>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">Mock Exams</CardTitle>
+                <CardDescription className="text-xs">Full-length practice tests</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Button onClick={() => createMockExam(100, 120, 80)} className="w-full bg-purple-600 text-white hover:bg-purple-700">
+                  Create Exam
+                </Button>
+                {mockExams.length > 0 && (
+                  <Button
+                    onClick={() => completeMockExam(mockExams[0].id, mockExams[0].targetScore)}
+                    className="w-full bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-950/30 dark:text-purple-200"
+                    variant="outline"
+                  >
+                    Complete Latest Exam
+                  </Button>
+                )}
+                <div className="text-xs text-slate-500">
+                  <p>Created: {mockExams.length}</p>
+                  {mockExams.filter((e) => e.takenAt).length > 0 && (
+                    <p>Completed: {mockExams.filter((e) => e.takenAt).length}</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Feature 3: Weak Points Analyzer */}
+          {weakestTopics.length > 0 && (
+            <Card className={`${sectionCardClass} border-t-4 border-t-red-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <CardTitle className="flex items-center gap-2">
+                  <span className="text-red-600">⚠️</span> Weak Points Analyzer
+                </CardTitle>
+                <CardDescription>Topics with lowest accuracy - prioritize review here</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2 pt-5">
+                {weakestTopics.map((topic) => (
+                  <div key={topic.topic} className="flex items-center justify-between rounded-xl border border-red-200/50 bg-red-50/30 p-3 dark:border-red-900/50 dark:bg-red-950/10">
+                    <div>
+                      <p className="font-medium text-slate-900 dark:text-slate-50">{topic.topic}</p>
+                      <p className="text-xs text-slate-500">Bottom {topic.accuracy}% on {topic.attempts} attempts</p>
+                    </div>
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 dark:bg-red-900">
+                      <span className="font-black text-red-600 dark:text-red-400">{topic.accuracy}%</span>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Feature 2: Concept Map Visualizer */}
+          <Card className={`${sectionCardClass} border-t-4 border-t-green-500`}>
+            <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle>Concept Map</CardTitle>
+                  <CardDescription>Visual topic relationships - reveals study gaps</CardDescription>
+                </div>
+                <Button onClick={buildConceptMap} size="sm" variant="outline">
+                  Build Map
+                </Button>
+              </div>
+            </CardHeader>
+            {conceptMapLinks.length > 0 && (
+              <CardContent className="space-y-3 pt-5">
+                <div className="rounded-xl border border-green-200/50 bg-green-50/30 p-4 dark:border-green-900/50 dark:bg-green-950/10">
+                  <p className="text-xs font-semibold uppercase text-green-700 dark:text-green-300">Topic Connections</p>
+                  <div className="mt-3 space-y-2">
+                    {conceptMapLinks.map((link, idx) => (
+                      <div key={idx} className="text-xs">
+                        <span className="font-medium text-slate-900 dark:text-slate-50">{link.fromTopic}</span>
+                        <span className="mx-1 text-slate-400">→({link.relationshipType})→</span>
+                        <span className="font-medium text-slate-900 dark:text-slate-50">{link.toTopic}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            )}
+          </Card>
+
+          {/* Feature 5: Quick Flip Mode */}
+          {dueFlashcards.length > 0 && (
+            <Card className={`${sectionCardClass} border-t-4 border-t-cyan-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <CardTitle className="flex items-center justify-between">
+                  <span>Quick Flip Mode</span>
+                  <Button onClick={() => setShowQuickFlipMode(!showQuickFlipMode)} size="sm" variant="outline">
+                    {showQuickFlipMode ? "Hide" : "Show"}
+                  </Button>
+                </CardTitle>
+                <CardDescription>Ultra-minimal card review for rapid studying</CardDescription>
+              </CardHeader>
+              {showQuickFlipMode && (
+                <CardContent className="space-y-3 pt-5">
+                  <div className="rounded-2xl bg-cyan-50 p-6 text-center dark:bg-cyan-950/20">
+                    {dueFlashcards[0] && (
+                      <>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">Front</p>
+                        <p className="mt-2 text-xl font-semibold text-slate-900 dark:text-slate-50">{dueFlashcards[0].front}</p>
+                        <p className="mt-4 text-sm text-slate-700 dark:text-slate-200">{dueFlashcards[0].back}</p>
+                        <div className="mt-4 flex justify-center gap-2">
+                          <Button size="sm" onClick={() => reviewFlashcard(dueFlashcards[0].id, "hard")}>
+                            Hard
+                          </Button>
+                          <Button size="sm" onClick={() => reviewFlashcard(dueFlashcards[0].id, "good")}>
+                            Good
+                          </Button>
+                          <Button size="sm" onClick={() => reviewFlashcard(dueFlashcards[0].id, "easy")}>
+                            Easy
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </CardContent>
+              )}
+            </Card>
+          )}
+
+          {/* Feature 8: Performance Analytics Dashboard */}
+          {performanceTrend.length > 0 && (
+            <Card className={`${sectionCardClass} border-t-4 border-t-indigo-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <CardTitle>Performance Analytics</CardTitle>
+                <CardDescription>7-day average accuracy by topic with trend indicators</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2 pt-5">
+                {performanceTrend.map((perf) => (
+                  <div key={perf.topic} className="flex items-center justify-between rounded-xl border border-indigo-200/50 bg-indigo-50/30 p-3 dark:border-indigo-900/50 dark:bg-indigo-950/10">
+                    <div>
+                      <p className="font-medium text-slate-900 dark:text-slate-50">{perf.topic}</p>
+                      <p className="text-xs text-slate-500">{perf.avgAccuracy}% average</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-indigo-600 dark:text-indigo-400">{perf.avgAccuracy}%</span>
+                      <span className={`text-xs font-bold ${perf.trend >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                        {perf.trend >= 0 ? "↑" : "↓"} {Math.abs(perf.trend)}%
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
       </div>

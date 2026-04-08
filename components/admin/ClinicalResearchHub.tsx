@@ -7,10 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Lock, Microscope, Save, Share2, Download, BookCopy, Trash2, Star, Pin, Users, GitCompare, Search, LineChart, Clock, TrendingUp } from "lucide-react";
+import { Lock, Microscope, Save, Share2, Download, BookCopy, Trash2, Star, Users, GitCompare, LineChart, Clock, TrendingUp } from "lucide-react";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
 import { toast } from "sonner";
 
@@ -632,7 +631,7 @@ export default function ClinicalResearchHub() {
   return (
     <div className="space-y-4">
       <Card className="rounded-3xl border border-slate-200 bg-white/80 shadow-md dark:border-slate-700 dark:bg-slate-900/70">
-        <CardHeader className="bg-gradient-to-r from-blue-50 to-slate-50 dark:from-slate-800 dark:to-slate-900 rounded-t-3xl">
+        <CardHeader className="bg-linear-to-r from-blue-50 to-slate-50 dark:from-slate-800 dark:to-slate-900 rounded-t-3xl">
           <CardTitle className="flex items-center justify-between text-lg uppercase tracking-widest text-slate-900 dark:text-slate-100">
             <span className="flex items-center gap-2">
               <Microscope className="h-5 w-5 text-blue-600" /> Clinical Research Hub

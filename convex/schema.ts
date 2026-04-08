@@ -1156,6 +1156,76 @@ export default defineSchema({
       ),
       completedActionItems: v.record(v.string(), v.boolean()),
       sourceLinksByNote: v.record(v.string(), v.array(v.string())),
+      practiceTests: v.optional(
+        v.array(
+          v.object({
+            id: v.string(),
+            numQuestions: v.number(),
+            timeLimit: v.number(),
+            takenAt: v.number(),
+            score: v.number(),
+          })
+        )
+      ),
+      weakTopicPerformance: v.optional(
+        v.record(
+          v.string(),
+          v.object({
+            correctCount: v.number(),
+            totalCount: v.number(),
+            lastReviewedAt: v.number(),
+          })
+        )
+      ),
+      sessionTimeByTopic: v.optional(
+        v.record(
+          v.string(),
+          v.object({
+            totalMinutes: v.number(),
+            sessionCount: v.number(),
+          })
+        )
+      ),
+      mockExams: v.optional(
+        v.array(
+          v.object({
+            id: v.string(),
+            numQuestions: v.number(),
+            timeLimit: v.number(),
+            targetScore: v.number(),
+            takenAt: v.optional(v.number()),
+            score: v.optional(v.number()),
+            createdAt: v.number(),
+          })
+        )
+      ),
+      studyStreak: v.optional(
+        v.object({
+          currentStreak: v.number(),
+          longestStreak: v.number(),
+          lastStudyDate: v.number(),
+          totalStudyDays: v.number(),
+        })
+      ),
+      performanceHistory: v.optional(
+        v.array(
+          v.object({
+            date: v.number(),
+            topic: v.string(),
+            accuracy: v.number(),
+            averageTimePerQuestion: v.number(),
+          })
+        )
+      ),
+      conceptMapLinks: v.optional(
+        v.array(
+          v.object({
+            fromTopic: v.string(),
+            toTopic: v.string(),
+            relationshipType: v.string(),
+          })
+        )
+      ),
       updatedAt: v.number(),
     })
       .index("by_user", ["userId"])
