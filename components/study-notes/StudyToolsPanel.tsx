@@ -1,0 +1,959 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Doc } from "@/convex/_generated/dataModel";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { BrainCircuit, Clock3, FileDown, GraduationCap, Inbox, Link2, Search, Sparkles } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { extractKeyPoints } from "@/lib/helpers/academicAI";
+
+type EnrichedStudyNote = Omit<Doc<"studyNotes">, "topics"> & {
+  topics: Array<{ topic: string; frequency: number; context?: string }>;
+};
+
+type MasteryLevel = "NEW" | "LEARNING" | "CONFIDENT";
+
+type ReviewCardState = {
+  intervalDays: number;
+  dueAt: number;
+  lastReviewedAt?: number;
+};
+
+type Flashcard = {
+  id: string;
+  noteId: string;
+  front: string;
+  back: string;
+  topic: string;
+};
+
+type ActionItem = {
+  id: string;
+  noteId: string;
+  text: string;
+};
+
+type SourceLinksByNote = Record<string, string[]>;
+
+type SectionTone = {
+  label: string;
+  pillClass: string;
+  iconClass: string;
+  glowClass: string;
+};
+
+type SubjectProfile = {
+  trackLabel: string;
+  heroLine: string;
+  searchHint: string;
+  taskHint: string;
+  sourceHint: string;
+};
+
+type EmptyStateProps = {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  accentClass: string;
+};
+
+function EmptyState({ icon: Icon, title, description, accentClass }: EmptyStateProps) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center dark:border-slate-800 dark:bg-slate-900/40">
+      <div className={`rounded-2xl bg-gradient-to-br ${accentClass} p-3 shadow-sm`}>
+        <Icon className="h-5 w-5 text-slate-700 dark:text-slate-100" />
+      </div>
+      <p className="mt-3 text-sm font-semibold text-slate-900 dark:text-slate-50">{title}</p>
+      <p className="mt-1 max-w-xs text-xs leading-5 text-slate-500 dark:text-slate-400">{description}</p>
+    </div>
+  );
+}
+
+const SECTION_TONES: Record<"hero" | "review" | "search" | "export" | "cards" | "mastery" | "quiz" | "tasks" | "links", SectionTone> = {
+  hero: {
+    label: "Study Dashboard",
+    pillClass: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-200",
+    iconClass: "text-blue-600 dark:text-blue-300",
+    glowClass: "from-blue-500/12 via-transparent to-transparent",
+  },
+  review: {
+    label: "Review Queue",
+    pillClass: "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950/50 dark:text-indigo-200",
+    iconClass: "text-indigo-600 dark:text-indigo-300",
+    glowClass: "from-indigo-500/12 via-transparent to-transparent",
+  },
+  search: {
+    label: "Search",
+    pillClass: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200",
+    iconClass: "text-emerald-600 dark:text-emerald-300",
+    glowClass: "from-emerald-500/12 via-transparent to-transparent",
+  },
+  export: {
+    label: "Export Packs",
+    pillClass: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-200",
+    iconClass: "text-amber-600 dark:text-amber-300",
+    glowClass: "from-amber-500/12 via-transparent to-transparent",
+  },
+  cards: {
+    label: "Spaced Cards",
+    pillClass: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-200",
+    iconClass: "text-sky-600 dark:text-sky-300",
+    glowClass: "from-sky-500/12 via-transparent to-transparent",
+  },
+  mastery: {
+    label: "Mastery",
+    pillClass: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/50 dark:text-violet-200",
+    iconClass: "text-violet-600 dark:text-violet-300",
+    glowClass: "from-violet-500/12 via-transparent to-transparent",
+  },
+  quiz: {
+    label: "Quiz Mode",
+    pillClass: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-200",
+    iconClass: "text-rose-600 dark:text-rose-300",
+    glowClass: "from-rose-500/12 via-transparent to-transparent",
+  },
+  tasks: {
+    label: "Tasks",
+    pillClass: "border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900 dark:bg-cyan-950/50 dark:text-cyan-200",
+    iconClass: "text-cyan-600 dark:text-cyan-300",
+    glowClass: "from-cyan-500/12 via-transparent to-transparent",
+  },
+  links: {
+    label: "References",
+    pillClass: "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
+    iconClass: "text-slate-600 dark:text-slate-300",
+    glowClass: "from-slate-500/12 via-transparent to-transparent",
+  },
+};
+
+function getSubjectProfile(subject: string): SubjectProfile {
+  const lower = subject.toLowerCase();
+
+  const clinicalKeywords = ["medicine", "nursing", "ob/gyn", "pharmacology", "anatomy", "physiology", "pediatrics"];
+  const engineeringKeywords = ["engineering", "mechanical", "electrical", "civil", "software"];
+  const stemKeywords = ["calculus", "algebra", "geometry", "statistics", "physics", "chemistry", "biology", "data structures", "algorithms", "computer science"];
+
+  if (clinicalKeywords.some((keyword) => lower.includes(keyword))) {
+    return {
+      trackLabel: "Clinical Track",
+      heroLine: "Focus on retention, differential reasoning, and protocol-ready recall.",
+      searchHint: "Search by diagnosis, mechanism, or protocol terms",
+      taskHint: "Action items capture follow-up reading, protocol review, and case prep.",
+      sourceHint: "Attach guidelines, pathway docs, or lecture decks for fast reference.",
+    };
+  }
+
+  if (engineeringKeywords.some((keyword) => lower.includes(keyword))) {
+    return {
+      trackLabel: "Engineering Track",
+      heroLine: "Turn dense technical notes into review loops and design-ready recall.",
+      searchHint: "Search by concept, formula family, or system keyword",
+      taskHint: "Action items capture practice sets, derivations, and implementation tasks.",
+      sourceHint: "Attach specs, slides, and reference docs next to your notes.",
+    };
+  }
+
+  if (stemKeywords.some((keyword) => lower.includes(keyword))) {
+    return {
+      trackLabel: "STEM Track",
+      heroLine: "Reinforce concepts with spaced review and rapid topic lookup.",
+      searchHint: "Search by theorem, concept, or term from class",
+      taskHint: "Action items capture problem sets, review blocks, and quiz prep.",
+      sourceHint: "Attach worksheets, references, and lecture resources.",
+    };
+  }
+
+  return {
+    trackLabel: "General Track",
+    heroLine: "Organize what matters and keep your next review action obvious.",
+    searchHint: "Search by phrase, concept, or topic name",
+    taskHint: "Action items capture follow-up reading and focused review tasks.",
+    sourceHint: "Attach reading links, notes, and external references.",
+  };
+}
+
+const normalize = (value: string) => value.trim().toLowerCase();
+
+const qualityScore = (note: EnrichedStudyNote) => {
+  const contentLength = (note.content || "").trim().length;
+  const hasSummary = Boolean(note.summary && note.summary.trim().length > 0);
+  const keyPoints = note.keyPoints?.length ?? 0;
+  const topicCount = note.topics?.length ?? 0;
+
+  let score = 35;
+  score += Math.min(20, Math.floor(contentLength / 180));
+  score += hasSummary ? 15 : 0;
+  score += Math.min(15, keyPoints * 3);
+  score += Math.min(15, topicCount * 2);
+
+  return Math.max(0, Math.min(100, score));
+};
+
+const extractActionItems = (note: EnrichedStudyNote): ActionItem[] => {
+  const lines = (note.content || "")
+    .split(/\n|\.|\!|\?/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const pattern = /\b(review|read|practice|memorize|revise|solve|complete|prepare|summarize)\b/i;
+  return lines
+    .filter((line) => pattern.test(line))
+    .slice(0, 8)
+    .map((line, index) => ({
+      id: `${note._id}-task-${index}`,
+      noteId: note._id,
+      text: line,
+    }));
+};
+
+const buildFlashcards = (notes: EnrichedStudyNote[]): Flashcard[] => {
+  const cards: Flashcard[] = [];
+
+  for (const note of notes) {
+    const topics = note.topics?.map((topic) => topic.topic) ?? [];
+    const fallbackKeyPoints = extractKeyPoints(note.content || "");
+    const keyPoints = (note.keyPoints && note.keyPoints.length > 0 ? note.keyPoints : fallbackKeyPoints).slice(0, 4);
+
+    keyPoints.forEach((point, index) => {
+      cards.push({
+        id: `${note._id}-kp-${index}`,
+        noteId: note._id,
+        front: `Key point from ${note.subject}`,
+        back: point,
+        topic: topics[index % Math.max(1, topics.length)] ?? note.subject,
+      });
+    });
+
+    (note.definitions ?? []).slice(0, 4).forEach((definition, index) => {
+      cards.push({
+        id: `${note._id}-def-${index}`,
+        noteId: note._id,
+        front: `Define: ${definition.term}`,
+        back: definition.definition,
+        topic: definition.term,
+      });
+    });
+  }
+
+  return cards;
+};
+
+interface StudyToolsPanelProps {
+  subject: string;
+  notes: EnrichedStudyNote[];
+  onSelectNote: (noteId: string) => void;
+}
+
+export default function StudyToolsPanel({
+  subject,
+  notes,
+  onSelectNote,
+}: StudyToolsPanelProps) {
+  const storagePrefix = `study-tools:${normalize(subject)}`;
+  const subjectProfile = useMemo(() => getSubjectProfile(subject), [subject]);
+  const readStored = <T,>(suffix: string, fallback: T): T => {
+    if (typeof window === "undefined") return fallback;
+    try {
+      const raw = window.localStorage.getItem(`${storagePrefix}:${suffix}`);
+      if (!raw) return fallback;
+      return JSON.parse(raw) as T;
+    } catch {
+      return fallback;
+    }
+  };
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [masteryByTopic, setMasteryByTopic] = useState<Record<string, MasteryLevel>>(() => readStored("mastery", {}));
+  const [reviewCardState, setReviewCardState] = useState<Record<string, ReviewCardState>>(() => readStored("review", {}));
+  const [completedActionItems, setCompletedActionItems] = useState<Record<string, boolean>>(() => readStored("actions", {}));
+  const [sourceLinksByNote, setSourceLinksByNote] = useState<SourceLinksByNote>(() => readStored("links", {}));
+  const [newSourceLinkByNote, setNewSourceLinkByNote] = useState<Record<string, string>>({});
+  const [selectedPackIds, setSelectedPackIds] = useState<Set<string>>(new Set());
+  const [visibleAnswers, setVisibleAnswers] = useState<Record<string, boolean>>({});
+
+  const sectionCardClass =
+    "overflow-hidden rounded-3xl border border-slate-200/80 bg-white/85 shadow-[0_18px_60px_-28px_rgba(15,23,42,0.28)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/80";
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 60000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(`${storagePrefix}:mastery`, JSON.stringify(masteryByTopic));
+    window.localStorage.setItem(`${storagePrefix}:review`, JSON.stringify(reviewCardState));
+    window.localStorage.setItem(`${storagePrefix}:actions`, JSON.stringify(completedActionItems));
+    window.localStorage.setItem(`${storagePrefix}:links`, JSON.stringify(sourceLinksByNote));
+  }, [storagePrefix, masteryByTopic, reviewCardState, completedActionItems, sourceLinksByNote]);
+
+  const smartQueue = useMemo(() => {
+    return [...notes]
+      .map((note) => {
+        const ageDays = Math.floor((currentTime - note.createdAt) / (1000 * 60 * 60 * 24));
+        const stalePenalty = ageDays >= 7 ? 30 : ageDays >= 3 ? 20 : 10;
+        const unsummarizedPenalty = note.summary ? 0 : 25;
+        const densityBonus = Math.min(20, note.topics.length * 3);
+        const score = stalePenalty + unsummarizedPenalty + densityBonus + (100 - qualityScore(note)) * 0.3;
+
+        return {
+          note,
+          score,
+          reasons: [
+            ageDays >= 7 ? "Stale" : ageDays >= 3 ? "Aging" : "Recent",
+            note.summary ? "Has summary" : "Needs summary",
+            note.topics.length >= 5 ? "Topic dense" : "Topic light",
+          ],
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6);
+  }, [notes, currentTime]);
+
+  const flashcards = useMemo(() => buildFlashcards(notes), [notes]);
+
+  const dueFlashcards = useMemo(() => {
+    return flashcards.filter((card) => (reviewCardState[card.id]?.dueAt ?? 0) <= currentTime);
+  }, [flashcards, reviewCardState, currentTime]);
+
+  const topicList = useMemo(() => {
+    const all = notes.flatMap((note) => note.topics.map((topic) => topic.topic));
+    return Array.from(new Set(all.map((topic) => topic.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [notes]);
+
+  const masterySummary = useMemo(() => {
+    const counts = { NEW: 0, LEARNING: 0, CONFIDENT: 0 };
+    topicList.forEach((topic) => {
+      const level = masteryByTopic[normalize(topic)] ?? "NEW";
+      counts[level] += 1;
+    });
+    return counts;
+  }, [topicList, masteryByTopic]);
+
+  const searchableNotes = useMemo(() => {
+    const query = normalize(searchQuery);
+    if (!query) return [];
+
+    return notes.filter((note) => {
+      const text = [
+        note.subject,
+        note.content,
+        note.summary ?? "",
+        ...(note.topics?.map((topic) => topic.topic) ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return text.includes(query);
+    });
+  }, [notes, searchQuery]);
+
+  const quizItems = useMemo(() => {
+    return flashcards.slice(0, 8).map((card) => ({
+      id: card.id,
+      question: card.front,
+      answer: card.back,
+      noteId: card.noteId,
+    }));
+  }, [flashcards]);
+
+  const actionItems = useMemo(() => {
+    return notes.flatMap((note) => extractActionItems(note));
+  }, [notes]);
+
+  const completedActionCount = Object.values(completedActionItems).filter(Boolean).length;
+  const pendingActionCount = Math.max(0, actionItems.length - completedActionCount);
+
+  const focusMetrics = useMemo(() => {
+    const searchMatches = searchQuery.trim() ? searchableNotes.length : notes.length;
+    const masterCount = masterySummary.CONFIDENT + masterySummary.LEARNING;
+
+    return [
+      {
+        label: "Due now",
+        value: dueFlashcards.length,
+        hint: dueFlashcards.length === 0 ? "Nothing urgent" : "Review ready",
+        tone: SECTION_TONES.cards,
+      },
+      {
+        label: "Pending actions",
+        value: pendingActionCount,
+        hint: completedActionCount > 0 ? `${completedActionCount} done` : "Work in progress",
+        tone: SECTION_TONES.tasks,
+      },
+      {
+        label: "Search hits",
+        value: searchMatches,
+        hint: searchQuery.trim() ? `for “${searchQuery.trim()}”` : "all notes",
+        tone: SECTION_TONES.search,
+      },
+      {
+        label: "Topics in flow",
+        value: masterCount,
+        hint: `${masterySummary.CONFIDENT} confident`,
+        tone: SECTION_TONES.mastery,
+      },
+    ];
+  }, [
+    searchQuery,
+    searchableNotes.length,
+    notes.length,
+    masterySummary.CONFIDENT,
+    masterySummary.LEARNING,
+    dueFlashcards.length,
+    pendingActionCount,
+    completedActionCount,
+  ]);
+
+  const dashboardStats = useMemo(() => {
+    const qualityValues = notes.map((note) => qualityScore(note));
+    const averageQuality = qualityValues.length
+      ? Math.round(qualityValues.reduce((sum, value) => sum + value, 0) / qualityValues.length)
+      : 0;
+
+    return [
+      {
+        label: "Notes",
+        value: notes.length,
+        helper: "Saved this subject",
+        icon: Sparkles,
+      },
+      {
+        label: "Topics",
+        value: topicList.length,
+        helper: "Active concepts",
+        icon: BrainCircuit,
+      },
+      {
+        label: "Due Cards",
+        value: dueFlashcards.length,
+        helper: "Ready for review",
+        icon: Clock3,
+      },
+      {
+        label: "Avg Quality",
+        value: `${averageQuality}%`,
+        helper: "Note completeness",
+        icon: GraduationCap,
+      },
+    ];
+  }, [notes, topicList.length, dueFlashcards.length]);
+
+  const addSourceLink = (noteId: string) => {
+    const raw = newSourceLinkByNote[noteId] ?? "";
+    const link = raw.trim();
+    if (!link) return;
+
+    const nextLinks = new Set(sourceLinksByNote[noteId] ?? []);
+    nextLinks.add(link);
+
+    setSourceLinksByNote((current) => ({
+      ...current,
+      [noteId]: Array.from(nextLinks),
+    }));
+
+    setNewSourceLinkByNote((current) => ({
+      ...current,
+      [noteId]: "",
+    }));
+  };
+
+  const updateMastery = (topic: string, level: MasteryLevel) => {
+    setMasteryByTopic((current) => ({
+      ...current,
+      [normalize(topic)]: level,
+    }));
+  };
+
+  const reviewFlashcard = (cardId: string, quality: "hard" | "good" | "easy") => {
+    const current = reviewCardState[cardId];
+    const previousInterval = current?.intervalDays ?? 1;
+    const nextInterval = quality === "hard" ? 1 : quality === "good" ? Math.min(21, previousInterval * 2) : Math.min(30, previousInterval * 3);
+
+    setReviewCardState((state) => ({
+      ...state,
+      [cardId]: {
+        intervalDays: nextInterval,
+        lastReviewedAt: Date.now(),
+        dueAt: Date.now() + nextInterval * 24 * 60 * 60 * 1000,
+      },
+    }));
+  };
+
+  const togglePackSelection = (noteId: string) => {
+    setSelectedPackIds((current) => {
+      const next = new Set(current);
+      if (next.has(noteId)) {
+        next.delete(noteId);
+      } else {
+        next.add(noteId);
+      }
+      return next;
+    });
+  };
+
+  const exportPack = (format: "markdown" | "txt") => {
+    const selectedNotes = notes.filter((note) => selectedPackIds.has(note._id));
+    if (selectedNotes.length === 0) return;
+
+    const content = selectedNotes
+      .map((note) => {
+        const lines = [
+          `Subject: ${note.subject}`,
+          `Created: ${new Date(note.createdAt).toLocaleString()}`,
+          `Topics: ${note.topics.map((topic) => topic.topic).join(", ") || "None"}`,
+          `Quality Score: ${qualityScore(note)}`,
+          "",
+          `Summary: ${note.summary ?? "Not generated"}`,
+          "",
+          note.content,
+          "",
+          "---",
+          "",
+        ];
+        return lines.join("\n");
+      })
+      .join("\n");
+
+    const blob = new Blob([content], { type: format === "markdown" ? "text/markdown" : "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${subject.replace(/\s+/g, "-").toLowerCase()}-study-pack.${format === "markdown" ? "md" : "txt"}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  if (notes.length === 0) {
+    return (
+      <Card className={sectionCardClass}>
+        <CardContent className="pt-6">
+          <EmptyState
+            icon={Inbox}
+            title="No notes yet"
+            description="Add a note first and the review queue, quiz cards, and export tools will populate here."
+            accentClass={SECTION_TONES.hero.glowClass}
+          />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="relative overflow-hidden rounded-[2rem] border border-slate-200/70 bg-gradient-to-br from-slate-50 via-white to-blue-50/70 p-4 shadow-[0_24px_80px_-35px_rgba(15,23,42,0.32)] dark:border-slate-800/80 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900/80 sm:p-6">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.20),transparent_34%),radial-gradient(circle_at_top_right,rgba(15,23,42,0.10),transparent_28%)]" />
+
+      <div className="relative space-y-5">
+        <Card className={`${sectionCardClass} border-t-4 border-t-blue-500`}>
+          <CardHeader className="border-b border-slate-200/70 bg-slate-50/80 pb-4 dark:border-slate-800/80 dark:bg-slate-900/60">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="space-y-2">
+                <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ${SECTION_TONES.hero.pillClass}`}>
+                  <Sparkles className={`h-3.5 w-3.5 ${SECTION_TONES.hero.iconClass}`} />
+                  {SECTION_TONES.hero.label}
+                </div>
+                <CardTitle className="text-2xl tracking-tight">{subject} control center</CardTitle>
+                <CardDescription className="max-w-2xl text-sm leading-6">
+                  {subjectProfile.heroLine}
+                </CardDescription>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">{subjectProfile.trackLabel}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => onSelectNote(notes[0]._id)}>
+                  Open Latest Note
+                </Button>
+                <Button variant="secondary" onClick={() => exportPack("markdown")} disabled={selectedPackIds.size === 0}>
+                  <FileDown className="mr-2 h-4 w-4" />
+                  Export Pack
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-5">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {dashboardStats.map((stat) => {
+                const Icon = stat.icon;
+                return (
+                  <div key={stat.label} className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/70">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{stat.label}</p>
+                        <p className="mt-1 text-2xl font-black tracking-tight text-slate-900 dark:text-slate-50">{stat.value}</p>
+                      </div>
+                      <div className="rounded-2xl bg-slate-100 p-2 text-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                        <Icon className="h-4 w-4" />
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-500">{stat.helper}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {focusMetrics.map((metric) => (
+            <div
+              key={metric.label}
+              className={`rounded-2xl border border-slate-200/80 bg-white/85 p-4 shadow-[0_16px_50px_-30px_rgba(15,23,42,0.28)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/80`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${metric.tone.pillClass}`}>
+                    {metric.label}
+                  </p>
+                  <p className="mt-3 text-3xl font-black tracking-tight text-slate-900 dark:text-slate-50">{metric.value}</p>
+                </div>
+                <div className={`rounded-2xl bg-gradient-to-br ${metric.tone.glowClass} p-2.5`}>
+                  <Sparkles className={`h-4 w-4 ${metric.tone.iconClass}`} />
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">{metric.hint}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_0.95fr]">
+          <div className="space-y-4">
+            <Card className={`${sectionCardClass} border-t-4 border-t-indigo-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl">Smart Review Queue</CardTitle>
+                    <CardDescription>Priority notes to review next based on freshness, summary state, and quality.</CardDescription>
+                  </div>
+                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.review.glowClass} p-2`}>
+                    <BrainCircuit className={`h-5 w-5 ${SECTION_TONES.review.iconClass}`} />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2 pt-5">
+                {smartQueue.map((item) => (
+                  <div key={item.note._id} className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-slate-950/70 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-semibold text-slate-900 dark:text-slate-50">{item.note.subject}</p>
+                      <p className="mt-1 text-xs text-slate-500">{item.reasons.join(" • ")} • Quality {qualityScore(item.note)}</p>
+                    </div>
+                    <Button size="sm" onClick={() => onSelectNote(item.note._id)}>Review</Button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className={`${sectionCardClass} border-t-4 border-t-emerald-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl">Cross-Topic Search</CardTitle>
+                    <CardDescription>Search across subject, content, summaries, and extracted topics.</CardDescription>
+                  </div>
+                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.search.glowClass} p-2`}>
+                    <Search className={`h-5 w-5 ${SECTION_TONES.search.iconClass}`} />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-5">
+                <Input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder={subjectProfile.searchHint}
+                  className="h-11 rounded-2xl border-slate-200 bg-white/90 shadow-sm dark:border-slate-800 dark:bg-slate-950/80"
+                />
+                {searchQuery && searchableNotes.length === 0 ? (
+                  <EmptyState
+                    icon={Search}
+                    title="No matches"
+                    description={`Try a broader keyword or create a new topic from “${searchQuery.trim()}”.`}
+                    accentClass={SECTION_TONES.search.glowClass}
+                  />
+                ) : (
+                  <div className="space-y-2">
+                    {searchableNotes.slice(0, 6).map((note) => (
+                      <button
+                        key={note._id}
+                        type="button"
+                        className="w-full rounded-2xl border border-slate-200/80 bg-white/80 p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-950/70"
+                        onClick={() => onSelectNote(note._id)}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-semibold text-slate-900 dark:text-slate-50">{note.subject}</p>
+                          <Badge variant="outline">Quality {qualityScore(note)}</Badge>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">{new Date(note.createdAt).toLocaleDateString()}</p>
+                        <p className="mt-2 line-clamp-2 text-sm text-slate-600 dark:text-slate-300">{note.summary || note.content}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className={`${sectionCardClass} border-t-4 border-t-amber-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl">Export Packs</CardTitle>
+                    <CardDescription>Select notes and export a study pack for exam prep or handoff.</CardDescription>
+                  </div>
+                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.export.glowClass} p-2`}>
+                    <FileDown className={`h-5 w-5 ${SECTION_TONES.export.iconClass}`} />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-5">
+                <div className="grid gap-2 md:grid-cols-2">
+                  {notes.slice(0, 12).map((note) => (
+                    <button
+                      key={note._id}
+                      type="button"
+                      onClick={() => togglePackSelection(note._id)}
+                      className={`rounded-2xl border p-4 text-left transition-all ${
+                        selectedPackIds.has(note._id)
+                          ? "border-blue-500 bg-blue-50 shadow-sm dark:bg-blue-950/30"
+                          : "border-slate-200/80 bg-white/80 hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-950/70"
+                      }`}
+                    >
+                      <p className="font-semibold text-slate-900 dark:text-slate-50">{note.subject}</p>
+                      <p className="mt-1 text-xs text-slate-500">{new Date(note.createdAt).toLocaleDateString()}</p>
+                      <div className="mt-3">
+                        <Badge variant="outline">Quality {qualityScore(note)}</Badge>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={() => exportPack("markdown")} disabled={selectedPackIds.size === 0}>
+                    <FileDown className="mr-2 h-4 w-4" />
+                    Export Pack (.md)
+                  </Button>
+                  <Button variant="outline" onClick={() => exportPack("txt")} disabled={selectedPackIds.size === 0}>
+                    <FileDown className="mr-2 h-4 w-4" />
+                    Export Pack (.txt)
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="space-y-4">
+            <Card className={`${sectionCardClass} border-t-4 border-t-sky-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl">Spaced Repetition Cards</CardTitle>
+                    <CardDescription>{dueFlashcards.length} due now</CardDescription>
+                  </div>
+                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.cards.glowClass} p-2`}>
+                    <Clock3 className={`h-5 w-5 ${SECTION_TONES.cards.iconClass}`} />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-5">
+                {dueFlashcards.length === 0 ? (
+                  <EmptyState
+                    icon={Clock3}
+                    title="Nothing due right now"
+                    description="You’re up to date. Review cards will appear here when they’re ready again."
+                    accentClass={SECTION_TONES.cards.glowClass}
+                  />
+                ) : (
+                  dueFlashcards.slice(0, 4).map((card) => (
+                    <div key={card.id} className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/60">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{card.front}</p>
+                      <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{card.back}</p>
+                      <div className="mt-3 flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => reviewFlashcard(card.id, "hard")}>Hard</Button>
+                        <Button size="sm" variant="outline" onClick={() => reviewFlashcard(card.id, "good")}>Good</Button>
+                        <Button size="sm" onClick={() => reviewFlashcard(card.id, "easy")}>Easy</Button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className={`${sectionCardClass} border-t-4 border-t-violet-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl">Topic Mastery Tracker</CardTitle>
+                    <CardDescription>
+                      New {masterySummary.NEW} • Learning {masterySummary.LEARNING} • Confident {masterySummary.CONFIDENT}
+                    </CardDescription>
+                  </div>
+                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.mastery.glowClass} p-2`}>
+                    <GraduationCap className={`h-5 w-5 ${SECTION_TONES.mastery.iconClass}`} />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2 pt-5">
+                {topicList.slice(0, 12).map((topic) => {
+                  const level = masteryByTopic[normalize(topic)] ?? "NEW";
+                  return (
+                    <div key={topic} className="flex flex-col gap-2 rounded-2xl border border-slate-200/80 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-950/70 sm:flex-row sm:items-center sm:justify-between">
+                      <span className="text-sm font-medium text-slate-900 dark:text-slate-50">{topic}</span>
+                      <div className="flex flex-wrap gap-1">
+                        {(["NEW", "LEARNING", "CONFIDENT"] as MasteryLevel[]).map((option) => (
+                          <Button
+                            key={option}
+                            size="sm"
+                            variant={level === option ? "default" : "outline"}
+                            onClick={() => updateMastery(topic, option)}
+                          >
+                            {option}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+
+            <Card className={`${sectionCardClass} border-t-4 border-t-rose-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl">Auto-Quiz Mode</CardTitle>
+                    <CardDescription>Generated from your key points and definitions.</CardDescription>
+                  </div>
+                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.quiz.glowClass} p-2`}>
+                    <Search className={`h-5 w-5 ${SECTION_TONES.quiz.iconClass}`} />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2 pt-5">
+                {quizItems.slice(0, 6).map((item) => (
+                  <div key={item.id} className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-50">Q: {item.question}</p>
+                    {visibleAnswers[item.id] ? (
+                      <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">A: {item.answer}</p>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-2"
+                        onClick={() =>
+                          setVisibleAnswers((current) => ({
+                            ...current,
+                            [item.id]: true,
+                          }))
+                        }
+                      >
+                        Reveal Answer
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className={`${sectionCardClass} border-t-4 border-t-cyan-500`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl">Action Items</CardTitle>
+                    <CardDescription>Automatically extracted study tasks from your notes.</CardDescription>
+                  </div>
+                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.tasks.glowClass} p-2`}>
+                    <Link2 className={`h-5 w-5 ${SECTION_TONES.tasks.iconClass}`} />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2 pt-5">
+                {actionItems.length === 0 ? (
+                  <EmptyState
+                    icon={BrainCircuit}
+                    title="No action items detected"
+                    description={subjectProfile.taskHint}
+                    accentClass={SECTION_TONES.tasks.glowClass}
+                  />
+                ) : (
+                  actionItems.slice(0, 12).map((item) => (
+                    <label key={item.id} className="flex items-start gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-3 text-sm dark:border-slate-800 dark:bg-slate-950/70">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(completedActionItems[item.id])}
+                        onChange={(event) =>
+                          setCompletedActionItems((current) => ({
+                            ...current,
+                            [item.id]: event.target.checked,
+                          }))
+                        }
+                        className="mt-1"
+                      />
+                      <span className={completedActionItems[item.id] ? "line-through text-slate-400" : "text-slate-800 dark:text-slate-200"}>{item.text}</span>
+                    </label>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className={`${sectionCardClass} border-t-4 border-t-slate-400`}>
+              <CardHeader className="border-b border-slate-200/70 pb-4 dark:border-slate-800/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-xl">Source Links</CardTitle>
+                    <CardDescription>Attach references to each note (slides, papers, docs, URLs).</CardDescription>
+                  </div>
+                  <div className={`rounded-2xl bg-gradient-to-br ${SECTION_TONES.links.glowClass} p-2`}>
+                    <Link2 className={`h-5 w-5 ${SECTION_TONES.links.iconClass}`} />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-5">
+                {notes.slice(0, 8).length === 0 ? (
+                  <EmptyState
+                    icon={Link2}
+                    title="No source links yet"
+                    description={subjectProfile.sourceHint}
+                    accentClass={SECTION_TONES.links.glowClass}
+                  />
+                ) : notes.slice(0, 8).map((note) => (
+                  <div key={note._id} className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-950/70">
+                    <p className="mb-2 text-sm font-medium text-slate-900 dark:text-slate-50">{note.subject} • {new Date(note.createdAt).toLocaleDateString()}</p>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        value={newSourceLinkByNote[note._id] ?? ""}
+                        onChange={(event) =>
+                          setNewSourceLinkByNote((current) => ({
+                            ...current,
+                            [note._id]: event.target.value,
+                          }))
+                        }
+                        placeholder="https://..."
+                        className="rounded-2xl"
+                      />
+                      <Button type="button" onClick={() => addSourceLink(note._id)}>Add Link</Button>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(sourceLinksByNote[note._id] ?? []).map((link) => (
+                        <a
+                          key={`${note._id}-${link}`}
+                          href={link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700 transition-colors hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"
+                        >
+                          {link}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
+      </div>
+    );
+  }

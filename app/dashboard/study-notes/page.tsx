@@ -9,12 +9,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Clock, BookOpen, Mic, MessageCircle, Plus } from "lucide-react";
+import { Clock, BookOpen, Mic, MessageCircle, Plus, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import RecordingInterface from "../../../components/study-notes/RecordingInterface";
 import SessionTimeline from "../../../components/study-notes/SessionTimeline";
 import TopicBrowser from "../../../components/study-notes/TopicBrowser";
 import NoteDetailView from "../../../components/study-notes/NoteDetailView";
+import StudyToolsPanel from "../../../components/study-notes/StudyToolsPanel";
 
 const DEFAULT_SUBJECTS = [
   "Calculus",
@@ -92,7 +93,7 @@ export default function StudyNotesPage() {
       : "skip"
   );
   const convexUserId = appUser?._id;
-  const [activeTab, setActiveTab] = useState<"record" | "timeline" | "topics" | "notebook">("record");
+  const [activeTab, setActiveTab] = useState<"record" | "timeline" | "topics" | "notebook" | "tools">("record");
   const [selectedSubject, setSelectedSubject] = useState("Calculus");
   const [topicSearchTerm, setTopicSearchTerm] = useState("");
   const [customSubjects, setCustomSubjects] = useState<string[]>(() => {
@@ -387,10 +388,10 @@ export default function StudyNotesPage() {
         {/* Main Tabs */}
         <Tabs
           value={activeTab}
-          onValueChange={(value) => setActiveTab(value as "record" | "timeline" | "topics" | "notebook")}
+          onValueChange={(value) => setActiveTab(value as "record" | "timeline" | "topics" | "notebook" | "tools")}
           className="w-full"
         >
-          <TabsList className="grid w-full grid-cols-4 mb-6">
+          <TabsList className="grid w-full grid-cols-5 mb-6">
             <TabsTrigger value="record" className="gap-2">
               <Mic className="w-4 h-4" />
               <span className="hidden sm:inline">Record</span>
@@ -406,6 +407,10 @@ export default function StudyNotesPage() {
             <TabsTrigger value="notebook" className="gap-2">
               <BookOpen className="w-4 h-4" />
               <span className="hidden sm:inline">Detail</span>
+            </TabsTrigger>
+            <TabsTrigger value="tools" className="gap-2">
+              <Sparkles className="w-4 h-4" />
+              <span className="hidden sm:inline">Tools</span>
             </TabsTrigger>
           </TabsList>
 
@@ -491,6 +496,19 @@ export default function StudyNotesPage() {
                 </CardContent>
               </Card>
             )}
+          </TabsContent>
+
+          {/* Study Tools Tab */}
+          <TabsContent value="tools">
+            <StudyToolsPanel
+              key={selectedSubject}
+              subject={selectedSubject}
+              notes={notesBySubject || []}
+              onSelectNote={(noteId) => {
+                setSelectedNoteId(noteId);
+                setActiveTab("notebook");
+              }}
+            />
           </TabsContent>
         </Tabs>
 
