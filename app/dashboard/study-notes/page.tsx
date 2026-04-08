@@ -1,21 +1,84 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { useUser } from "@clerk/nextjs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Clock, BookOpen, Mic, MessageCircle } from "lucide-react";
+import { Clock, BookOpen, Mic, MessageCircle, Plus } from "lucide-react";
 import { toast } from "sonner";
 import RecordingInterface from "../../../components/study-notes/RecordingInterface";
 import SessionTimeline from "../../../components/study-notes/SessionTimeline";
 import TopicBrowser from "../../../components/study-notes/TopicBrowser";
 import NoteDetailView from "../../../components/study-notes/NoteDetailView";
 
-const SUBJECTS = ["Calculus", "Quantum Mechanics", "Data Structures", "Biology", "Chemistry"];
+const DEFAULT_SUBJECTS = [
+  "Calculus",
+  "Algebra",
+  "Geometry",
+  "Statistics",
+  "Physics",
+  "Chemistry",
+  "Biology",
+  "Anatomy",
+  "Physiology",
+  "Pharmacology",
+  "Internal Medicine",
+  "OB/GYN",
+  "Pediatrics",
+  "Emergency Medicine",
+  "Nursing",
+  "Psychology",
+  "Computer Science",
+  "Data Structures",
+  "Algorithms",
+  "Databases",
+  "Software Engineering",
+  "Engineering",
+  "Mechanical Engineering",
+  "Electrical Engineering",
+  "Civil Engineering",
+  "Economics",
+  "Finance",
+  "Accounting",
+  "Marketing",
+  "History",
+  "English",
+  "Law",
+  "Political Science",
+  "Philosophy",
+  "Art",
+  "Music",
+  "Language Learning",
+  "Research Methods",
+  "Project Management",
+];
+
+const CUSTOM_SUBJECTS_STORAGE_KEY = "study-notes-custom-subjects";
+
+const normalizeTopicName = (value: string) => value.trim().replace(/\s+/g, " ");
+
+const getTopicKey = (value: string) => normalizeTopicName(value).toLowerCase();
+
+const dedupeTopics = (topics: string[]) => {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+
+  for (const rawTopic of topics) {
+    const topic = normalizeTopicName(rawTopic);
+    if (!topic) continue;
+    const key = getTopicKey(topic);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(topic);
+  }
+
+  return deduped;
+};
 
 export default function StudyNotesPage() {
   const { user } = useUser();
@@ -31,8 +94,51 @@ export default function StudyNotesPage() {
   const convexUserId = appUser?._id;
   const [activeTab, setActiveTab] = useState<"record" | "timeline" | "topics" | "notebook">("record");
   const [selectedSubject, setSelectedSubject] = useState("Calculus");
+  const [topicSearchTerm, setTopicSearchTerm] = useState("");
+  const [customSubjects, setCustomSubjects] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(CUSTOM_SUBJECTS_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      const normalized = parsed
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => normalizeTopicName(item))
+        .filter(Boolean);
+      return dedupeTopics(normalized);
+    } catch {
+      return [];
+    }
+  });
+  const [newTopicName, setNewTopicName] = useState("");
+  const [isAddingTopic, setIsAddingTopic] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const deduped = dedupeTopics(customSubjects);
+    window.localStorage.setItem(CUSTOM_SUBJECTS_STORAGE_KEY, JSON.stringify(deduped));
+  }, [customSubjects]);
+
+  const allSubjects = useMemo(() => {
+    return dedupeTopics([...DEFAULT_SUBJECTS, ...customSubjects]);
+  }, [customSubjects]);
+
+  const searchQuery = topicSearchTerm.trim();
+
+  const filteredSubjects = useMemo(() => {
+    const query = searchQuery.toLowerCase();
+    if (!query) return allSubjects;
+    return allSubjects.filter((subject) => subject.toLowerCase().includes(query));
+  }, [allSubjects, searchQuery]);
+
+  const exactMatchSubject = useMemo(() => {
+    const query = searchQuery.toLowerCase();
+    if (!query) return null;
+    return allSubjects.find((subject) => subject.toLowerCase() === query) ?? null;
+  }, [allSubjects, searchQuery]);
 
   // Queries
   const notesBySubject = useQuery(
@@ -121,6 +227,48 @@ export default function StudyNotesPage() {
     }
   };
 
+  const handleAddTopic = () => {
+    const trimmed = normalizeTopicName(newTopicName);
+    if (!trimmed) {
+      toast.error("Please enter a topic name.");
+      return;
+    }
+
+    const topicKey = getTopicKey(trimmed);
+    const exists = allSubjects.some((subject) => getTopicKey(subject) === topicKey);
+    if (exists) {
+      toast.message("That topic already exists.");
+      setSelectedSubject(allSubjects.find((subject) => getTopicKey(subject) === topicKey) || trimmed);
+      setNewTopicName("");
+      setIsAddingTopic(false);
+      return;
+    }
+
+    setCustomSubjects((prev) => dedupeTopics([...prev, trimmed]));
+    setSelectedSubject(trimmed);
+    setNewTopicName("");
+    setIsAddingTopic(false);
+    toast.success(`Added topic: ${trimmed}`);
+  };
+
+  const handleCreateFromSearch = () => {
+    const trimmed = normalizeTopicName(searchQuery);
+    if (!trimmed) return;
+    setNewTopicName(trimmed);
+    setIsAddingTopic(false);
+    const topicKey = getTopicKey(trimmed);
+    const exists = allSubjects.some((subject) => getTopicKey(subject) === topicKey);
+    if (exists) {
+      setSelectedSubject(allSubjects.find((subject) => getTopicKey(subject) === topicKey) || trimmed);
+      toast.message("That topic already exists.");
+      return;
+    }
+    setCustomSubjects((prev) => dedupeTopics([...prev, trimmed]));
+    setSelectedSubject(trimmed);
+    setTopicSearchTerm("");
+    toast.success(`Added topic: ${trimmed}`);
+  };
+
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-6">
       <div className="max-w-7xl mx-auto">
@@ -136,17 +284,104 @@ export default function StudyNotesPage() {
         </div>
 
         {/* Subject Selector */}
-        <div className="mb-6 flex flex-wrap gap-2">
-          {SUBJECTS.map((subject) => (
-            <Button
-              key={subject}
-              onClick={() => setSelectedSubject(subject)}
-              variant={selectedSubject === subject ? "default" : "outline"}
-              size="sm"
-            >
-              {subject}
-            </Button>
-          ))}
+        <div className="mb-6 space-y-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Input
+              value={topicSearchTerm}
+              onChange={(event) => setTopicSearchTerm(event.target.value)}
+              placeholder="Search topics (e.g., Medicine, Engineering, OB/GYN)"
+              className="max-w-xl"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && searchQuery && !exactMatchSubject) {
+                  event.preventDefault();
+                  handleCreateFromSearch();
+                }
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 whitespace-nowrap">
+                {searchQuery ? `${filteredSubjects.length} match${filteredSubjects.length === 1 ? "" : "es"}` : "Search to browse topics"}
+              </span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="gap-1"
+                onClick={() => setIsAddingTopic((current) => !current)}
+              >
+                <Plus className="h-4 w-4" />
+                New Topic
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+            {searchQuery ? (
+              <div className="space-y-3">
+                {!exactMatchSubject && (
+                  <button
+                    type="button"
+                    className="w-full rounded-md border border-dashed border-blue-300 bg-blue-50 px-3 py-2 text-left text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-900/40"
+                    onClick={handleCreateFromSearch}
+                  >
+                    Create &quot;{searchQuery}&quot;
+                  </button>
+                )}
+
+                {filteredSubjects.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {filteredSubjects.map((subject) => (
+                      <Button
+                        key={subject}
+                        onClick={() => setSelectedSubject(subject)}
+                        variant={selectedSubject === subject ? "default" : "outline"}
+                        size="sm"
+                      >
+                        {subject}
+                      </Button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                    No matching topics found.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Start typing in the search box to find a topic, or use New Topic to create one.
+              </p>
+            )}
+          </div>
+
+          {isAddingTopic && (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                value={newTopicName}
+                onChange={(event) => setNewTopicName(event.target.value)}
+                placeholder="Type custom topic (e.g., OB/GYN, Internal Medicine, Engineering)"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleAddTopic();
+                  }
+                }}
+              />
+              <div className="flex gap-2">
+                <Button type="button" onClick={handleAddTopic}>Add</Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setNewTopicName("");
+                    setIsAddingTopic(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Main Tabs */}
