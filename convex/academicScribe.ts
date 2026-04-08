@@ -211,13 +211,17 @@ export const createStudySession = mutation({
 export const endStudySession = mutation({
   args: {
     sessionId: v.id("studyClassSessions"),
+    durationMinutes: v.optional(v.number()),
   },
   async handler(ctx, args) {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found");
 
-    const durationMinutes = Math.round(
-      (Date.now() - session.startedAt) / 1000 / 60
+    const durationMinutes = Math.max(
+      1,
+      Math.round(
+        args.durationMinutes ?? (Date.now() - session.startedAt) / 1000 / 60
+      )
     );
 
     await ctx.db.patch(args.sessionId, {

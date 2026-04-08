@@ -61,6 +61,7 @@ export default function RecordingInterface({
   const [transcription, setTranscription] = useState("");
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -70,6 +71,23 @@ export default function RecordingInterface({
   const createSession = useMutation(api.academicScribe.createStudySession);
   const endSession = useMutation(api.academicScribe.endStudySession);
   const createNote = useMutation(api.academicScribe.createStudyNote);
+
+  const startTimer = () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
+
+    timerIntervalRef.current = setInterval(() => {
+      setElapsedTime((prev) => prev + 1);
+    }, 1000);
+  };
+
+  const stopTimer = () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+  };
 
   // Initialize Web Speech API
   useEffect(() => {
@@ -132,13 +150,12 @@ export default function RecordingInterface({
       }
 
       setIsRecording(true);
+      setIsPaused(false);
       setElapsedTime(0);
       setTranscription("");
 
       // Start timer
-      timerIntervalRef.current = setInterval(() => {
-        setElapsedTime((prev) => prev + 1);
-      }, 1000);
+      startTimer();
 
       toast.success("Recording started");
     } catch {
@@ -146,27 +163,67 @@ export default function RecordingInterface({
     }
   };
 
-  const stopRecording = async () => {
+  const pauseRecording = async () => {
     if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
 
     try {
+      if (mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.pause();
+      }
+
+      recognitionRef.current.stop();
+      stopTimer();
+      setIsPaused(true);
+      toast.info("Recording paused");
+    } catch {
+      toast.error("Failed to pause recording");
+    }
+  };
+
+  const resumeRecording = async () => {
+    if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
+
+    try {
+      if (mediaRecorderRef.current.state === "paused") {
+        mediaRecorderRef.current.resume();
+      }
+
+      recognitionRef.current.start();
+      startTimer();
+      setIsPaused(false);
+      toast.success("Recording resumed");
+    } catch {
+      toast.error("Failed to resume recording");
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!mediaRecorderRef.current || !sessionId) return;
+
+    try {
       // Stop media recorder
-      mediaRecorderRef.current.stop();
+      if (mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
       mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
 
       // Stop speech recognition
-      recognitionRef.current.stop();
-
-      // Stop timer
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Speech recognition may already be stopped during pause.
       }
 
+      // Stop timer
+      stopTimer();
+
       setIsRecording(false);
+      setIsPaused(false);
 
       // End session
       await endSession({
         sessionId: sessionId as Id<"studyClassSessions">,
+        durationMinutes: Math.max(1, Math.round(elapsedTime / 60)),
       });
 
       // Create note with transcription
@@ -244,7 +301,7 @@ export default function RecordingInterface({
             <div className="text-center flex-1">
               {isRecording ? (
                 <div className="flex items-center justify-center gap-2">
-                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                  <div className={`w-3 h-3 rounded-full ${isPaused ? "bg-amber-500" : "bg-red-500 animate-pulse"}`} />
                   <span className="text-2xl font-mono font-bold">
                     {formatTime(elapsedTime)}
                   </span>
@@ -261,7 +318,7 @@ export default function RecordingInterface({
             <div className="mb-4 p-3 bg-white dark:bg-slate-800 rounded-lg border-l-4 border-blue-500">
               <p className="text-sm font-medium mb-2">Live Transcription:</p>
               <p className="text-sm text-slate-600 dark:text-slate-300 italic">
-                {transcription || "Listening..."}
+                {isPaused ? "Paused for break" : transcription || "Listening..."}
               </p>
             </div>
           )}
@@ -278,21 +335,38 @@ export default function RecordingInterface({
                 Start Recording
               </Button>
             ) : (
-              <Button
-                onClick={stopRecording}
-                size="lg"
-                variant="destructive"
-                className="flex-1 gap-2"
-              >
-                <StopCircle className="w-5 h-5" />
-                Stop Recording
-              </Button>
+              <>
+                <Button
+                  onClick={isPaused ? resumeRecording : pauseRecording}
+                  size="lg"
+                  variant={isPaused ? "default" : "outline"}
+                  className="flex-1 gap-2"
+                >
+                  <Mic className="w-5 h-5" />
+                  {isPaused ? "Resume Recording" : "Pause Recording"}
+                </Button>
+                <Button
+                  onClick={stopRecording}
+                  size="lg"
+                  variant="destructive"
+                  className="flex-1 gap-2"
+                >
+                  <StopCircle className="w-5 h-5" />
+                  Stop Recording
+                </Button>
+              </>
             )}
           </div>
 
           {isTranscribing && (
             <div className="mt-3 p-2 bg-blue-100 dark:bg-blue-900 rounded text-sm text-blue-800 dark:text-blue-200">
               Processing transcription...
+            </div>
+          )}
+
+          {isRecording && isPaused && (
+            <div className="mt-3 p-2 bg-amber-100 dark:bg-amber-950/30 rounded text-sm text-amber-800 dark:text-amber-200">
+              Recording is paused. Resume when you return from break.
             </div>
           )}
         </CardContent>
