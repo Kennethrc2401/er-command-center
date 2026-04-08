@@ -132,6 +132,7 @@ export default function RecordingInterface({
   const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(null);
   const [pauseSeconds, setPauseSeconds] = useState(0);
   const [audioQuality, setAudioQuality] = useState<"Good" | "Fair" | "Poor" | "Unknown">("Unknown");
+  const [bytesRecorded, setBytesRecorded] = useState(0);
   const [hasRecoverableDraft, setHasRecoverableDraft] = useState(() => {
     if (typeof window === "undefined") return false;
     const raw = window.localStorage.getItem(RECORDING_DRAFT_STORAGE_KEY);
@@ -381,6 +382,8 @@ export default function RecordingInterface({
 
   const startRecording = async () => {
     try {
+      console.log("🎙️ Recording: Requesting microphone permission...");
+
       // Create session in backend
       const newSessionId = await createSession({
         userId,
@@ -389,26 +392,51 @@ export default function RecordingInterface({
         professor: professor || undefined,
       });
       setSessionId(newSessionId);
+      console.log("✅ Recording: Session created with ID:", newSessionId);
 
       // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("✅ Recording: Microphone permission granted");
+      console.log("📊 Recording: Audio tracks available:", stream.getAudioTracks().length);
+      console.log("🔊 Recording: Stream settings:", {
+        audioTracks: stream.getAudioTracks().map((track) => ({
+          label: track.label,
+          enabled: track.enabled,
+          readyState: track.readyState,
+        })),
+      });
 
       // Start media recording
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      let totalBytes = 0;
+
+      console.log("📝 Recording: MediaRecorder created, supported MIME types:", MediaRecorder.isTypeSupported("audio/webm") ? "webm✓" : "webm✗");
 
       mediaRecorder.ondataavailable = (event) => {
+        const bytes = event.data.size;
+        totalBytes += bytes;
         audioChunksRef.current.push(event.data);
+        console.log(`📦 Recording: Audio chunk received (${bytes} bytes, total: ${totalBytes} bytes)`);
+        setBytesRecorded(totalBytes);
       };
 
       mediaRecorder.onstop = () => {
+        console.log("⏹️  Recording: MediaRecorder stopped, total bytes:", totalBytes);
         if (recognitionShouldRunRef.current && isRecordingRef.current && !isPausedRef.current) {
           toast.message("Audio capture ended unexpectedly. You can restart the session if needed.");
         }
       };
 
-      mediaRecorder.start();
+      mediaRecorder.onerror = (event) => {
+        console.error("❌ Recording: MediaRecorder error:", event.error);
+        toast.error(`Recording error: ${event.error}`);
+      };
+
+      // Start recording with 1 second timeslice to ensure ondataavailable fires regularly
+      mediaRecorder.start(1000);
+      console.log("🎬 Recording: MediaRecorder started with 1s timeslice");
       startAudioMeter(stream);
 
       // Start speech-to-text
@@ -424,15 +452,28 @@ export default function RecordingInterface({
       setLastSpeechAt(Date.now());
       setLastAudioActivityAt(Date.now());
       setElapsedTime(0);
+      setBytesRecorded(0);
       setTranscription("");
       setHasRecoverableDraft(false);
 
       // Start timer
       startTimer();
 
+      console.log("✅ Recording: All systems ready");
       toast.success("Recording started");
-    } catch {
-      toast.error("Failed to start recording");
+    } catch (error) {
+      const err = error as Error;
+      
+      if (err?.name === "NotAllowedError" || err?.message?.includes("Permission")) {
+        console.error("❌ Recording: Microphone permission denied. Please enable microphone access in your browser settings.");
+        toast.error("Microphone permission denied. Please enable it in your browser settings.");
+      } else if (err?.name === "NotFoundError") {
+        console.error("❌ Recording: No microphone found. Please connect a microphone.");
+        toast.error("No microphone found. Please connect a microphone.");
+      } else {
+        console.error("❌ Recording: Failed to start:", err);
+        toast.error("Failed to start recording");
+      }
     }
   };
 
@@ -485,11 +526,13 @@ export default function RecordingInterface({
     if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
 
     try {
+      console.log("⏸️  Pause: User paused recording");
       recognitionShouldRunRef.current = false;
       clearRecognitionRestart();
 
       if (mediaRecorderRef.current.state === "recording") {
         mediaRecorderRef.current.pause();
+        console.log("✅ Pause: MediaRecorder paused");
       }
 
       stopRecognition();
@@ -497,7 +540,8 @@ export default function RecordingInterface({
       setPauseStartedAt(Date.now());
       setIsPaused(true);
       toast.info("Recording paused");
-    } catch {
+    } catch (error) {
+      console.error("❌ Pause error:", error);
       toast.error("Failed to pause recording");
     }
   }, [clearRecognitionRestart, sessionId, stopRecognition, stopTimer]);
@@ -506,22 +550,27 @@ export default function RecordingInterface({
     if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
 
     try {
+      console.log("▶️  Resume: User resumed recording");
       recognitionShouldRunRef.current = true;
 
       if (mediaRecorderRef.current.state === "paused") {
         mediaRecorderRef.current.resume();
+        console.log("✅ Resume: MediaRecorder resumed");
       }
 
       clearRecognitionRestart();
       void startRecognition();
       if (pauseStartedAt) {
-        setPauseSeconds((current) => current + Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000)));
+        const pauseDuration = Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000));
+        console.log(`📊 Resume: Paused for ${pauseDuration} seconds`);
+        setPauseSeconds((current) => current + pauseDuration);
       }
       setPauseStartedAt(null);
       startTimer();
       setIsPaused(false);
       toast.success("Recording resumed");
-    } catch {
+    } catch (error) {
+      console.error("❌ Resume error:", error);
       toast.error("Failed to resume recording");
     }
   }, [clearRecognitionRestart, pauseStartedAt, sessionId, startRecognition, startTimer]);
@@ -533,11 +582,19 @@ export default function RecordingInterface({
       recognitionShouldRunRef.current = false;
       clearRecognitionRestart();
 
+      console.log("⏹️  User clicked stop button");
+      console.log("📊 Recording: Total bytes captured:", bytesRecorded);
+      console.log("📊 Recording: Audio chunks collected:", audioChunksRef.current.length);
+
       // Stop media recorder
       if (mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
+        console.log("✅ Stopping: MediaRecorder stopped");
       }
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => {
+        track.stop();
+        console.log("✅ Stopping: Audio track stopped:", track.label);
+      });
 
       // Stop speech recognition
       stopRecognition();
@@ -554,6 +611,7 @@ export default function RecordingInterface({
         sessionId: sessionId as Id<"studyClassSessions">,
         durationMinutes: Math.max(1, Math.round((elapsedTime - pauseSeconds) / 60)),
       });
+      console.log("✅ Session: Ended in backend");
 
       // Create note with transcription
       if (transcription.trim()) {
@@ -573,6 +631,7 @@ export default function RecordingInterface({
             markerCount: recordingMarkers.length,
           },
         });
+        console.log("✅ Note: Created with", topics.length, "topics");
 
         setIsTranscribing(false);
         toast.success(
@@ -582,11 +641,14 @@ export default function RecordingInterface({
         // Reset form
         setTranscription("");
         setSessionId(null);
+        setBytesRecorded(0);
         clearDraft();
       } else {
+        console.warn("⚠️  Note: No transcription captured");
         toast.error("No transcription captured");
       }
-    } catch {
+    } catch (error) {
+      console.error("❌ Stop recording error:", error);
       toast.error("Failed to stop recording");
     } finally {
       setIsRecording(false);
@@ -598,13 +660,18 @@ export default function RecordingInterface({
     if (!mediaRecorderRef.current || !sessionId) return;
 
     try {
+      console.log("🗑️  Discard: User discarded recording");
       recognitionShouldRunRef.current = false;
       clearRecognitionRestart();
 
       if (mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
+        console.log("✅ Discarding: MediaRecorder stopped");
       }
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      mediaRecorderRef.current.stream.getTracks().forEach((track) => {
+        track.stop();
+        console.log("✅ Discarding: Audio track stopped");
+      });
 
       stopRecognition();
 
@@ -614,6 +681,7 @@ export default function RecordingInterface({
       await discardSession({
         sessionId: sessionId as Id<"studyClassSessions">,
       });
+      console.log("✅ Discard: Session discarded in backend");
 
       setIsRecording(false);
       setIsPaused(false);
@@ -624,10 +692,12 @@ export default function RecordingInterface({
       setLastSpeechAt(0);
       setElapsedTime(0);
       setSessionId(null);
+      setBytesRecorded(0);
       clearDraft();
 
       toast.info("Recording discarded and reset.");
-    } catch {
+    } catch (error) {
+      console.error("❌ Discard error:", error);
       toast.error("Failed to discard recording");
     } finally {
       setIsRecording(false);
@@ -915,10 +985,11 @@ export default function RecordingInterface({
           )}
 
           {isRecording && (
-            <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-3">
+            <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
               <p>Markers: {recordingMarkers.length}</p>
               <p>Paused time: {Math.max(0, pauseSeconds)}s</p>
               <p>Audio quality: {audioQuality}</p>
+              <p>Bytes recorded: {(bytesRecorded / 1024).toFixed(1)} KB</p>
             </div>
           )}
         </CardContent>
