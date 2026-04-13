@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type ChangeEvent } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -8,11 +8,58 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Mic, StopCircle, BookmarkPlus } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Mic, StopCircle, BookmarkPlus, CheckCircle2, AlertTriangle, Loader2, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 import { extractTopicsFromTranscription } from "@/lib/helpers/academicAI";
 
 const RECORDING_DRAFT_STORAGE_KEY = "study-notes:recording-draft";
+const RECORDING_DEBUG_ENABLED = process.env.NEXT_PUBLIC_RECORDING_DEBUG === "true";
+
+const RECOGNITION_LANGUAGE_OPTIONS = [
+  { value: "en-US", label: "English (US)" },
+  { value: "es-ES", label: "Spanish (Spain)" },
+  { value: "es-MX", label: "Spanish (Latin America)" },
+  { value: "es-US", label: "Mixed English + Spanish (Beta)" },
+] as const;
+
+type RecognitionLanguage = (typeof RECOGNITION_LANGUAGE_OPTIONS)[number]["value"];
+
+type StarterTemplateSeed = {
+  label: string;
+  content: string;
+};
+
+const STARTER_TEMPLATES_BY_LANGUAGE: Record<RecognitionLanguage, StarterTemplateSeed[]> = {
+  "en-US": [
+    { label: "Exam Focus", content: "Exam focus: clarify this concept and expected question types." },
+    { label: "Define Term", content: "Definition: [term] means [meaning]." },
+    { label: "Action Item", content: "Action item: review this tonight and create flashcards." },
+    { label: "Ask Prof", content: "Question for professor: can you explain this step again?" },
+    { label: "Clinical Link", content: "Clinical relevance: this applies to patient care when..." },
+  ],
+  "es-ES": [
+    { label: "Clave de examen", content: "Clave de examen: aclarar este concepto y posibles preguntas." },
+    { label: "Definicion", content: "Definicion: [termino] significa [significado]." },
+    { label: "Tarea", content: "Tarea: repasar esto hoy y hacer tarjetas de estudio." },
+    { label: "Pregunta al profe", content: "Pregunta para el profesor: puede explicar este paso otra vez?" },
+    { label: "Relacion clinica", content: "Relacion clinica: esto aplica al cuidado del paciente cuando..." },
+  ],
+  "es-MX": [
+    { label: "Clave de examen", content: "Clave de examen: aclarar este concepto y preguntas probables." },
+    { label: "Definicion", content: "Definicion: [termino] quiere decir [significado]." },
+    { label: "Pendiente", content: "Pendiente: estudiar esto hoy y hacer tarjetas." },
+    { label: "Duda para profe", content: "Duda para el profe: puede repetir este paso?" },
+    { label: "Aplicacion clinica", content: "Aplicacion clinica: esto se usa en pacientes cuando..." },
+  ],
+  "es-US": [
+    { label: "Bilingual Summary", content: "Summary/Resumen: key point in English + espanol for review." },
+    { label: "Term Pair", content: "Termino clave / key term: [espanol] = [english]." },
+    { label: "Ask Clarification", content: "Pregunta/question: can you explain this in both languages?" },
+    { label: "Action Item", content: "Action item/tarea: review this section and practice both terms." },
+    { label: "Clinical Context", content: "Contexto clinico / clinical context: this matters when..." },
+  ],
+};
 
 type MarkerType = "Exam" | "Definition" | "Formula" | "Action Item" | "General";
 
@@ -100,6 +147,31 @@ type RecordingMarker = {
   createdAt: number;
 };
 
+type NoteTemplate = {
+  id: string;
+  label: string;
+  content: string;
+  createdAt: number;
+};
+
+type TemplateImportMode = "replace" | "merge";
+
+type TemplateImportPreview = {
+  mode: TemplateImportMode;
+  foundInFileCount: number;
+  validCount: number;
+  duplicateInFileCount: number;
+  duplicateAgainstExistingCount: number;
+  newToAddCount: number;
+  replacingExistingCount: number;
+  finalTemplates: NoteTemplate[];
+  sampleTemplates: Array<{ label: string; content: string }>;
+};
+
+type RecordingMode = "voice" | "text";
+
+type SpeechEngineStatus = "idle" | "starting" | "listening" | "restarting" | "error" | "unsupported";
+
 interface RecordingInterfaceProps {
   subject: string;
   userId: Id<"users">;
@@ -133,6 +205,10 @@ export default function RecordingInterface({
   const [pauseSeconds, setPauseSeconds] = useState(0);
   const [audioQuality, setAudioQuality] = useState<"Good" | "Fair" | "Poor" | "Unknown">("Unknown");
   const [bytesRecorded, setBytesRecorded] = useState(0);
+  const [speechEngineStatus, setSpeechEngineStatus] = useState<SpeechEngineStatus>("idle");
+  const [speechEngineError, setSpeechEngineError] = useState<string | null>(null);
+  const [isRunningPreflight, setIsRunningPreflight] = useState(false);
+  const [preflightResult, setPreflightResult] = useState<string | null>(null);
   const [hasRecoverableDraft, setHasRecoverableDraft] = useState(() => {
     if (typeof window === "undefined") return false;
     const raw = window.localStorage.getItem(RECORDING_DRAFT_STORAGE_KEY);
@@ -145,11 +221,40 @@ export default function RecordingInterface({
       return false;
     }
   });
+  const [recordingMode, setRecordingMode] = useState<RecordingMode>("voice");
+  const [templates, setTemplates] = useState<NoteTemplate[]>(() => {
+    if (typeof window === "undefined") return [];
+    const raw = window.localStorage.getItem("study-notes:templates");
+    if (!raw) return [];
+    try {
+      return JSON.parse(raw) as NoteTemplate[];
+    } catch {
+      return [];
+    }
+  });
+  const [showTemplateManager, setShowTemplateManager] = useState(false);
+  const [templateEditing, setTemplateEditing] = useState<NoteTemplate | null>(null);
+  const [templateInputLabel, setTemplateInputLabel] = useState("");
+  const [templateInputContent, setTemplateInputContent] = useState("");
+  const [templateImportMode, setTemplateImportMode] = useState<TemplateImportMode>("replace");
+  const [templateImportPreview, setTemplateImportPreview] = useState<TemplateImportPreview | null>(null);
+  const [showAllImportSamples, setShowAllImportSamples] = useState(false);
+  const [templateImportSearch, setTemplateImportSearch] = useState("");
+  const [recognitionLanguage, setRecognitionLanguage] = useState<RecognitionLanguage>(() => {
+    if (typeof window === "undefined") return "en-US";
+    const saved = window.localStorage.getItem("study-notes:recognition-language") as RecognitionLanguage | null;
+    if (!saved) return "en-US";
+
+    const isSupportedOption = RECOGNITION_LANGUAGE_OPTIONS.some((option) => option.value === saved);
+    return isSupportedOption ? saved : "en-US";
+  });
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const recognitionLanguageRef = useRef<RecognitionLanguage>("en-US");
+  const templateImportInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRestartTimeoutRef = useRef<number | NodeJS.Timeout | null>(null);
   const recognitionShouldRunRef = useRef(false);
   const isRecordingRef = useRef(false);
@@ -162,6 +267,298 @@ export default function RecordingInterface({
   const endSession = useMutation(api.academicScribe.endStudySession);
   const createNote = useMutation(api.academicScribe.createStudyNote);
   const discardSession = useMutation(api.academicScribe.discardStudySession);
+
+  const logDebug = useCallback((...args: unknown[]) => {
+    if (RECORDING_DEBUG_ENABLED) {
+      console.log(...args);
+    }
+  }, []);
+
+  const persistTemplates = useCallback((newTemplates: NoteTemplate[]) => {
+    setTemplates(newTemplates);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("study-notes:templates", JSON.stringify(newTemplates));
+    }
+  }, []);
+
+  const starterLanguageKey: RecognitionLanguage = recognitionLanguage;
+
+  const starterLanguageLabel =
+    RECOGNITION_LANGUAGE_OPTIONS.find((option) => option.value === starterLanguageKey)?.label || "Current language";
+
+  const loadStarterTemplates = useCallback(() => {
+    const seedTemplates = STARTER_TEMPLATES_BY_LANGUAGE[starterLanguageKey];
+    const existingKeys = new Set(templates.map((t) => `${t.label}::${t.content}`));
+    const additions: NoteTemplate[] = [];
+
+    for (const seed of seedTemplates) {
+      const key = `${seed.label}::${seed.content}`;
+      if (!existingKeys.has(key)) {
+        additions.push({
+          id: crypto.randomUUID(),
+          label: seed.label,
+          content: seed.content,
+          createdAt: Date.now(),
+        });
+      }
+    }
+
+    if (additions.length === 0) {
+      toast.message(`Starter templates for ${starterLanguageLabel} are already loaded.`);
+      return;
+    }
+
+    persistTemplates([...templates, ...additions]);
+    toast.success(`Loaded ${additions.length} starter templates for ${starterLanguageLabel}`);
+  }, [persistTemplates, starterLanguageKey, starterLanguageLabel, templates]);
+
+  const replaceWithStarterTemplates = useCallback(() => {
+    if (templates.length > 0) {
+      const confirmed = window.confirm(
+        `Replace all current templates with starter templates for ${starterLanguageLabel}?`
+      );
+      if (!confirmed) return;
+    }
+
+    const seedTemplates = STARTER_TEMPLATES_BY_LANGUAGE[starterLanguageKey].map((seed) => ({
+      id: crypto.randomUUID(),
+      label: seed.label,
+      content: seed.content,
+      createdAt: Date.now(),
+    }));
+
+    persistTemplates(seedTemplates);
+    toast.success(`Replaced templates with ${seedTemplates.length} starter templates for ${starterLanguageLabel}`);
+  }, [persistTemplates, starterLanguageKey, starterLanguageLabel, templates.length]);
+
+  const exportTemplates = useCallback(() => {
+    if (templates.length === 0) {
+      toast.message("No templates to export yet.");
+      return;
+    }
+
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      templates,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `study-notes-templates-${starterLanguageKey}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    toast.success("Templates exported.");
+  }, [starterLanguageKey, templates]);
+
+  const openTemplateImportDialog = useCallback(() => {
+    templateImportInputRef.current?.click();
+  }, []);
+
+  const applyTemplateImport = useCallback(() => {
+    if (!templateImportPreview) return;
+
+    persistTemplates(templateImportPreview.finalTemplates);
+    if (templateImportPreview.mode === "merge") {
+      if (templateImportPreview.newToAddCount === 0) {
+        toast.message("No new templates to merge from file.");
+      } else {
+        toast.success(`Merged ${templateImportPreview.newToAddCount} templates from file.`);
+      }
+    } else {
+      toast.success(`Imported ${templateImportPreview.finalTemplates.length} templates (replaced existing).`);
+    }
+
+    setTemplateImportPreview(null);
+    setShowAllImportSamples(false);
+    setTemplateImportSearch("");
+  }, [persistTemplates, templateImportPreview]);
+
+  const cancelTemplateImportPreview = useCallback(() => {
+    setTemplateImportPreview(null);
+    setShowAllImportSamples(false);
+    setTemplateImportSearch("");
+    toast.message("Template import cancelled.");
+  }, []);
+
+  const importTemplates = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text) as unknown;
+
+        const candidate = Array.isArray(parsed)
+          ? parsed
+          : (parsed as { templates?: unknown })?.templates;
+
+        if (!Array.isArray(candidate)) {
+          throw new Error("Invalid template file format");
+        }
+
+        const foundInFileCount = candidate.length;
+
+        const normalized: NoteTemplate[] = candidate
+          .filter((item) => typeof item === "object" && item !== null)
+          .map((item) => {
+            const template = item as Partial<NoteTemplate>;
+            const label = typeof template.label === "string" ? template.label.trim() : "";
+            const content = typeof template.content === "string" ? template.content.trim() : "";
+
+            if (!label || !content) {
+              return null;
+            }
+
+            return {
+              id: typeof template.id === "string" && template.id ? template.id : crypto.randomUUID(),
+              label,
+              content,
+              createdAt:
+                typeof template.createdAt === "number" && Number.isFinite(template.createdAt)
+                  ? template.createdAt
+                  : Date.now(),
+            };
+          })
+          .filter((item): item is NoteTemplate => item !== null);
+
+        if (normalized.length === 0) {
+          throw new Error("No valid templates found in file");
+        }
+
+        const importKeys = new Set<string>();
+        const dedupedImports: NoteTemplate[] = [];
+        let duplicateInFileCount = 0;
+
+        for (const template of normalized) {
+          const key = `${template.label.toLowerCase()}::${template.content.toLowerCase()}`;
+          if (importKeys.has(key)) {
+            duplicateInFileCount += 1;
+            continue;
+          }
+          importKeys.add(key);
+          dedupedImports.push(template);
+        }
+
+        if (templateImportMode === "merge") {
+          const existingKeys = new Set(templates.map((t) => `${t.label.toLowerCase()}::${t.content.toLowerCase()}`));
+          const mergedAdditions = dedupedImports.filter(
+            (template) => !existingKeys.has(`${template.label.toLowerCase()}::${template.content.toLowerCase()}`)
+          );
+          const duplicateAgainstExistingCount = dedupedImports.length - mergedAdditions.length;
+
+          setTemplateImportPreview({
+            mode: "merge",
+            foundInFileCount,
+            validCount: normalized.length,
+            duplicateInFileCount,
+            duplicateAgainstExistingCount,
+            newToAddCount: mergedAdditions.length,
+            replacingExistingCount: 0,
+            finalTemplates: [...templates, ...mergedAdditions],
+            sampleTemplates: dedupedImports.map((template) => ({
+              label: template.label,
+              content: template.content,
+            })),
+          });
+          setShowAllImportSamples(false);
+          setTemplateImportSearch("");
+        } else {
+          setTemplateImportPreview({
+            mode: "replace",
+            foundInFileCount,
+            validCount: normalized.length,
+            duplicateInFileCount,
+            duplicateAgainstExistingCount: 0,
+            newToAddCount: dedupedImports.length,
+            replacingExistingCount: templates.length,
+            finalTemplates: dedupedImports,
+            sampleTemplates: dedupedImports.map((template) => ({
+              label: template.label,
+              content: template.content,
+            })),
+          });
+          setShowAllImportSamples(false);
+          setTemplateImportSearch("");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to import templates";
+        toast.error(`Template import failed: ${message}`);
+      } finally {
+        event.target.value = "";
+      }
+    },
+    [templateImportMode, templates]
+  );
+
+  const createTemplate = useCallback(() => {
+    const trimmedLabel = templateInputLabel.trim();
+    const trimmedContent = templateInputContent.trim();
+
+    if (!trimmedLabel || !trimmedContent) {
+      toast.error("Template label and content are required");
+      return;
+    }
+
+    if (templateEditing) {
+      // Update existing
+      const updated = templates.map((t) =>
+        t.id === templateEditing.id
+          ? { ...t, label: trimmedLabel, content: trimmedContent }
+          : t
+      );
+      persistTemplates(updated);
+      toast.success("Template updated");
+    } else {
+      // Create new
+      const newTemplate: NoteTemplate = {
+        id: crypto.randomUUID(),
+        label: trimmedLabel,
+        content: trimmedContent,
+        createdAt: Date.now(),
+      };
+      persistTemplates([...templates, newTemplate]);
+      toast.success("Template saved");
+    }
+
+    setTemplateEditing(null);
+    setTemplateInputLabel("");
+    setTemplateInputContent("");
+  }, [templateEditing, templateInputLabel, templateInputContent, templates, persistTemplates]);
+
+  const deleteTemplate = useCallback(
+    (id: string) => {
+      persistTemplates(templates.filter((t) => t.id !== id));
+      toast.success("Template deleted");
+    },
+    [templates, persistTemplates]
+  );
+
+  const editTemplate = useCallback((template: NoteTemplate) => {
+    setTemplateEditing(template);
+    setTemplateInputLabel(template.label);
+    setTemplateInputContent(template.content);
+  }, []);
+
+  const cancelTemplateEdit = useCallback(() => {
+    setTemplateEditing(null);
+    setTemplateInputLabel("");
+    setTemplateInputContent("");
+  }, []);
+
+  const insertTemplate = useCallback(
+    (content: string) => {
+      setTranscription((prev) => prev + content + " ");
+      toast.success("Template inserted");
+    },
+    []
+  );
 
   const startTimer = useCallback(() => {
     if (timerIntervalRef.current) {
@@ -212,7 +609,7 @@ export default function RecordingInterface({
 
   const startRecognition = useCallback((allowRetry = true) => {
     const recognition = recognitionRef.current;
-    console.log("🎤 Speech: startRecognition called", {
+    logDebug("🎤 Speech: startRecognition called", {
       hasRecognition: !!recognition,
       shouldRun: recognitionShouldRunRef.current,
       isRecording: isRecordingRef.current,
@@ -221,33 +618,40 @@ export default function RecordingInterface({
     });
 
     if (!recognition || !recognitionShouldRunRef.current || !isRecordingRef.current || isPausedRef.current) {
-      console.log("🎤 Speech: Skipping startRecognition - conditions not met");
+      logDebug("🎤 Speech: Skipping startRecognition - conditions not met");
       return false;
     }
 
     try {
+      setSpeechEngineStatus("starting");
+      setSpeechEngineError(null);
       recognition.start();
-      console.log("✅ Speech: recognition.start() called successfully");
+      logDebug("✅ Speech: recognition.start() called successfully");
       return true;
     } catch (error) {
       const errorName = error instanceof DOMException ? error.name : "";
       console.error("❌ Speech: recognition.start() failed:", errorName, error);
       
       if (allowRetry && errorName === "InvalidStateError") {
-        console.log("🔄 Speech: Scheduling retry in 300ms due to InvalidStateError");
+        setSpeechEngineStatus("restarting");
+        logDebug("🔄 Speech: Scheduling retry in 300ms due to InvalidStateError");
         clearRecognitionRestart();
         recognitionRestartTimeoutRef.current = window.setTimeout(() => {
-          console.log("🔄 Speech: Retrying recognition.start()");
+          logDebug("🔄 Speech: Retrying recognition.start()");
           void startRecognition(false);
         }, 300);
+      } else {
+        setSpeechEngineStatus("error");
+        setSpeechEngineError(errorName || "Failed to start speech recognition");
       }
       return false;
     }
-  }, [clearRecognitionRestart]);
+  }, [clearRecognitionRestart, logDebug]);
 
   const stopRecognition = useCallback(() => {
     recognitionShouldRunRef.current = false;
     clearRecognitionRestart();
+    setSpeechEngineStatus("idle");
 
     try {
       recognitionRef.current?.stop();
@@ -255,6 +659,43 @@ export default function RecordingInterface({
       // Speech recognition may already be stopping or stopped.
     }
   }, [clearRecognitionRestart]);
+
+  const handleRecognitionLanguageChange = useCallback(
+    (nextLanguage: RecognitionLanguage) => {
+      setRecognitionLanguage(nextLanguage);
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("study-notes:recognition-language", nextLanguage);
+      }
+
+      recognitionLanguageRef.current = nextLanguage;
+
+      if (recognitionRef.current) {
+        recognitionRef.current.lang = nextLanguage;
+      }
+
+      // If voice capture is active, restart recognition quickly so the new language takes effect now.
+      if (recordingMode === "voice" && isRecordingRef.current && !isPausedRef.current && recognitionShouldRunRef.current) {
+        setSpeechEngineStatus("restarting");
+        clearRecognitionRestart();
+
+        try {
+          recognitionRef.current?.stop();
+        } catch {
+          // Ignore stop timing issues while switching language.
+        }
+
+        recognitionRestartTimeoutRef.current = window.setTimeout(() => {
+          void startRecognition(false);
+        }, 300);
+      }
+
+      const selectedLabel =
+        RECOGNITION_LANGUAGE_OPTIONS.find((option) => option.value === nextLanguage)?.label || nextLanguage;
+      toast.success(`Recognition language set to ${selectedLabel}`);
+    },
+    [clearRecognitionRestart, recordingMode, startRecognition]
+  );
 
   const startAudioMeter = useCallback((stream: MediaStream) => {
     try {
@@ -343,58 +784,70 @@ export default function RecordingInterface({
     pauseSeconds,
   ]);
 
-  // Initialize Web Speech API
-  useEffect(() => {
+  const getSpeechRecognitionCtor = useCallback(() => {
     const browserWindow = window as Window & {
       SpeechRecognition?: SpeechRecognitionCtor;
       webkitSpeechRecognition?: SpeechRecognitionCtor;
     };
-    const SpeechRecognitionCtor =
-      browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition;
+
+    return browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition;
+  }, []);
+
+  // Initialize Web Speech API
+  useEffect(() => {
+    const SpeechRecognitionCtor = getSpeechRecognitionCtor();
     
     if (SpeechRecognitionCtor) {
-      console.log("🎤 Speech: Initializing Web Speech API");
+      logDebug("🎤 Speech: Initializing Web Speech API");
       recognitionRef.current = new SpeechRecognitionCtor() as unknown as SpeechRecognitionLike;
       recognitionRef.current.continuous = true;
       recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = "en-US";
-      console.log("🎤 Speech: Configuration set (continuous, interimResults, lang=en-US)");
+      recognitionRef.current.lang = recognitionLanguageRef.current;
+      logDebug(`🎤 Speech: Configuration set (continuous, interimResults, lang=${recognitionLanguageRef.current})`);
 
       recognitionRef.current.onstart = () => {
-        console.log("✅ Speech: Recognition started - listening for audio");
+        logDebug("✅ Speech: Recognition started - listening for audio");
+        setSpeechEngineStatus("listening");
+        setSpeechEngineError(null);
         setLastSpeechAt(Date.now());
       };
 
       recognitionRef.current.onend = () => {
-        console.log("⏹️  Speech: Recognition ended unexpectedly");
+        logDebug("⏹️  Speech: Recognition ended unexpectedly");
         if (recognitionShouldRunRef.current && isRecordingRef.current && !isPausedRef.current) {
-          console.log("🔄 Speech: Auto-restarting because recording is still active");
+          setSpeechEngineStatus("restarting");
+          logDebug("🔄 Speech: Auto-restarting because recording is still active");
           clearRecognitionRestart();
           recognitionRestartTimeoutRef.current = window.setTimeout(() => {
-            console.log("🔄 Speech: Calling startRecognition from onend handler");
+            logDebug("🔄 Speech: Calling startRecognition from onend handler");
             void startRecognition(false);
           }, 300);
+          return;
         }
+
+        setSpeechEngineStatus("idle");
       };
 
       recognitionRef.current.onresult = (event: SpeechRecognitionResultEventLike) => {
-        console.log(`📝 Speech: onresult event (resultIndex: ${event.resultIndex}, total results: ${event.results.length})`);
+        logDebug(`📝 Speech: onresult event (resultIndex: ${event.resultIndex}, total results: ${event.results.length})`);
         
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
           const isFinal = event.results[i].isFinal;
           
-          console.log(`  Result[${i}]: "${transcript}" (final: ${isFinal})`);
+          logDebug(`  Result[${i}]: "${transcript}" (final: ${isFinal})`);
           
           if (transcript.trim()) {
             setLastSpeechAt(Date.now());
+            setSpeechEngineStatus("listening");
+            setSpeechEngineError(null);
           }
 
           if (isFinal) {
-            console.log(`  ✅ Final transcript: "${transcript}"`);
+            logDebug(`  ✅ Final transcript: "${transcript}"`);
             setTranscription((prev) => prev + transcript + " ");
           } else {
-            console.log(`  💬 Interim result: "${transcript}"`);
+            logDebug(`  💬 Interim result: "${transcript}"`);
           }
         }
       };
@@ -403,27 +856,39 @@ export default function RecordingInterface({
         console.error(`❌ Speech: Recognition error - ${event.error}`);
         
         if (event.error === "no-speech") {
-          console.warn("⚠️  Speech: No speech detected - microphone may be muted or too quiet");
-        } else if (event.error === "aborted") {
-          console.log("ℹ️  Speech: Recognition was aborted");
+          logDebug("⚠️  Speech: No speech detected - microphone may be muted or too quiet");
           return;
         }
 
+        if (event.error === "aborted") {
+          logDebug("ℹ️  Speech: Recognition was aborted");
+          return;
+        }
+
+        setSpeechEngineStatus("error");
+        setSpeechEngineError(event.error);
         toast.error(`Transcription error: ${event.error}`);
       };
       
-      console.log("✅ Speech: Web Speech API initialized and ready");
+      logDebug("✅ Speech: Web Speech API initialized and ready");
     } else {
+      setSpeechEngineStatus("unsupported");
+      setSpeechEngineError("This browser does not support speech recognition.");
       console.error("❌ Speech: Web Speech API not supported in this browser");
       toast.error("Speech recognition not supported in your browser");
     }
-  }, [clearRecognitionRestart, startRecognition]);
+  }, [clearRecognitionRestart, getSpeechRecognitionCtor, logDebug, startRecognition]);
+
+  useEffect(() => {
+    recognitionLanguageRef.current = recognitionLanguage;
+    if (!recognitionRef.current) return;
+    recognitionRef.current.lang = recognitionLanguage;
+    logDebug(`🌐 Speech: Active recognition language set to ${recognitionLanguage}`);
+  }, [logDebug, recognitionLanguage]);
 
   const startRecording = async () => {
     try {
-      console.log("🎙️ Recording: Requesting microphone permission...");
-
-      // Create session in backend
+      // Create session in backend (common to both modes)
       const newSessionId = await createSession({
         userId,
         subject,
@@ -431,61 +896,64 @@ export default function RecordingInterface({
         professor: professor || undefined,
       });
       setSessionId(newSessionId);
-      console.log("✅ Recording: Session created with ID:", newSessionId);
+      logDebug("✅ Recording: Session created with ID:", newSessionId);
 
-      // Request microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log("✅ Recording: Microphone permission granted");
-      console.log("📊 Recording: Audio tracks available:", stream.getAudioTracks().length);
-      console.log("🔊 Recording: Stream settings:", {
-        audioTracks: stream.getAudioTracks().map((track) => ({
-          label: track.label,
-          enabled: track.enabled,
-          readyState: track.readyState,
-        })),
-      });
+      if (recordingMode === "voice") {
+        // VOICE MODE: Request mic, start media recorder, start speech recognition
+        logDebug("🎙️ Recording: Voice mode - requesting microphone permission...");
 
-      // Start media recording
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-      let totalBytes = 0;
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        logDebug("✅ Recording: Microphone permission granted");
+        logDebug("📊 Recording: Audio tracks available:", stream.getAudioTracks().length);
 
-      console.log("📝 Recording: MediaRecorder created, supported MIME types:", MediaRecorder.isTypeSupported("audio/webm") ? "webm✓" : "webm✗");
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+        let totalBytes = 0;
 
-      mediaRecorder.ondataavailable = (event) => {
-        const bytes = event.data.size;
-        totalBytes += bytes;
-        audioChunksRef.current.push(event.data);
-        console.log(`📦 Recording: Audio chunk received (${bytes} bytes, total: ${totalBytes} bytes)`);
-        setBytesRecorded(totalBytes);
-      };
+        logDebug("📝 Recording: MediaRecorder created");
 
-      mediaRecorder.onstop = () => {
-        console.log("⏹️  Recording: MediaRecorder stopped, total bytes:", totalBytes);
-        if (recognitionShouldRunRef.current && isRecordingRef.current && !isPausedRef.current) {
-          toast.message("Audio capture ended unexpectedly. You can restart the session if needed.");
-        }
-      };
+        mediaRecorder.ondataavailable = (event) => {
+          const bytes = event.data.size;
+          totalBytes += bytes;
+          audioChunksRef.current.push(event.data);
+          logDebug(`📦 Recording: Audio chunk received (${bytes} bytes, total: ${totalBytes} bytes)`);
+          setBytesRecorded(totalBytes);
+        };
 
-      mediaRecorder.onerror = (event) => {
-        console.error("❌ Recording: MediaRecorder error:", event.error);
-        toast.error(`Recording error: ${event.error}`);
-      };
+        mediaRecorder.onstop = () => {
+          logDebug("⏹️  Recording: MediaRecorder stopped, total bytes:", totalBytes);
+          if (recognitionShouldRunRef.current && isRecordingRef.current && !isPausedRef.current) {
+            toast.message("Audio capture ended unexpectedly. You can restart the session if needed.");
+          }
+        };
 
-      // Start recording with 1 second timeslice to ensure ondataavailable fires regularly
-      mediaRecorder.start(1000);
-      console.log("🎬 Recording: MediaRecorder started with 1s timeslice");
-      startAudioMeter(stream);
+        mediaRecorder.onerror = (event) => {
+          console.error("❌ Recording: MediaRecorder error:", event.error);
+          toast.error(`Recording error: ${event.error}`);
+        };
 
-      // Start speech-to-text
-      console.log("🎤 Recording: About to start speech recognition");
-      recognitionShouldRunRef.current = true;
-      isRecordingRef.current = true;  // Set ref immediately before calling startRecognition
-      clearRecognitionRestart();
-      const recognitionStarted = startRecognition();
-      console.log("🎤 Recording: Speech recognition start result:", recognitionStarted);
+        mediaRecorder.start(1000);
+        logDebug("🎬 Recording: MediaRecorder started with 1s timeslice");
+        startAudioMeter(stream);
 
+        // Start speech-to-text
+        logDebug("🎤 Recording: Voice mode - starting speech recognition");
+        recognitionShouldRunRef.current = true;
+        isRecordingRef.current = true;
+        setSpeechEngineStatus("starting");
+        setSpeechEngineError(null);
+        clearRecognitionRestart();
+        const recognitionStarted = startRecognition();
+        logDebug("🎤 Recording: Speech recognition start result:", recognitionStarted);
+      } else {
+        // TEXT MODE: Just set up for typing with timer
+        logDebug("📝 Recording: Text mode - ready for manual typing");
+        setSpeechEngineStatus("idle");
+        setSpeechEngineError(null);
+      }
+
+      // Common state reset
       setIsRecording(true);
       setIsPaused(false);
       setRecordingMarkers([]);
@@ -498,14 +966,12 @@ export default function RecordingInterface({
       setTranscription("");
       setHasRecoverableDraft(false);
 
-      // Start timer
       startTimer();
-
-      console.log("✅ Recording: All systems ready");
-      toast.success("Recording started");
+      logDebug("✅ Recording: All systems ready");
+      toast.success(`Recording started in ${recordingMode === "voice" ? "voice" : "text"} mode`);
     } catch (error) {
       const err = error as Error;
-      
+
       if (err?.name === "NotAllowedError" || err?.message?.includes("Permission")) {
         console.error("❌ Recording: Microphone permission denied. Please enable microphone access in your browser settings.");
         toast.error("Microphone permission denied. Please enable it in your browser settings.");
@@ -516,6 +982,135 @@ export default function RecordingInterface({
         console.error("❌ Recording: Failed to start:", err);
         toast.error("Failed to start recording");
       }
+    }
+  };
+
+  const runPreflightCheck = async () => {
+    if (isRecording) {
+      toast.info("Stop the active recording before running pre-flight checks.");
+      return;
+    }
+
+    const SpeechRecognitionCtor = getSpeechRecognitionCtor();
+    if (!SpeechRecognitionCtor) {
+      setSpeechEngineStatus("unsupported");
+      setSpeechEngineError("This browser does not support speech recognition.");
+      setPreflightResult("Speech recognition unsupported in this browser.");
+      toast.error("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    setIsRunningPreflight(true);
+    setSpeechEngineStatus("starting");
+    setSpeechEngineError(null);
+    setPreflightResult(null);
+
+    let stream: MediaStream | null = null;
+    let audioContext: AudioContext | null = null;
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+
+      const buffer = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(buffer);
+      const averageLevel = buffer.reduce((sum, value) => sum + value, 0) / buffer.length;
+      const micLooksActive = averageLevel > 8;
+
+      const speechSample = await new Promise<string>((resolve, reject) => {
+        const recognition = new SpeechRecognitionCtor() as unknown as SpeechRecognitionLike;
+        let finalTranscript = "";
+        let settled = false;
+
+        const settle = (value: string, isError = false) => {
+          if (settled) return;
+          settled = true;
+          if (isError) {
+            reject(new Error(value));
+          } else {
+            resolve(value);
+          }
+        };
+
+        const timeoutId = window.setTimeout(() => {
+          try {
+            recognition.stop();
+          } catch {
+            // Ignore stop errors in test mode.
+          }
+          settle(finalTranscript.trim());
+        }, 5000);
+
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = recognitionLanguage;
+
+        recognition.onstart = () => {
+          setSpeechEngineStatus("listening");
+        };
+
+        recognition.onresult = (event: SpeechRecognitionResultEventLike) => {
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript.trim();
+            if (!transcript) continue;
+
+            if (event.results[i].isFinal) {
+              finalTranscript = `${finalTranscript} ${transcript}`.trim();
+            }
+          }
+        };
+
+        recognition.onerror = (event: SpeechRecognitionErrorEventLike) => {
+          clearTimeout(timeoutId);
+          if (event.error === "no-speech") {
+            settle(finalTranscript.trim());
+            return;
+          }
+          settle(event.error, true);
+        };
+
+        recognition.onend = () => {
+          clearTimeout(timeoutId);
+          settle(finalTranscript.trim());
+        };
+
+        recognition.start();
+      });
+
+      const heardText = speechSample.trim();
+      if (heardText) {
+        setPreflightResult(`Pre-flight passed: mic active and speech recognized ("${heardText}").`);
+        setSpeechEngineStatus("idle");
+        toast.success("Pre-flight passed: transcription is ready.");
+      } else if (micLooksActive) {
+        setPreflightResult("Mic is active, but no words were recognized. Speak louder and closer, then retry.");
+        setSpeechEngineStatus("error");
+        setSpeechEngineError("No words recognized during test.");
+        toast.warning("Mic works, but speech was not recognized. Try again in a quieter spot.");
+      } else {
+        setPreflightResult("Mic signal is very low and no words were recognized. Check mic selection or input volume.");
+        setSpeechEngineStatus("error");
+        setSpeechEngineError("Low microphone signal during test.");
+        toast.warning("Mic signal was low. Check your microphone settings.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Pre-flight check failed";
+      setSpeechEngineStatus("error");
+      setSpeechEngineError(message);
+      setPreflightResult(`Pre-flight failed: ${message}`);
+      toast.error(`Pre-flight failed: ${message}`);
+    } finally {
+      if (audioContext) {
+        void audioContext.close();
+      }
+      stream?.getTracks().forEach((track) => track.stop());
+      setIsRunningPreflight(false);
     }
   };
 
@@ -568,13 +1163,14 @@ export default function RecordingInterface({
     if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
 
     try {
-      console.log("⏸️  Pause: User paused recording");
+      logDebug("⏸️  Pause: User paused recording");
       recognitionShouldRunRef.current = false;
       clearRecognitionRestart();
+      setSpeechEngineStatus("idle");
 
       if (mediaRecorderRef.current.state === "recording") {
         mediaRecorderRef.current.pause();
-        console.log("✅ Pause: MediaRecorder paused");
+        logDebug("✅ Pause: MediaRecorder paused");
       }
 
       stopRecognition();
@@ -586,27 +1182,29 @@ export default function RecordingInterface({
       console.error("❌ Pause error:", error);
       toast.error("Failed to pause recording");
     }
-  }, [clearRecognitionRestart, sessionId, stopRecognition, stopTimer]);
+  }, [clearRecognitionRestart, logDebug, sessionId, stopRecognition, stopTimer]);
 
   const resumeRecording = useCallback(async () => {
     if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
 
     try {
-      console.log("▶️  Resume: User resumed recording");
+      logDebug("▶️  Resume: User resumed recording");
       recognitionShouldRunRef.current = true;
       isRecordingRef.current = true;  // Set ref immediately before calling startRecognition
       isPausedRef.current = false;    // Set ref immediately before calling startRecognition
+      setSpeechEngineStatus("starting");
+      setSpeechEngineError(null);
 
       if (mediaRecorderRef.current.state === "paused") {
         mediaRecorderRef.current.resume();
-        console.log("✅ Resume: MediaRecorder resumed");
+        logDebug("✅ Resume: MediaRecorder resumed");
       }
 
       clearRecognitionRestart();
       void startRecognition();
       if (pauseStartedAt) {
         const pauseDuration = Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000));
-        console.log(`📊 Resume: Paused for ${pauseDuration} seconds`);
+        logDebug(`📊 Resume: Paused for ${pauseDuration} seconds`);
         setPauseSeconds((current) => current + pauseDuration);
       }
       setPauseStartedAt(null);
@@ -617,35 +1215,44 @@ export default function RecordingInterface({
       console.error("❌ Resume error:", error);
       toast.error("Failed to resume recording");
     }
-  }, [clearRecognitionRestart, pauseStartedAt, sessionId, startRecognition, startTimer]);
+  }, [clearRecognitionRestart, logDebug, pauseStartedAt, sessionId, startRecognition, startTimer]);
 
   const stopRecording = async () => {
-    if (!mediaRecorderRef.current || !sessionId) return;
+    if (!sessionId) return;
 
     try {
       recognitionShouldRunRef.current = false;
       clearRecognitionRestart();
+      setSpeechEngineStatus("idle");
+      setSpeechEngineError(null);
 
-      console.log("⏹️  User clicked stop button");
-      console.log("📊 Recording: Total bytes captured:", bytesRecorded);
-      console.log("📊 Recording: Audio chunks collected:", audioChunksRef.current.length);
+      logDebug("⏹️  User clicked stop button");
 
-      // Stop media recorder
-      if (mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-        console.log("✅ Stopping: MediaRecorder stopped");
+      // Stop media recorder (voice mode only)
+      if (recordingMode === "voice" && mediaRecorderRef.current) {
+        if (mediaRecorderRef.current.state !== "inactive") {
+          mediaRecorderRef.current.stop();
+          logDebug("✅ Stopping: MediaRecorder stopped");
+        }
+        mediaRecorderRef.current.stream.getTracks().forEach((track) => {
+          track.stop();
+          logDebug("✅ Stopping: Audio track stopped:", track.label);
+        });
+
+        // Stop speech recognition
+        stopRecognition();
+
+        // Stop audio meter
+        stopAudioMeter();
+
+        logDebug("📊 Recording: Total bytes captured:", bytesRecorded);
+        logDebug("📊 Recording: Audio chunks collected:", audioChunksRef.current.length);
+      } else if (recordingMode === "text") {
+        logDebug("📊 Text Mode: Transcription length:", transcription.length);
       }
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => {
-        track.stop();
-        console.log("✅ Stopping: Audio track stopped:", track.label);
-      });
-
-      // Stop speech recognition
-      stopRecognition();
 
       // Stop timer
       stopTimer();
-      stopAudioMeter();
 
       setIsRecording(false);
       setIsPaused(false);
@@ -655,7 +1262,7 @@ export default function RecordingInterface({
         sessionId: sessionId as Id<"studyClassSessions">,
         durationMinutes: Math.max(1, Math.round((elapsedTime - pauseSeconds) / 60)),
       });
-      console.log("✅ Session: Ended in backend");
+      logDebug("✅ Session: Ended in backend");
 
       // Create note with transcription
       if (transcription.trim()) {
@@ -675,7 +1282,7 @@ export default function RecordingInterface({
             markerCount: recordingMarkers.length,
           },
         });
-        console.log("✅ Note: Created with", topics.length, "topics");
+        logDebug("✅ Note: Created with", topics.length, "topics");
 
         setIsTranscribing(false);
         toast.success(
@@ -688,7 +1295,7 @@ export default function RecordingInterface({
         setBytesRecorded(0);
         clearDraft();
       } else {
-        console.warn("⚠️  Note: No transcription captured");
+        logDebug("⚠️  Note: No transcription captured");
         toast.error("No transcription captured");
       }
     } catch (error) {
@@ -697,35 +1304,41 @@ export default function RecordingInterface({
     } finally {
       setIsRecording(false);
       setIsPaused(false);
+      setSpeechEngineStatus("idle");
     }
   };
 
   const discardRecording = async () => {
-    if (!mediaRecorderRef.current || !sessionId) return;
+    if (!sessionId) return;
 
     try {
-      console.log("🗑️  Discard: User discarded recording");
+      logDebug("🗑️  Discard: User discarded recording");
       recognitionShouldRunRef.current = false;
       clearRecognitionRestart();
+      setSpeechEngineStatus("idle");
+      setSpeechEngineError(null);
 
-      if (mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-        console.log("✅ Discarding: MediaRecorder stopped");
+      // Clean up media recorder (voice mode only)
+      if (recordingMode === "voice" && mediaRecorderRef.current) {
+        if (mediaRecorderRef.current.state !== "inactive") {
+          mediaRecorderRef.current.stop();
+          logDebug("✅ Discarding: MediaRecorder stopped");
+        }
+        mediaRecorderRef.current.stream.getTracks().forEach((track) => {
+          track.stop();
+          logDebug("✅ Discarding: Audio track stopped");
+        });
+
+        stopRecognition();
+        stopAudioMeter();
       }
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => {
-        track.stop();
-        console.log("✅ Discarding: Audio track stopped");
-      });
-
-      stopRecognition();
 
       stopTimer();
-      stopAudioMeter();
 
       await discardSession({
         sessionId: sessionId as Id<"studyClassSessions">,
       });
-      console.log("✅ Discard: Session discarded in backend");
+      logDebug("✅ Discard: Session discarded in backend");
 
       setIsRecording(false);
       setIsPaused(false);
@@ -746,8 +1359,36 @@ export default function RecordingInterface({
     } finally {
       setIsRecording(false);
       setIsPaused(false);
+      setSpeechEngineStatus("idle");
     }
   };
+
+  const speechStatusToneClass =
+    speechEngineStatus === "listening"
+      ? "border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300"
+      : speechEngineStatus === "starting" || speechEngineStatus === "restarting"
+        ? "border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-300"
+        : speechEngineStatus === "error" || speechEngineStatus === "unsupported"
+          ? "border-red-300 text-red-700 dark:border-red-700 dark:text-red-300"
+          : "border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300";
+
+  const speechStatusLabel =
+    speechEngineStatus === "listening"
+      ? "Speech Engine: Listening"
+      : speechEngineStatus === "starting"
+        ? "Speech Engine: Starting"
+        : speechEngineStatus === "restarting"
+          ? "Speech Engine: Reconnecting"
+          : speechEngineStatus === "error"
+            ? "Speech Engine: Error"
+            : speechEngineStatus === "unsupported"
+              ? "Speech Engine: Unsupported"
+              : "Speech Engine: Idle";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("study-notes:recognition-language", recognitionLanguage);
+  }, [recognitionLanguage]);
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -816,6 +1457,108 @@ export default function RecordingInterface({
 
   return (
     <div className="space-y-4">
+      <Dialog open={Boolean(templateImportPreview)} onOpenChange={(open) => { if (!open) setTemplateImportPreview(null); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Template Import Preview</DialogTitle>
+            <DialogDescription>
+              Review import details before applying changes to your current template set.
+            </DialogDescription>
+          </DialogHeader>
+
+          {templateImportPreview && (
+            <div className="space-y-2 text-sm">
+              {(() => {
+                const query = templateImportSearch.trim().toLowerCase();
+                const filteredSamples = query
+                  ? templateImportPreview.sampleTemplates.filter(
+                      (template) =>
+                        template.label.toLowerCase().includes(query) ||
+                        template.content.toLowerCase().includes(query)
+                    )
+                  : templateImportPreview.sampleTemplates;
+                const visibleSamples = showAllImportSamples ? filteredSamples : filteredSamples.slice(0, 5);
+
+                return (
+                  <>
+              <p><strong>Mode:</strong> {templateImportPreview.mode === "merge" ? "Merge" : "Replace"}</p>
+              <p><strong>Found in file:</strong> {templateImportPreview.foundInFileCount}</p>
+              <p><strong>Valid entries:</strong> {templateImportPreview.validCount}</p>
+              <p><strong>Duplicates inside file:</strong> {templateImportPreview.duplicateInFileCount}</p>
+              {templateImportPreview.mode === "merge" ? (
+                <>
+                  <p><strong>Duplicates vs current templates:</strong> {templateImportPreview.duplicateAgainstExistingCount}</p>
+                  <p><strong>New templates to add:</strong> {templateImportPreview.newToAddCount}</p>
+                  <p><strong>Total templates after merge:</strong> {templateImportPreview.finalTemplates.length}</p>
+                </>
+              ) : (
+                <>
+                  <p><strong>Current templates to replace:</strong> {templateImportPreview.replacingExistingCount}</p>
+                  <p><strong>Templates after replace:</strong> {templateImportPreview.finalTemplates.length}</p>
+                </>
+              )}
+
+              <div className="mt-3 space-y-2">
+                <Input
+                  value={templateImportSearch}
+                  onChange={(event) => setTemplateImportSearch(event.target.value)}
+                  placeholder="Search preview templates by label or content"
+                />
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Showing {visibleSamples.length} of {filteredSamples.length} matched templates
+                  {templateImportSearch.trim() ? ` for "${templateImportSearch.trim()}"` : ""}.
+                </p>
+              </div>
+
+              {filteredSamples.length > 0 && (
+                <div className="mt-3 rounded-md border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 dark:border-slate-700">
+                    <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                      Sample Templates ({visibleSamples.length} of {filteredSamples.length})
+                    </p>
+                    {filteredSamples.length > 5 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => setShowAllImportSamples((current) => !current)}
+                      >
+                        {showAllImportSamples ? "Show less" : "Show all"}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="max-h-40 overflow-y-auto">
+                    {visibleSamples.map((template, index) => (
+                      <div
+                        key={`${template.label}-${index}`}
+                        className="border-b border-slate-100 px-3 py-2 last:border-b-0 dark:border-slate-800"
+                      >
+                        <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">{template.label}</p>
+                        <p className="truncate text-xs text-slate-500 dark:text-slate-400">{template.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {filteredSamples.length === 0 && (
+                <div className="mt-3 rounded-md border border-dashed border-slate-300 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                  No templates match this search.
+                </div>
+              )}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={cancelTemplateImportPreview}>Cancel</Button>
+            <Button onClick={applyTemplateImport}>Apply Import</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {hasRecoverableDraft && !isRecording && (
         <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30">
           <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
@@ -824,6 +1567,149 @@ export default function RecordingInterface({
               <Button size="sm" variant="outline" onClick={clearDraft}>Dismiss</Button>
               <Button size="sm" onClick={restoreDraft}>Restore Draft</Button>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Recording Mode Selection */}
+      {!isRecording && (
+        <Card className="border-purple-200 bg-purple-50/70 dark:border-purple-900 dark:bg-purple-950/30">
+          <CardContent className="space-y-3 pt-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-purple-900 dark:text-purple-100 mb-2">Recording Mode</p>
+                <div className="flex gap-2">
+                  {(["voice", "text"] as RecordingMode[]).map((mode) => (
+                    <Button
+                      key={mode}
+                      variant={recordingMode === mode ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setRecordingMode(mode)}
+                      className="capitalize"
+                    >
+                      {mode === "voice" ? "🎤 Voice" : "✏️ Text"}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowTemplateManager(!showTemplateManager)}
+                className="gap-2"
+              >
+                📋 Manage Templates ({templates.length})
+              </Button>
+            </div>
+
+            {/* Template Manager Modal */}
+            {showTemplateManager && (
+              <div className="border-t border-purple-200 pt-3 dark:border-purple-700">
+                <div className="space-y-3">
+                  <div className="rounded-md border border-purple-200 bg-white p-2 dark:border-purple-800 dark:bg-slate-900">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-xs text-slate-600 dark:text-slate-300">
+                        Starter pack: {starterLanguageLabel}
+                      </p>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="secondary" onClick={loadStarterTemplates}>
+                          Load Starter Templates
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={replaceWithStarterTemplates}>
+                          Replace with Starter Pack
+                        </Button>
+                        <select
+                          className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                          value={templateImportMode}
+                          onChange={(event) => setTemplateImportMode(event.target.value as TemplateImportMode)}
+                          aria-label="Template import mode"
+                        >
+                          <option value="replace">Import: Replace</option>
+                          <option value="merge">Import: Merge</option>
+                        </select>
+                        <Button size="sm" variant="outline" onClick={exportTemplates}>
+                          Export
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={openTemplateImportDialog}>
+                          Import
+                        </Button>
+                      </div>
+                    </div>
+                    <input
+                      ref={templateImportInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      onChange={importTemplates}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium">Template Label</label>
+                    <Input
+                      placeholder="e.g., 'Review This'"
+                      value={templateInputLabel}
+                      onChange={(e) => setTemplateInputLabel(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium">Template Content</label>
+                    <textarea
+                      className="h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                      placeholder="Text to insert when template is used"
+                      value={templateInputContent}
+                      onChange={(e) => setTemplateInputContent(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={createTemplate} className="flex-1">
+                      {templateEditing ? "Update Template" : "Add Template"}
+                    </Button>
+                    {templateEditing && (
+                      <Button size="sm" variant="outline" onClick={cancelTemplateEdit}>
+                        Cancel
+                      </Button>
+                    )}
+                  </div>
+
+                  {templates.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium">Your Templates:</p>
+                      <div className="max-h-48 space-y-1 overflow-y-auto">
+                        {templates.map((template) => (
+                          <div
+                            key={template.id}
+                            className="flex items-center justify-between rounded-sm border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900"
+                          >
+                            <div className="flex-1 overflow-hidden">
+                              <p className="truncate text-xs font-medium">{template.label}</p>
+                              <p className="truncate text-xs text-slate-500">{template.content}</p>
+                            </div>
+                            <div className="flex gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => editTemplate(template)}
+                                className="h-6 w-6 p-0 text-xs"
+                              >
+                                ✎
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => deleteTemplate(template.id)}
+                                className="h-6 w-6 p-0 text-xs text-red-600"
+                              >
+                                ✕
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -877,7 +1763,7 @@ export default function RecordingInterface({
 
       {/* Session Setup */}
       {!isRecording && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium mb-1">Class Name</label>
             <Input
@@ -902,6 +1788,23 @@ export default function RecordingInterface({
               {subject}
             </Badge>
           </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Transcription Language</label>
+            <select
+              className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+              value={recognitionLanguage}
+              onChange={(event) => handleRecognitionLanguageChange(event.target.value as RecognitionLanguage)}
+            >
+              {RECOGNITION_LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Default is English. Mixed mode helps with code-switching but is less accurate than a single language.
+            </p>
+          </div>
         </div>
       )}
 
@@ -925,12 +1828,99 @@ export default function RecordingInterface({
             </div>
           </div>
 
-          {isRecording && (
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <Badge variant="outline" className={`w-fit gap-2 ${speechStatusToneClass}`}>
+              {speechEngineStatus === "listening" && <CheckCircle2 className="h-3.5 w-3.5" />}
+              {(speechEngineStatus === "starting" || speechEngineStatus === "restarting") && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {(speechEngineStatus === "error" || speechEngineStatus === "unsupported") && <AlertTriangle className="h-3.5 w-3.5" />}
+              {speechEngineStatus === "idle" && <Mic className="h-3.5 w-3.5" />}
+              <span>{speechStatusLabel}</span>
+            </Badge>
+            {!isRecording && (
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                onClick={runPreflightCheck}
+                disabled={isRunningPreflight || isTranscribing}
+              >
+                {isRunningPreflight ? <Loader2 className="h-4 w-4 animate-spin" /> : <Stethoscope className="h-4 w-4" />}
+                {isRunningPreflight ? "Running Pre-Flight" : "Test Mic + Transcription"}
+              </Button>
+            )}
+          </div>
+
+          {recordingMode === "voice" && (
+            <div className="mb-4 rounded-md border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+              <label className="mb-1 block text-xs font-medium">Live Language</label>
+              <select
+                className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                value={recognitionLanguage}
+                onChange={(event) => handleRecognitionLanguageChange(event.target.value as RecognitionLanguage)}
+              >
+                {RECOGNITION_LANGUAGE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {!isRecording && preflightResult && (
+            <div className="mb-4 rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              {preflightResult}
+            </div>
+          )}
+
+          {!isRecording && speechEngineError && (
+            <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+              {speechEngineError}
+            </div>
+          )}
+
+          {isRecording && recordingMode === "voice" && (
             <div className="mb-4 p-3 bg-white dark:bg-slate-800 rounded-lg border-l-4 border-blue-500">
               <p className="text-sm font-medium mb-2">Live Transcription:</p>
               <p className="text-sm text-slate-600 dark:text-slate-300 italic">
                 {isPaused ? "Paused for break" : transcription || "Listening..."}
               </p>
+            </div>
+          )}
+
+          {isRecording && recordingMode === "text" && (
+            <div className="mb-4 space-y-2">
+              <label className="text-sm font-medium">Type Your Notes:</label>
+              <textarea
+                className="h-32 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                placeholder="Type your notes here... (They will be captured with timestamps)"
+                value={transcription}
+                onChange={(e) => setTranscription(e.target.value)}
+              />
+              {templates.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-slate-600 dark:text-slate-400">Quick Insert Templates:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {templates.map((template) => (
+                      <Button
+                        key={template.id}
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => insertTemplate(template.content)}
+                        className="text-xs"
+                      >
+                        {template.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {templates.length === 0 && (
+                <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                  No templates yet. Open Manage Templates and click Load Starter Templates for {starterLanguageLabel}.
+                </div>
+              )}
             </div>
           )}
 
@@ -1032,8 +2022,15 @@ export default function RecordingInterface({
             <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
               <p>Markers: {recordingMarkers.length}</p>
               <p>Paused time: {Math.max(0, pauseSeconds)}s</p>
-              <p>Audio quality: {audioQuality}</p>
-              <p>Bytes recorded: {(bytesRecorded / 1024).toFixed(1)} KB</p>
+              {recordingMode === "voice" && (
+                <>
+                  <p>Audio quality: {audioQuality}</p>
+                  <p>Bytes recorded: {(bytesRecorded / 1024).toFixed(1)} KB</p>
+                </>
+              )}
+              {recordingMode === "text" && (
+                <p>Text length: {transcription.length} chars</p>
+              )}
             </div>
           )}
         </CardContent>
@@ -1042,12 +2039,24 @@ export default function RecordingInterface({
       {/* Tips */}
       <Card className="bg-slate-50 dark:bg-slate-800">
         <CardContent className="pt-6">
-          <p className="text-sm font-semibold mb-2">💡 Recording Tips:</p>
+          <p className="text-sm font-semibold mb-2">💡 {recordingMode === "voice" ? "Recording" : "Typing"} Tips:</p>
           <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1">
-            <li>• Speak clearly and at a natural pace</li>
-            <li>• Topics will be automatically extracted from your recording</li>
-            <li>• You can edit and organize the transcription after</li>
-            <li>• Longer recordings get better topic organization</li>
+            {recordingMode === "voice" && (
+              <>
+                <li>• Speak clearly and at a natural pace</li>
+                <li>• Topics will be automatically extracted from your recording</li>
+                <li>• You can edit and organize the transcription after</li>
+                <li>• Longer recordings get better topic organization</li>
+              </>
+            )}
+            {recordingMode === "text" && (
+              <>
+                <li>• Type your notes and ideas naturally</li>
+                <li>• Use templates to quickly insert common phrases</li>
+                <li>• Add markers to highlight important sections</li>
+                <li>• Topics will be extracted from your typed text</li>
+              </>
+            )}
           </ul>
         </CardContent>
       </Card>

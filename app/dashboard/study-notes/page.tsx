@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -278,6 +279,9 @@ export default function StudyNotesPage() {
           <div className="flex items-center gap-3 mb-2">
             <BookOpen className="w-8 h-8 text-blue-600" />
             <h1 className="text-4xl font-bold text-slate-900 dark:text-white">Study Notes</h1>
+            <Button asChild variant="outline" size="sm" className="ml-auto">
+              <Link href="/dashboard/productivity">Open Productivity Suite</Link>
+            </Button>
           </div>
           <p className="text-slate-600 dark:text-slate-400">
             Record, organize, and revisit your class notes with AI-powered topic extraction

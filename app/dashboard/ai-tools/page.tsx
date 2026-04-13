@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { BookOpenCheck, BrainCircuit, ClipboardCheck, Copy, ShieldAlert, Sparkles, Stethoscope } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -105,6 +106,11 @@ export default function AIToolsPage() {
         <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
           Differential support, handoff compression, and denial risk pre-check in one workspace.
         </p>
+        <div>
+          <Button asChild variant="outline" size="sm" className="mt-2">
+            <Link href="/dashboard/productivity">Open Clinical Productivity Suite</Link>
+          </Button>
+        </div>
         {prefill ? (
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-300">
             Prefill loaded from cross-dashboard handoff.

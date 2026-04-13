@@ -43,42 +43,6 @@ const DISPOSITION_OPTIONS = ["all", "undecided", "discharge", "admit", "observat
 const RESEARCH_PRESETS_STORAGE_KEY = "clinical-research:presets";
 const RESEARCH_SNAPSHOTS_STORAGE_KEY = "clinical-research:snapshots";
 
-const CURATED_LIBRARY = [
-  {
-    id: "boarding-library",
-    title: "Boarding Delay Drivers",
-    description: "Track boarded throughput friction across high-acuity cohorts.",
-    questionId: "boarding_delay_drivers" as ResearchQuestionId,
-    lookbackDays: 14,
-    minAcuity: 3,
-    maxAcuity: 5,
-    flowStage: "boarded" as (typeof FLOW_STAGE_OPTIONS)[number],
-    dispositionPlan: "admit" as (typeof DISPOSITION_OPTIONS)[number],
-  },
-  {
-    id: "critical-library",
-    title: "Critical Acknowledgement Latency",
-    description: "Measure turnaround from critical result to acknowledgment.",
-    questionId: "critical_ack_latency" as ResearchQuestionId,
-    lookbackDays: 7,
-    minAcuity: 2,
-    maxAcuity: 5,
-    flowStage: "workup_pending" as (typeof FLOW_STAGE_OPTIONS)[number],
-    dispositionPlan: "all" as (typeof DISPOSITION_OPTIONS)[number],
-  },
-  {
-    id: "protocol-library",
-    title: "Protocol Effectiveness",
-    description: "Compare outcomes between protocol-enabled and baseline cohorts.",
-    questionId: "protocol_effectiveness" as ResearchQuestionId,
-    lookbackDays: 30,
-    minAcuity: 1,
-    maxAcuity: 5,
-    flowStage: "all" as (typeof FLOW_STAGE_OPTIONS)[number],
-    dispositionPlan: "all" as (typeof DISPOSITION_OPTIONS)[number],
-  },
-];
-
 type ResearchReviewComment = {
   id: string;
   author: string;
@@ -207,8 +171,8 @@ export default function ClinicalResearchHub() {
   const [presetTagsInput, setPresetTagsInput] = useState("");
   const [presetReviewCadence, setPresetReviewCadence] = useState<"weekly" | "monthly" | "quarterly">("monthly");
   const [hubView, setHubView] = useState<"library" | "builder" | "insights">(initialState.view);
-  const [searchText, setSearchText] = useState("");
-  const [activeTagFilter, setActiveTagFilter] = useState<string>("all");
+  const [searchText] = useState("");
+  const [activeTagFilter] = useState<string>("all");
   const [comparePresetId, setComparePresetId] = useState<string>(initialState.comparePresetId);
   const [savedPresets, setSavedPresets] = useState<SavedResearchPreset[]>(() => {
     if (typeof window === "undefined") return [];
@@ -254,11 +218,6 @@ export default function ClinicalResearchHub() {
     }
   });
 
-  const recentlyUsedPresets = useMemo(
-    () => [...savedPresets].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt).slice(0, 3),
-    [savedPresets]
-  );
-
   const safeMin = Math.max(1, Math.min(5, minAcuity));
   const safeMax = Math.max(safeMin, Math.min(5, maxAcuity));
   const configSignature = `${questionId}|${lookbackDays}|${safeMin}|${safeMax}|${flowStage}|${dispositionPlan}|${includeIdentifiers ? "1" : "0"}`;
@@ -296,11 +255,6 @@ export default function ClinicalResearchHub() {
           includeIdentifiers: comparePreset.includeIdentifiers,
         }
       : "skip"
-  );
-
-  const dataPolicyLabel = useMemo(
-    () => (includeIdentifiers ? "Privileged Re-Identified View" : "De-Identified View"),
-    [includeIdentifiers]
   );
 
   useEffect(() => {
@@ -396,19 +350,6 @@ export default function ClinicalResearchHub() {
     toast.success(`Loaded preset: ${match.name}`);
   };
 
-  const loadLibraryTemplate = (templateId: string) => {
-    const template = CURATED_LIBRARY.find((entry) => entry.id === templateId);
-    if (!template) return;
-
-    setQuestionId(template.questionId);
-    setLookbackDays(template.lookbackDays);
-    setMinAcuity(template.minAcuity);
-    setMaxAcuity(template.maxAcuity);
-    setFlowStage(template.flowStage);
-    setDispositionPlan(template.dispositionPlan);
-    toast.success(`Opened library template: ${template.title}`);
-  };
-
   const removePreset = (presetId: string) => {
     setSavedPresets((current) => current.filter((item) => item.id !== presetId));
     toast.success("Preset removed from your library.");
@@ -417,12 +358,6 @@ export default function ClinicalResearchHub() {
   const toggleFavoritePreset = (presetId: string) => {
     setSavedPresets((current) =>
       current.map((item) => (item.id === presetId ? { ...item, isFavorite: !item.isFavorite } : item))
-    );
-  };
-
-  const togglePinPreset = (presetId: string) => {
-    setSavedPresets((current) =>
-      current.map((item) => (item.id === presetId ? { ...item, isPinned: !item.isPinned } : item))
     );
   };
 
@@ -513,11 +448,6 @@ export default function ClinicalResearchHub() {
     const flowTag = preset.flowStage === "all" ? "All Flow" : preset.flowStage;
     return [questionLabel, acuityTag, flowTag];
   };
-
-  const allLibraryTags = useMemo(() => {
-    const tags = savedPresets.flatMap((preset) => preset.tags);
-    return Array.from(new Set(tags)).sort((a, b) => a.localeCompare(b));
-  }, [savedPresets]);
 
   const filteredPresets = useMemo(() => {
     const query = searchText.trim().toLowerCase();
