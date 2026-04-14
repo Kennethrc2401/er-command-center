@@ -46,7 +46,7 @@ import EducationTracker from "@/components/EducationTracker";
 import FollowUpCard from "@/components/FollowUpCard";
 import ImagingResults from "@/components/ImagingResults";
 import PatientTimeline from "@/components/clinical/PatientTimeline";
-import DiagnosisSuggester from "@/components/clinical/DiagnosisSuggester";
+import CaseSupportPanel from "@/components/clinical/CaseSupportPanel";
 import { useEffect, useState } from "react";
 import CommandBar from "@/components/CommandBar";
 import LabTrends from "@/components/LabTrends";
@@ -1008,7 +1008,7 @@ export default function PatientPage() {
                       <span className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-50 italic">Clinical Decision Support</span>
                     </div>
                     <CardContent className="p-6">
-                      <DiagnosisSuggester
+                      <CaseSupportPanel
                         encounter={activeEncounter}
                         onSelectDiagnosis={setSuggestedTriageOrders}
                       />

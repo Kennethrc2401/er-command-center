@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { jsPDF } from "jspdf";
+import { Command as CommandMenu } from "cmdk";
 import { Document as DocxDocument, Packer, Paragraph } from "docx";
 import mammoth from "mammoth";
 import PptxGenJS from "pptxgenjs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
@@ -39,7 +41,8 @@ import {
 } from "lucide-react";
 
 type DocType = "SOAP" | "Discharge" | "Handoff" | "Letter";
-type AccessLevel = "private" | "team" | "shared";
+type AccessLevel = "private" | "team" | "shared" | "admin-only" | "signoff-only";
+type UserRole = "viewer" | "clinician" | "nurse" | "admin";
 type ApprovalStatus = "draft" | "approved" | "rejected";
 
 type AuditEntry = {
@@ -115,6 +118,8 @@ type WorkspaceState = {
   deletedDocs: DeletedDocEntry[];
   sheetRows: SheetRow[];
   slides: Slide[];
+  favoriteDocIds: string[];
+  recentDocIds: string[];
   updatedAt: number;
 };
 
@@ -133,6 +138,19 @@ type AiOperationLog = {
   mode: "local" | "backend" | "blocked";
   sourceLength: number;
   note: string;
+};
+
+type TimelineFilter = "all" | "selected" | "ai" | "workflow" | "sync";
+type WorkspaceTab = "documents" | "tracker" | "slides" | "approvals" | "timeline" | "ai";
+
+type TimelineEntry = {
+  id: string;
+  at: number;
+  source: "doc" | "ai" | "sync" | "workflow";
+  title: string;
+  detail: string;
+  docId?: string;
+  rowId?: string;
 };
 
 const STORAGE_KEY = "productivity-suite:v1";
@@ -288,6 +306,8 @@ function ProductivitySuitePage() {
   const [tagInput, setTagInput] = useState("");
   const [signatureName, setSignatureName] = useState("");
   const [signatureRole, setSignatureRole] = useState("Attending");
+  const [userRole, setUserRole] = useState<UserRole>("clinician");
+  const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
 
   const [sheetRows, setSheetRows] = useState<SheetRow[]>([]);
   const [slides, setSlides] = useState<Slide[]>([]);
@@ -315,6 +335,13 @@ function ProductivitySuitePage() {
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
   const [largeText, setLargeText] = useState(false);
+  const [selectedTimelineEntryId, setSelectedTimelineEntryId] = useState<string | null>(null);
+  const [selectedSheetRowId, setSelectedSheetRowId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>("documents");
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [favoriteDocIds, setFavoriteDocIds] = useState<string[]>([]);
+  const [recentDocIds, setRecentDocIds] = useState<string[]>([]);
 
   const selectedDoc = useMemo(
     () => docs.find((d) => d.id === selectedDocId) ?? null,
@@ -336,6 +363,168 @@ function ProductivitySuitePage() {
     if (!leftVersion || !rightVersion) return null;
     return lineDiffSummary(stripHtml(leftVersion.content), stripHtml(rightVersion.content));
   }, [leftVersion, rightVersion]);
+
+  const canEditSelectedDoc = useMemo(() => {
+    if (!selectedDoc) return false;
+    if (userRole === "admin") return true;
+    if (selectedDoc.access === "admin-only") return false;
+    if (selectedDoc.access === "signoff-only") return userRole !== "viewer";
+    return userRole !== "viewer";
+  }, [selectedDoc, userRole]);
+
+  const canApproveSelectedDoc = useMemo(() => {
+    if (!selectedDoc) return false;
+    if (userRole === "admin") return true;
+    return selectedDoc.access !== "admin-only" && selectedDoc.access !== "private";
+  }, [selectedDoc, userRole]);
+
+  const allTimelineEntries = useMemo<TimelineEntry[]>(() => {
+    const docEntries = docs.flatMap((doc) =>
+      doc.audit.map((entry) => ({
+        id: `${doc.id}-${entry.at}-${entry.action}`,
+        at: entry.at,
+        source: entry.action.includes("ai") ? ("ai" as const) : entry.action.includes("sync") ? ("sync" as const) : ("doc" as const),
+        title: doc.title,
+        detail: `${entry.action}: ${entry.detail}`,
+        docId: doc.id,
+      }))
+    );
+
+    const aiEntries = aiOps.map((op) => ({
+      id: op.id,
+      at: op.at,
+      source: "ai" as const,
+      title: op.action,
+      detail: `${op.mode} - ${op.note} (src ${op.sourceLength})`,
+      docId: selectedDocId ?? undefined,
+    }));
+
+    const workflowEntries = sheetRows.map((row) => ({
+      id: `workflow-${row.id}`,
+      at: row.due ? new Date(`${row.due}T12:00:00`).getTime() : 0,
+      source: "workflow" as const,
+      title: row.task || "Untitled task",
+      detail: `${row.status} | due ${row.due || "n/a"}`,
+      rowId: row.id,
+    }));
+
+    return [...docEntries, ...aiEntries, ...workflowEntries].sort((a, b) => b.at - a.at);
+  }, [aiOps, docs, sheetRows, selectedDocId]);
+
+  const visibleTimelineEntries = useMemo(() => {
+    return allTimelineEntries.filter((entry) => {
+      if (timelineFilter === "all") return true;
+      if (timelineFilter === "selected") return entry.docId === selectedDocId;
+      return entry.source === timelineFilter;
+    });
+  }, [allTimelineEntries, timelineFilter, selectedDocId]);
+
+  const selectedTimelineEntry = useMemo(
+    () => visibleTimelineEntries.find((entry) => entry.id === selectedTimelineEntryId) ?? visibleTimelineEntries[0] ?? null,
+    [selectedTimelineEntryId, visibleTimelineEntries]
+  );
+
+  const recentActions = useMemo(() => allTimelineEntries.slice(0, 5), [allTimelineEntries]);
+  const recentActionBreakdown = {
+    docs: recentActions.filter((entry) => entry.source === "doc").length,
+    ai: recentActions.filter((entry) => entry.source === "ai").length,
+    workflow: recentActions.filter((entry) => entry.source === "workflow").length,
+    sync: recentActions.filter((entry) => entry.source === "sync").length,
+  };
+
+  const favoriteDocs = useMemo(
+    () => docs.filter((doc) => favoriteDocIds.includes(doc.id)).sort((a, b) => b.updatedAt - a.updatedAt),
+    [docs, favoriteDocIds]
+  );
+  const recentDocs = useMemo(
+    () => recentDocIds.map((id) => docs.find((doc) => doc.id === id)).filter((doc): doc is SuiteDocument => Boolean(doc)),
+    [docs, recentDocIds]
+  );
+
+  const commandDocs = useMemo(() => [...docs].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 20), [docs]);
+  const commandRows = useMemo(() => sheetRows.slice(0, 20), [sheetRows]);
+  const commandTimelineEntries = useMemo(() => visibleTimelineEntries.slice(0, 20), [visibleTimelineEntries]);
+  const normalizedCommandQuery = commandQuery.trim().toLowerCase();
+
+  const commandSearchResults = (() => {
+    if (!normalizedCommandQuery) return [] as Array<{
+      id: string;
+      kind: string;
+      title: string;
+      detail: string;
+      snippet: string;
+      onSelect: () => void;
+      badge?: string;
+    }>;
+
+    const matchSnippet = (text: string) => {
+      const value = text.trim();
+      if (!value) return "";
+      const index = value.toLowerCase().indexOf(normalizedCommandQuery);
+      if (index === -1) return value.slice(0, 90);
+      const start = Math.max(0, index - 24);
+      return value.slice(start, start + 96);
+    };
+
+    const results: Array<{
+      id: string;
+      kind: string;
+      title: string;
+      detail: string;
+      snippet: string;
+      onSelect: () => void;
+      badge?: string;
+    }> = [];
+
+    docs.forEach((doc) => {
+      const contentText = stripHtml(doc.content);
+      const haystack = `${doc.title} ${doc.folder} ${doc.tags.join(" ")} ${contentText}`.toLowerCase();
+      if (!haystack.includes(normalizedCommandQuery)) return;
+      results.push({
+        id: `search-doc-${doc.id}`,
+        kind: "Doc",
+        title: doc.title,
+        detail: doc.folder,
+        snippet: matchSnippet(contentText || doc.tags.join(" · ") || doc.folder),
+        onSelect: () => openWorkspaceDoc(doc.id),
+        badge: doc.type,
+      });
+    });
+
+    sheetRows.forEach((row) => {
+      const haystack = `${row.task} ${row.owner} ${row.notes} ${row.priority} ${row.status} ${row.due}`.toLowerCase();
+      if (!haystack.includes(normalizedCommandQuery)) return;
+      results.push({
+        id: `search-row-${row.id}`,
+        kind: "Task",
+        title: row.task || "Untitled task",
+        detail: `${row.owner || "Unassigned"} • ${row.status}`,
+        snippet: matchSnippet(row.notes || row.due || row.priority),
+        onSelect: () => openWorkspaceTab("tracker"),
+        badge: row.priority,
+      });
+    });
+
+    allTimelineEntries.forEach((entry) => {
+      const haystack = `${entry.title} ${entry.detail} ${entry.source} ${entry.docId ?? ""}`.toLowerCase();
+      if (!haystack.includes(normalizedCommandQuery)) return;
+      results.push({
+        id: `search-timeline-${entry.id}`,
+        kind: "Event",
+        title: entry.title,
+        detail: `${entry.source} • ${new Date(entry.at).toLocaleString()}`,
+        snippet: matchSnippet(entry.detail),
+        onSelect: () => openWorkspaceTimelineEntry(entry.id),
+        badge: entry.source,
+      });
+    });
+
+    return results.slice(0, 18);
+  })();
+
+  const commandResultCountLabel = normalizedCommandQuery
+    ? `${docs.filter((doc) => `${doc.title} ${doc.folder} ${doc.tags.join(" ")} ${stripHtml(doc.content)}`.toLowerCase().includes(normalizedCommandQuery)).length} docs · ${sheetRows.filter((row) => `${row.task} ${row.owner} ${row.notes} ${row.priority} ${row.status} ${row.due}`.toLowerCase().includes(normalizedCommandQuery)).length} tasks · ${allTimelineEntries.filter((entry) => `${entry.title} ${entry.detail} ${entry.source} ${entry.docId ?? ""}`.toLowerCase().includes(normalizedCommandQuery)).length} events`
+    : "";
 
   useEffect(() => {
     docsRef.current = docs;
@@ -389,6 +578,11 @@ function ProductivitySuitePage() {
       setDeletedDocs(state.deletedDocs);
       setSheetRows(state.sheetRows);
       setSlides(state.slides);
+      setFavoriteDocIds(Array.isArray(state.favoriteDocIds) ? state.favoriteDocIds : []);
+      setRecentDocIds(Array.isArray(state.recentDocIds) ? state.recentDocIds : []);
+      if (state.selectedDocId && (!Array.isArray(state.recentDocIds) || state.recentDocIds.length === 0)) {
+        setRecentDocIds([state.selectedDocId]);
+      }
       lastSyncRef.current = state.updatedAt;
       window.setTimeout(() => {
         applyingRemoteRef.current = false;
@@ -406,6 +600,8 @@ function ProductivitySuitePage() {
           deletedDocs: [],
           sheetRows: [],
           slides: [],
+          favoriteDocIds: [],
+          recentDocIds: [doc.id],
           updatedAt: nowTs(),
         });
       }, 0);
@@ -425,6 +621,8 @@ function ProductivitySuitePage() {
           deletedDocs: Array.isArray(parsed.deletedDocs) ? (parsed.deletedDocs as DeletedDocEntry[]) : [],
           sheetRows: Array.isArray(parsed.sheetRows) ? (parsed.sheetRows as SheetRow[]) : [],
           slides: Array.isArray(parsed.slides) ? (parsed.slides as Slide[]) : [],
+          favoriteDocIds: Array.isArray(parsed.favoriteDocIds) ? (parsed.favoriteDocIds as string[]) : [],
+          recentDocIds: Array.isArray(parsed.recentDocIds) ? (parsed.recentDocIds as string[]) : [],
           updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : nowTs(),
         });
       }, 0);
@@ -466,6 +664,8 @@ function ProductivitySuitePage() {
       deletedDocs,
       sheetRows,
       slides,
+      favoriteDocIds,
+      recentDocIds,
       updatedAt,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -479,7 +679,7 @@ function ProductivitySuitePage() {
     } catch {
       // Ignore channel send failures.
     }
-  }, [docs, selectedDocId, deletedDocs, sheetRows, slides]);
+  }, [docs, selectedDocId, deletedDocs, sheetRows, slides, favoriteDocIds, recentDocIds]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -663,6 +863,7 @@ function ProductivitySuitePage() {
     const doc = makeDocument(type, "Clinical", [type.toLowerCase()]);
     setDocs((current) => [doc, ...current]);
     setSelectedDocId(doc.id);
+    setRecentDocIds((current) => [doc.id, ...current.filter((id) => id !== doc.id)].slice(0, 10));
     toast.success(`${type} document created.`);
   };
 
@@ -688,6 +889,7 @@ function ProductivitySuitePage() {
     const restored = withAudit({ ...entry.doc, updatedAt: nowTs() }, "restore", "Restored from recycle bin");
     setDocs((current) => [restored, ...current]);
     setSelectedDocId(restored.id);
+    setRecentDocIds((current) => [restored.id, ...current.filter((id) => id !== restored.id)].slice(0, 10));
     setDeletedDocs((current) => current.filter((item) => item.id !== entryId));
     toast.success("Document restored.");
   };
@@ -703,6 +905,9 @@ function ProductivitySuitePage() {
       .map((entry) => withAudit({ ...entry.doc, updatedAt: nowTs() }, "restore", "Bulk restore from recycle bin"));
     setDocs((current) => [...restoredDocs, ...current]);
     setSelectedDocId((current) => current ?? restoredDocs[0]?.id ?? null);
+    if (restoredDocs[0]) {
+      setRecentDocIds((current) => [restoredDocs[0].id, ...current.filter((id) => id !== restoredDocs[0].id)].slice(0, 10));
+    }
     setDeletedDocs([]);
     toast.success(`Restored ${restoredDocs.length} document(s).`);
   };
@@ -738,9 +943,53 @@ function ProductivitySuitePage() {
     toast.success("Version snapshot saved.");
   }, [checkpointName, selectedDoc, updateSelectedDoc]);
 
+  const openWorkspaceTab = (tab: WorkspaceTab) => {
+    setActiveTab(tab);
+    setCommandOpen(false);
+  };
+
+  const openWorkspaceDoc = (docId: string) => {
+    setActiveTab("documents");
+    setSelectedDocId(docId);
+    setRecentDocIds((current) => [docId, ...current.filter((id) => id !== docId)].slice(0, 10));
+    setCommandOpen(false);
+  };
+
+  const openWorkspaceTimelineEntry = (entryId: string) => {
+    setActiveTab("timeline");
+    setSelectedTimelineEntryId(entryId);
+    setCommandOpen(false);
+  };
+
+  const openWorkspaceSheetRow = (rowId: string) => {
+    setActiveTab("tracker");
+    setSelectedSheetRowId(rowId);
+    setCommandOpen(false);
+  };
+
+  const runWorkspaceAction = (action: () => void) => {
+    action();
+    setCommandOpen(false);
+  };
+
+  const toggleFavoriteDoc = (docId: string) => {
+    const wasFavorite = favoriteDocIds.includes(docId);
+    setFavoriteDocIds((current) =>
+      wasFavorite ? current.filter((id) => id !== docId) : [docId, ...current].slice(0, 20)
+    );
+    toast.success(wasFavorite ? "Removed from favorites." : "Added to favorites.");
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
+      const isMac = navigator.platform.toUpperCase().includes("MAC");
+      const commandShortcut = isMac ? event.key.toLowerCase() === "k" : event.key === "/";
+      if (commandShortcut && !event.altKey) {
+        event.preventDefault();
+        setCommandOpen((open) => !open);
+        return;
+      }
       if (event.altKey && event.key.toLowerCase() === "p") {
         event.preventDefault();
         aiPreviewShortcutRef.current();
@@ -794,6 +1043,7 @@ function ProductivitySuitePage() {
 
     setDocs((current) => [duplicate, ...current]);
     setSelectedDocId(duplicate.id);
+    setRecentDocIds((current) => [duplicate.id, ...current.filter((id) => id !== duplicate.id)].slice(0, 10));
     toast.success("Document duplicated.");
   };
 
@@ -824,6 +1074,7 @@ function ProductivitySuitePage() {
     };
     setDocs((current) => [clone, ...current]);
     setSelectedDocId(clone.id);
+    setRecentDocIds((current) => [clone.id, ...current.filter((id) => id !== clone.id)].slice(0, 10));
     toast.success("Version restored as new copy.");
   };
 
@@ -1147,6 +1398,8 @@ function ProductivitySuitePage() {
       deletedDocs,
       sheetRows,
       slides,
+      favoriteDocIds,
+      recentDocIds,
       updatedAt: nowTs(),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -1159,6 +1412,93 @@ function ProductivitySuitePage() {
     anchor.click();
     URL.revokeObjectURL(url);
     toast.success("Workspace backup exported.");
+  };
+
+  const exportSelectedDocumentPack = () => {
+    if (!selectedDoc) {
+      toast.message("Select a document first.");
+      return;
+    }
+    const bundle = {
+      schemaVersion: CURRENT_WORKSPACE_SCHEMA_VERSION,
+      document: selectedDoc,
+      versions: selectedDoc.versions,
+      timeline: selectedDoc.audit,
+    };
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${selectedDoc.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-pack.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Document pack exported.");
+  };
+
+  const exportAuditPack = () => {
+    const bundle = {
+      schemaVersion: CURRENT_WORKSPACE_SCHEMA_VERSION,
+      docs: docs.map((doc) => ({ id: doc.id, title: doc.title, audit: doc.audit })),
+      aiOps,
+      conflictState,
+      createdAt: nowTs(),
+    };
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `productivity-audit-pack-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Audit pack exported.");
+  };
+
+  const exportRecyclePack = () => {
+    const blob = new Blob(
+      [
+        JSON.stringify(
+          {
+            schemaVersion: CURRENT_WORKSPACE_SCHEMA_VERSION,
+            deletedDocs,
+            exportedAt: nowTs(),
+          },
+          null,
+          2
+        ),
+      ],
+      { type: "application/json;charset=utf-8" }
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `productivity-recycle-pack-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Recycle bin pack exported.");
+  };
+
+  const exportTimelineEntry = (entry: TimelineEntry) => {
+    const blob = new Blob(
+      [
+        JSON.stringify(
+          {
+            schemaVersion: CURRENT_WORKSPACE_SCHEMA_VERSION,
+            entry,
+            exportedAt: nowTs(),
+          },
+          null,
+          2
+        ),
+      ],
+      { type: "application/json;charset=utf-8" }
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `timeline-entry-${entry.id}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Timeline entry exported.");
   };
 
   const importWorkspaceBackup = async (file: File) => {
@@ -1525,6 +1865,16 @@ function ProductivitySuitePage() {
           Word-like documents, Excel-like trackers, slide composition, approvals, and AI helpers in one dashboard page.
         </p>
         <div className="flex flex-wrap gap-2 pt-1">
+          <select
+            className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+            value={userRole}
+            onChange={(e) => setUserRole(e.target.value as UserRole)}
+          >
+            <option value="viewer">Viewer</option>
+            <option value="clinician">Clinician</option>
+            <option value="nurse">Nurse</option>
+            <option value="admin">Admin</option>
+          </select>
           <Button size="sm" variant={highContrast ? "default" : "outline"} onClick={() => setHighContrast((v) => !v)}>
             {highContrast ? "High Contrast: On" : "High Contrast: Off"}
           </Button>
@@ -1538,6 +1888,7 @@ function ProductivitySuitePage() {
         {showShortcutHelp && (
           <div className="rounded-md border border-slate-300 p-3 text-xs dark:border-slate-700">
             <p className="font-semibold uppercase tracking-wider text-slate-500">Global Shortcut Map</p>
+            <p>Ctrl/Cmd+K or Ctrl+/ : Open Quick Jump</p>
             <p className="mt-1">Ctrl/Cmd+S: Save checkpoint</p>
             <p>Ctrl/Cmd+Alt+P: Toggle AI preview</p>
             <p>Ctrl/Cmd+Alt+Enter: Apply AI output</p>
@@ -1549,8 +1900,20 @@ function ProductivitySuitePage() {
           <Button size="sm" variant="outline" onClick={exportWorkspaceBackup}>
             <Download className="mr-1 h-4 w-4" />Export Workspace Backup
           </Button>
+          <Button size="sm" variant="outline" onClick={exportSelectedDocumentPack} disabled={!selectedDoc}>
+            <Download className="mr-1 h-4 w-4" />Export Doc Pack
+          </Button>
+          <Button size="sm" variant="outline" onClick={exportAuditPack}>
+            <Download className="mr-1 h-4 w-4" />Export Audit Pack
+          </Button>
+          <Button size="sm" variant="outline" onClick={exportRecyclePack}>
+            <Download className="mr-1 h-4 w-4" />Export Recycle Pack
+          </Button>
           <Button size="sm" variant="outline" onClick={() => workspaceInputRef.current?.click()}>
             <Upload className="mr-1 h-4 w-4" />Import Workspace Backup
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => setCommandOpen(true)}>
+            <Search className="mr-1 h-4 w-4" />Quick Jump
           </Button>
           <input
             ref={workspaceInputRef}
@@ -1568,7 +1931,7 @@ function ProductivitySuitePage() {
         </div>
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Card>
           <CardContent className="pt-4">
             <p className="text-xs uppercase tracking-wider text-slate-500">Documents</p>
@@ -1593,14 +1956,62 @@ function ProductivitySuitePage() {
             <p className="mt-1 text-2xl font-black">{slides.length}</p>
           </CardContent>
         </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs uppercase tracking-wider text-slate-500">Recent Actions</p>
+                <p className="mt-1 text-2xl font-black">{recentActions.length}</p>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => openWorkspaceTab("timeline")}>Open Timeline</Button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              <Badge variant="secondary">Docs {recentActionBreakdown.docs}</Badge>
+              <Badge variant="secondary">AI {recentActionBreakdown.ai}</Badge>
+              <Badge variant="secondary">Tasks {recentActionBreakdown.workflow}</Badge>
+              <Badge variant="secondary">Sync {recentActionBreakdown.sync}</Badge>
+            </div>
+            <div className="mt-3 space-y-2">
+              {recentActions.length === 0 ? (
+                <p className="text-xs text-slate-500">No actions yet.</p>
+              ) : (
+                recentActions.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => {
+                      if (entry.docId) {
+                        openWorkspaceDoc(entry.docId);
+                        return;
+                      }
+                      if (entry.rowId) {
+                        openWorkspaceSheetRow(entry.rowId);
+                        return;
+                      }
+                      openWorkspaceTimelineEntry(entry.id);
+                    }}
+                    className="w-full rounded-md border border-slate-200 px-2 py-1 text-left text-[11px] transition hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:hover:bg-blue-950/20"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate font-semibold">{entry.title}</span>
+                      <Badge variant="outline">{entry.source}</Badge>
+                    </div>
+                    <p className="truncate text-slate-500">{entry.detail}</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </section>
 
-      <Tabs defaultValue="documents" className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="w-full">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="documents"><FileText className="mr-2 h-4 w-4" />Docs</TabsTrigger>
           <TabsTrigger value="tracker"><Sheet className="mr-2 h-4 w-4" />Tracker</TabsTrigger>
           <TabsTrigger value="slides"><Layout className="mr-2 h-4 w-4" />Slides</TabsTrigger>
           <TabsTrigger value="approvals"><Signature className="mr-2 h-4 w-4" />Approvals</TabsTrigger>
+          <TabsTrigger value="timeline"><ClipboardCheck className="mr-2 h-4 w-4" />Timeline</TabsTrigger>
           <TabsTrigger value="ai"><Sparkles className="mr-2 h-4 w-4" />AI Assist</TabsTrigger>
         </TabsList>
 
@@ -1644,31 +2055,40 @@ function ProductivitySuitePage() {
                 </select>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <Button size="sm" onClick={() => newDocument("SOAP")}>New SOAP</Button>
-                  <Button size="sm" variant="outline" onClick={() => newDocument("Discharge")}>Discharge</Button>
-                  <Button size="sm" variant="outline" onClick={() => newDocument("Handoff")}>Handoff</Button>
-                  <Button size="sm" variant="outline" onClick={() => newDocument("Letter")}>Letter</Button>
+                  <Button size="sm" onClick={() => newDocument("SOAP")} disabled={userRole === "viewer"}>New SOAP</Button>
+                  <Button size="sm" variant="outline" onClick={() => newDocument("Discharge")} disabled={userRole === "viewer"}>Discharge</Button>
+                  <Button size="sm" variant="outline" onClick={() => newDocument("Handoff")} disabled={userRole === "viewer"}>Handoff</Button>
+                  <Button size="sm" variant="outline" onClick={() => newDocument("Letter")} disabled={userRole === "viewer"}>Letter</Button>
                 </div>
 
-                <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                <div className="max-h-105 space-y-2 overflow-y-auto pr-1">
                   {filteredDocs.map((doc) => (
-                    <button
-                      key={doc.id}
-                      type="button"
-                      onClick={() => setSelectedDocId(doc.id)}
-                      className={`w-full rounded-md border p-2 text-left transition ${selectedDocId === doc.id ? "border-blue-500 bg-blue-50 dark:bg-blue-950/20" : "border-slate-200 dark:border-slate-700"}`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <p className="truncate text-sm font-semibold">{doc.title}</p>
-                        <Badge variant="outline">{doc.type}</Badge>
+                    <div key={doc.id} className={`rounded-md border p-2 transition ${selectedDocId === doc.id ? "border-blue-500 bg-blue-50 dark:bg-blue-950/20" : "border-slate-200 dark:border-slate-700"}`}>
+                      <div className="flex items-start gap-2">
+                        <Button size="icon" variant="ghost" onClick={() => toggleFavoriteDoc(doc.id)} className="mt-0.5 h-7 w-7 shrink-0">
+                          {favoriteDocIds.includes(doc.id) ? "★" : "☆"}
+                        </Button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedDocId(doc.id);
+                            setRecentDocIds((current) => [doc.id, ...current.filter((id) => id !== doc.id)].slice(0, 10));
+                          }}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-semibold">{doc.title}</p>
+                            <Badge variant="outline">{doc.type}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">{doc.folder} • {new Date(doc.updatedAt).toLocaleString()}</p>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {doc.tags.slice(0, 3).map((t) => (
+                              <Badge key={`${doc.id}-${t}`} variant="secondary" className="text-[10px]">{t}</Badge>
+                            ))}
+                          </div>
+                        </button>
                       </div>
-                      <p className="mt-1 text-xs text-slate-500">{doc.folder} • {new Date(doc.updatedAt).toLocaleString()}</p>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {doc.tags.slice(0, 3).map((t) => (
-                          <Badge key={`${doc.id}-${t}`} variant="secondary" className="text-[10px]">{t}</Badge>
-                        ))}
-                      </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
 
@@ -1741,10 +2161,13 @@ function ProductivitySuitePage() {
                         className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
                         value={selectedDoc.access}
                         onChange={(e) => updateSelectedDoc((doc) => withAudit({ ...doc, access: e.target.value as AccessLevel }, "access", `Set access ${e.target.value}`))}
+                        disabled={userRole !== "admin" && selectedDoc.access === "admin-only"}
                       >
                         <option value="private">Private</option>
                         <option value="team">Team</option>
                         <option value="shared">Shared</option>
+                        <option value="signoff-only">Sign-off Only</option>
+                        <option value="admin-only">Admin Only</option>
                       </select>
                     </div>
 
@@ -1753,26 +2176,26 @@ function ProductivitySuitePage() {
                         value={checkpointName}
                         onChange={(e) => setCheckpointName(e.target.value)}
                         placeholder="Checkpoint name"
-                        className="max-w-[180px]"
+                        className="max-w-45"
                       />
-                      <Button size="sm" variant="outline" onClick={() => execCmd("bold")}>Bold</Button>
-                      <Button size="sm" variant="outline" onClick={() => execCmd("italic")}>Italic</Button>
-                      <Button size="sm" variant="outline" onClick={() => execCmd("insertUnorderedList")}>Bullets</Button>
-                      <Button size="sm" variant="outline" onClick={() => execCmd("formatBlock", "<h2>")}>H2</Button>
-                      <Button size="sm" variant="outline" onClick={() => execCmd("formatBlock", "<p>")}>Paragraph</Button>
-                      <Button size="sm" onClick={saveVersion}><Save className="mr-1 h-4 w-4" />Save Version</Button>
-                      <Button size="sm" variant="outline" onClick={duplicateSelectedDocument}>Duplicate</Button>
+                      <Button size="sm" variant="outline" onClick={() => execCmd("bold")} disabled={!canEditSelectedDoc}>Bold</Button>
+                      <Button size="sm" variant="outline" onClick={() => execCmd("italic")} disabled={!canEditSelectedDoc}>Italic</Button>
+                      <Button size="sm" variant="outline" onClick={() => execCmd("insertUnorderedList")} disabled={!canEditSelectedDoc}>Bullets</Button>
+                      <Button size="sm" variant="outline" onClick={() => execCmd("formatBlock", "<h2>")} disabled={!canEditSelectedDoc}>H2</Button>
+                      <Button size="sm" variant="outline" onClick={() => execCmd("formatBlock", "<p>")} disabled={!canEditSelectedDoc}>Paragraph</Button>
+                      <Button size="sm" onClick={saveVersion} disabled={!canEditSelectedDoc}><Save className="mr-1 h-4 w-4" />Save Version</Button>
+                      <Button size="sm" variant="outline" onClick={duplicateSelectedDocument} disabled={!canEditSelectedDoc}>Duplicate</Button>
                     </div>
 
                     <div
                       ref={editorRef}
-                      contentEditable
+                      contentEditable={canEditSelectedDoc}
                       suppressContentEditableWarning
                       onInput={(e) => {
                         const html = (e.currentTarget as HTMLDivElement).innerHTML;
                         updateSelectedDoc((doc) => ({ ...doc, content: html, updatedAt: nowTs() }));
                       }}
-                      className="min-h-[280px] rounded-md border border-slate-300 bg-white p-3 text-sm leading-6 focus:outline-none dark:border-slate-700 dark:bg-slate-900"
+                      className="min-h-70 rounded-md border border-slate-300 bg-white p-3 text-sm leading-6 focus:outline-none dark:border-slate-700 dark:bg-slate-900"
                     />
 
                     <div className="flex flex-wrap gap-2">
@@ -1780,7 +2203,7 @@ function ProductivitySuitePage() {
                         value={tagInput}
                         onChange={(e) => setTagInput(e.target.value)}
                         placeholder="Add tag"
-                        className="max-w-[180px]"
+                        className="max-w-45"
                       />
                       <Button size="sm" variant="outline" onClick={addTag}>Add Tag</Button>
                       <Button size="sm" variant="outline" onClick={() => { void exportDocument("txt"); }}><Download className="mr-1 h-4 w-4" />TXT</Button>
@@ -1802,7 +2225,7 @@ function ProductivitySuitePage() {
                           e.target.value = "";
                         }}
                       />
-                      <Button size="sm" variant="destructive" onClick={() => deleteDocument(selectedDoc.id)}>Delete</Button>
+                      <Button size="sm" variant="destructive" onClick={() => deleteDocument(selectedDoc.id)} disabled={!canEditSelectedDoc}>Delete</Button>
                     </div>
 
                     {selectedDoc.versions.length > 0 && (
@@ -1813,8 +2236,8 @@ function ProductivitySuitePage() {
                             <div key={version.id} className="flex items-center justify-between text-xs">
                               <span>{version.name} • {new Date(version.createdAt).toLocaleString()}</span>
                               <div className="flex items-center gap-1">
-                                <Button size="sm" variant="ghost" onClick={() => restoreVersion(version.id)}>Restore</Button>
-                                <Button size="sm" variant="ghost" onClick={() => restoreVersionAsNewCopy(version.id)}>Restore as Copy</Button>
+                                  <Button size="sm" variant="ghost" onClick={() => restoreVersion(version.id)} disabled={!canEditSelectedDoc}>Restore</Button>
+                                  <Button size="sm" variant="ghost" onClick={() => restoreVersionAsNewCopy(version.id)} disabled={!canEditSelectedDoc}>Restore as Copy</Button>
                               </div>
                             </div>
                           ))}
@@ -1901,7 +2324,7 @@ function ProductivitySuitePage() {
                   </thead>
                   <tbody>
                     {sheetRows.map((row) => (
-                      <tr key={row.id} className="border-t border-slate-200 dark:border-slate-700">
+                      <tr key={row.id} className={`border-t border-slate-200 dark:border-slate-700 ${selectedSheetRowId === row.id ? "bg-blue-50 dark:bg-blue-950/20" : ""}`}>
                         <td className="px-2 py-1"><Input value={row.task} onChange={(e) => updateSheetRow(row.id, { task: e.target.value })} /></td>
                         <td className="px-2 py-1"><Input value={row.owner} onChange={(e) => updateSheetRow(row.id, { owner: e.target.value })} /></td>
                         <td className="px-2 py-1"><Input type="date" value={row.due} onChange={(e) => updateSheetRow(row.id, { due: e.target.value })} /></td>
@@ -1924,7 +2347,12 @@ function ProductivitySuitePage() {
                           </select>
                         </td>
                         <td className="px-2 py-1"><Input value={row.notes} onChange={(e) => updateSheetRow(row.id, { notes: e.target.value })} /></td>
-                        <td className="px-2 py-1"><Button size="sm" variant="ghost" onClick={() => deleteSheetRow(row.id)}>Delete</Button></td>
+                        <td className="px-2 py-1">
+                          <div className="flex flex-wrap gap-1">
+                            <Button size="sm" variant="ghost" onClick={() => setSelectedSheetRowId(row.id)}>Focus</Button>
+                            <Button size="sm" variant="ghost" onClick={() => deleteSheetRow(row.id)}>Delete</Button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1984,8 +2412,8 @@ function ProductivitySuitePage() {
                     <Input value={selectedDoc.title} readOnly />
                   </div>
                   <div className="flex gap-2">
-                    <Button onClick={() => signDocument("approve")}>Approve + Sign</Button>
-                    <Button variant="destructive" onClick={() => signDocument("reject")}>Reject + Sign</Button>
+                    <Button onClick={() => signDocument("approve")} disabled={!canApproveSelectedDoc}>Approve + Sign</Button>
+                    <Button variant="destructive" onClick={() => signDocument("reject")} disabled={!canApproveSelectedDoc}>Reject + Sign</Button>
                   </div>
                   <div className="rounded-md border border-slate-200 p-2 text-xs dark:border-slate-700">
                     <p className="font-semibold uppercase tracking-wider text-slate-500">Ready for Sign-off Checklist</p>
@@ -2074,7 +2502,8 @@ function ProductivitySuitePage() {
                 <Button size="sm" variant="outline" onClick={() => setAiPreviewOpen((open) => !open)}>
                   {aiPreviewOpen ? "Hide Apply Preview" : "Preview Apply"}
                 </Button>
-                <Button size="sm" variant="outline" onClick={applyAiOutputToSelectedDoc}>Apply Output to Active Doc</Button>
+                <Button size="sm" variant="outline" onClick={applyAiOutputToSelectedDoc}>Accept Suggestion</Button>
+                <Button size="sm" variant="outline" onClick={() => setAiOutput("")}>Reject Suggestion</Button>
                 <Button size="sm" variant="outline" onClick={undoLastAiApply} disabled={aiUndoStack.length === 0}>Undo Last AI Apply</Button>
                 <Button size="sm" variant="outline" onClick={redoLastAiApply} disabled={aiRedoStack.length === 0}>Redo Last AI Apply</Button>
               </div>
@@ -2141,7 +2570,214 @@ function ProductivitySuitePage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="timeline" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><ClipboardCheck className="h-4 w-4" />Audit Timeline</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <select className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900" value={timelineFilter} onChange={(e) => setTimelineFilter(e.target.value as TimelineFilter)}>
+                  <option value="all">All events</option>
+                  <option value="selected">Selected document</option>
+                  <option value="ai">AI events</option>
+                  <option value="workflow">Workflow</option>
+                  <option value="sync">Sync/conflicts</option>
+                </select>
+              </div>
+              <div className="max-h-130 space-y-2 overflow-y-auto rounded-md border border-slate-200 p-2 dark:border-slate-700">
+                {visibleTimelineEntries.length === 0 ? (
+                  <p className="text-sm text-slate-500">No events to show.</p>
+                ) : (
+                  visibleTimelineEntries.map((entry) => (
+                    <button key={entry.id} type="button" onClick={() => setSelectedTimelineEntryId(entry.id)} className={`w-full rounded border p-2 text-left text-xs dark:border-slate-700 ${selectedTimelineEntryId === entry.id ? "border-blue-500 bg-blue-50 dark:bg-blue-950/30" : "border-slate-200"}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold">{entry.title}</span>
+                        <Badge variant="outline">{entry.source}</Badge>
+                      </div>
+                      <p className="text-slate-500">{new Date(entry.at).toLocaleString()}</p>
+                      <p>{entry.detail}</p>
+                    </button>
+                  ))
+                )}
+              </div>
+              {selectedTimelineEntry && (
+                <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Timeline Detail</p>
+                      <p className="text-sm font-semibold">{selectedTimelineEntry.title}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => exportTimelineEntry(selectedTimelineEntry)}>Export JSON</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setSelectedTimelineEntryId(null)}>Clear</Button>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
+                    <div className="rounded border border-slate-200 p-2 dark:border-slate-700">
+                      <p className="font-semibold uppercase tracking-wider text-slate-500">Metadata</p>
+                      <p>Source: {selectedTimelineEntry.source}</p>
+                      <p>Timestamp: {new Date(selectedTimelineEntry.at).toLocaleString()}</p>
+                      <p>Document ID: {selectedTimelineEntry.docId || "n/a"}</p>
+                    </div>
+                    <div className="rounded border border-slate-200 p-2 dark:border-slate-700">
+                      <p className="font-semibold uppercase tracking-wider text-slate-500">Detail</p>
+                      <p className="whitespace-pre-wrap">{selectedTimelineEntry.detail}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+
+      <Dialog open={commandOpen} onOpenChange={setCommandOpen}>
+        <DialogContent className="max-w-2xl gap-0 overflow-hidden p-0">
+          <DialogHeader className="border-b border-slate-200 px-4 py-3 text-left dark:border-slate-700">
+            <DialogTitle>Quick Jump</DialogTitle>
+            <DialogDescription>Navigate the workspace, open recent items, or trigger core actions.</DialogDescription>
+          </DialogHeader>
+          <CommandMenu className="w-full">
+            <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+              <Search className="h-4 w-4 text-slate-400" />
+              <CommandMenu.Input
+                className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+                placeholder="Search tabs, documents, timeline, or actions..."
+                value={commandQuery}
+                onValueChange={setCommandQuery}
+              />
+            </div>
+            <CommandMenu.List className="max-h-105 overflow-y-auto p-2">
+              <CommandMenu.Empty className="px-4 py-6 text-center text-sm text-slate-500">No matches.</CommandMenu.Empty>
+              {normalizedCommandQuery && (
+                <div className="px-3 pb-1 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                  {commandResultCountLabel}
+                </div>
+              )}
+              {normalizedCommandQuery && commandSearchResults.length > 0 && (
+                <CommandMenu.Group heading="Matches" className="px-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                  {commandSearchResults.map((result) => (
+                    <CommandMenu.Item
+                      key={result.id}
+                      value={`${result.title} ${result.detail} ${result.snippet} ${result.kind} ${result.badge ?? ""}`}
+                      onSelect={() => runWorkspaceAction(result.onSelect)}
+                      className="flex cursor-pointer items-start justify-between gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate font-semibold">{result.title}</span>
+                          <Badge variant="outline">{result.kind}</Badge>
+                        </div>
+                        <p className="truncate text-[11px] text-slate-500">{result.detail}</p>
+                        <p className="mt-1 line-clamp-2 text-[11px] text-slate-400">{result.snippet}</p>
+                      </div>
+                      {result.badge ? <Badge variant="secondary">{result.badge}</Badge> : null}
+                    </CommandMenu.Item>
+                  ))}
+                </CommandMenu.Group>
+              )}
+              <CommandMenu.Group heading="Navigate" className="px-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                <CommandMenu.Item value="documents docs workspace" onSelect={() => openWorkspaceTab("documents")} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Docs</CommandMenu.Item>
+                <CommandMenu.Item value="tracker spreadsheet tasks" onSelect={() => openWorkspaceTab("tracker")} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Tracker</CommandMenu.Item>
+                <CommandMenu.Item value="slides presentation deck" onSelect={() => openWorkspaceTab("slides")} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Slides</CommandMenu.Item>
+                <CommandMenu.Item value="approvals signatures signoff" onSelect={() => openWorkspaceTab("approvals")} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Approvals</CommandMenu.Item>
+                <CommandMenu.Item value="timeline audit history" onSelect={() => openWorkspaceTab("timeline")} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Timeline</CommandMenu.Item>
+                <CommandMenu.Item value="ai assistant rewrite summarize translate" onSelect={() => openWorkspaceTab("ai")} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">AI Assist</CommandMenu.Item>
+              </CommandMenu.Group>
+              <CommandMenu.Group heading="Actions" className="px-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                <CommandMenu.Item value="save version checkpoint" onSelect={() => runWorkspaceAction(saveVersion)} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Save checkpoint</CommandMenu.Item>
+                <CommandMenu.Item value="export workspace backup" onSelect={() => runWorkspaceAction(exportWorkspaceBackup)} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Export workspace backup</CommandMenu.Item>
+                <CommandMenu.Item value="toggle high contrast" onSelect={() => runWorkspaceAction(() => setHighContrast((value) => !value))} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Toggle high contrast</CommandMenu.Item>
+                <CommandMenu.Item value="toggle large text" onSelect={() => runWorkspaceAction(() => setLargeText((value) => !value))} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Toggle large text</CommandMenu.Item>
+                <CommandMenu.Item value="toggle ai preview" onSelect={() => runWorkspaceAction(() => setAiPreviewOpen((open) => !open))} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">Toggle AI preview</CommandMenu.Item>
+              </CommandMenu.Group>
+              <CommandMenu.Group heading="Create" className="px-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                <CommandMenu.Item value="create new soap note clinical document" onSelect={() => runWorkspaceAction(() => { newDocument("SOAP"); setActiveTab("documents"); })} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">New SOAP note</CommandMenu.Item>
+                <CommandMenu.Item value="create new discharge summary clinical document" onSelect={() => runWorkspaceAction(() => { newDocument("Discharge"); setActiveTab("documents"); })} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">New Discharge summary</CommandMenu.Item>
+                <CommandMenu.Item value="create new handoff clinical document" onSelect={() => runWorkspaceAction(() => { newDocument("Handoff"); setActiveTab("documents"); })} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">New Handoff</CommandMenu.Item>
+                <CommandMenu.Item value="create new clinical letter" onSelect={() => runWorkspaceAction(() => { newDocument("Letter"); setActiveTab("documents"); })} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">New Letter</CommandMenu.Item>
+                <CommandMenu.Item value="create new tracker row task" onSelect={() => runWorkspaceAction(() => { addSheetRow(); setActiveTab("tracker"); })} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">New tracker row</CommandMenu.Item>
+                <CommandMenu.Item value="create new slide presentation" onSelect={() => runWorkspaceAction(() => { addSlide(); setActiveTab("slides"); })} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">New slide</CommandMenu.Item>
+              </CommandMenu.Group>
+              <CommandMenu.Group heading="Favorites" className="px-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                {favoriteDocs.length === 0 ? (
+                  <CommandMenu.Item value="no favorites" disabled className="px-3 py-2 text-sm text-slate-500">No favorite documents yet.</CommandMenu.Item>
+                ) : (
+                  favoriteDocs.map((doc) => (
+                    <CommandMenu.Item
+                      key={`fav-${doc.id}`}
+                      value={`${doc.title} ${doc.folder} ${doc.tags.join(" ")} favorite`}
+                      onSelect={() => openWorkspaceDoc(doc.id)}
+                      className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <span className="truncate">{doc.title}</span>
+                      <Badge variant="secondary">Favorite</Badge>
+                    </CommandMenu.Item>
+                  ))
+                )}
+              </CommandMenu.Group>
+              <CommandMenu.Group heading="Recent" className="px-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                {recentDocs.length === 0 ? (
+                  <CommandMenu.Item value="no recent documents" disabled className="px-3 py-2 text-sm text-slate-500">No recent documents yet.</CommandMenu.Item>
+                ) : (
+                  recentDocs.map((doc) => (
+                    <CommandMenu.Item
+                      key={`recent-${doc.id}`}
+                      value={`${doc.title} ${doc.folder} ${doc.tags.join(" ")} recent`}
+                      onSelect={() => openWorkspaceDoc(doc.id)}
+                      className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <span className="truncate">{doc.title}</span>
+                      <Badge variant="outline">Recent</Badge>
+                    </CommandMenu.Item>
+                  ))
+                )}
+              </CommandMenu.Group>
+              <CommandMenu.Group heading="Documents" className="px-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                {commandDocs.map((doc) => (
+                  <CommandMenu.Item
+                    key={doc.id}
+                    value={`${doc.title} ${doc.folder} ${doc.tags.join(" ")} ${doc.type} ${stripHtml(doc.content)}`}
+                    onSelect={() => openWorkspaceDoc(doc.id)}
+                    className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <span className="truncate">{doc.title}</span>
+                    <Badge variant="outline">{doc.type}</Badge>
+                  </CommandMenu.Item>
+                ))}
+              </CommandMenu.Group>
+              <CommandMenu.Group heading="Tracker" className="px-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                {commandRows.map((row) => (
+                  <CommandMenu.Item
+                    key={row.id}
+                    value={`${row.task} ${row.owner} ${row.notes} ${row.priority} ${row.status} ${row.due}`}
+                    onSelect={() => openWorkspaceTab("tracker")}
+                    className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <span className="truncate">{row.task || "Untitled task"}</span>
+                    <Badge variant="outline">{row.status}</Badge>
+                  </CommandMenu.Item>
+                ))}
+              </CommandMenu.Group>
+              <CommandMenu.Group heading="Timeline" className="px-2 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                {commandTimelineEntries.map((entry) => (
+                  <CommandMenu.Item
+                    key={entry.id}
+                    value={`${entry.title} ${entry.detail} ${entry.source} ${entry.docId ?? ""}`}
+                    onSelect={() => openWorkspaceTimelineEntry(entry.id)}
+                    className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <span className="truncate">{entry.title}</span>
+                    <Badge variant="outline">{entry.source}</Badge>
+                  </CommandMenu.Item>
+                ))}
+              </CommandMenu.Group>
+            </CommandMenu.List>
+          </CommandMenu>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

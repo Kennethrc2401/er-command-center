@@ -1,4 +1,4 @@
-export const CURRENT_WORKSPACE_SCHEMA_VERSION = 2;
+export const CURRENT_WORKSPACE_SCHEMA_VERSION = 3;
 
 export type AiAction = "rewrite" | "summarize" | "translate" | "patient_friendly";
 
@@ -16,6 +16,8 @@ export type BackupImportState = {
   deletedDocs: unknown[];
   sheetRows: unknown[];
   slides: unknown[];
+  favoriteDocIds: string[];
+  recentDocIds: string[];
   updatedAt: number;
 };
 
@@ -36,6 +38,8 @@ export function validateWorkspaceBackup(payload: unknown): BackupValidationResul
   if (!Array.isArray(data.deletedDocs)) errors.push("deletedDocs must be an array.");
   if (!Array.isArray(data.sheetRows)) errors.push("sheetRows must be an array.");
   if (!Array.isArray(data.slides)) errors.push("slides must be an array.");
+  if (!Array.isArray(data.favoriteDocIds)) errors.push("favoriteDocIds must be an array.");
+  if (!Array.isArray(data.recentDocIds)) errors.push("recentDocIds must be an array.");
   if (typeof data.updatedAt !== "number") errors.push("updatedAt must be a number.");
 
   if (typeof data.schemaVersion === "number" && data.schemaVersion > CURRENT_WORKSPACE_SCHEMA_VERSION) {
@@ -54,6 +58,12 @@ export function toImportState(payload: Record<string, unknown>): BackupImportSta
     deletedDocs: Array.isArray(payload.deletedDocs) ? payload.deletedDocs : [],
     sheetRows: Array.isArray(payload.sheetRows) ? payload.sheetRows : [],
     slides: Array.isArray(payload.slides) ? payload.slides : [],
+    favoriteDocIds: Array.isArray(payload.favoriteDocIds)
+      ? payload.favoriteDocIds.filter((item): item is string => typeof item === "string")
+      : [],
+    recentDocIds: Array.isArray(payload.recentDocIds)
+      ? payload.recentDocIds.filter((item): item is string => typeof item === "string")
+      : [],
     updatedAt: typeof payload.updatedAt === "number" ? payload.updatedAt : Date.now(),
   };
 }

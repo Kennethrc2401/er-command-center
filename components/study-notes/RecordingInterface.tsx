@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, type ChangeEvent } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type ChangeEvent } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -9,12 +9,23 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Mic, StopCircle, BookmarkPlus, CheckCircle2, AlertTriangle, Loader2, Stethoscope } from "lucide-react";
+import { Mic, StopCircle, BookmarkPlus, CheckCircle2, AlertTriangle, Loader2, Stethoscope, Undo2, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { extractTopicsFromTranscription } from "@/lib/helpers/academicAI";
+import {
+  mergeTranscriptFragment,
+  splitTranscriptForHighlights,
+  summarizeTranscriptQuality,
+  type TranscriptQualitySegment,
+} from "@/lib/helpers/transcriptionQuality";
 
 const RECORDING_DRAFT_STORAGE_KEY = "study-notes:recording-draft";
 const RECORDING_DEBUG_ENABLED = process.env.NEXT_PUBLIC_RECORDING_DEBUG === "true";
+const RECORDING_CUSTOM_VOCAB_KEY = "study-notes:custom-vocabulary";
+const RECORDING_IGNORED_FLAGS_KEY = "study-notes:ignored-flags";
+const RECORDING_AUTO_PROMOTE_VOCAB_KEY = "study-notes:auto-promote-vocabulary";
+const RECORDING_AUTO_PROMOTE_THRESHOLD_KEY = "study-notes:auto-promote-threshold";
+const RECORDING_PHRASE_FIX_COUNTS_KEY = "study-notes:phrase-fix-counts";
 
 const RECOGNITION_LANGUAGE_OPTIONS = [
   { value: "en-US", label: "English (US)" },
@@ -168,6 +179,18 @@ type TemplateImportPreview = {
   sampleTemplates: Array<{ label: string; content: string }>;
 };
 
+type CorrectionHistoryEntry = {
+  at: number;
+  target: string;
+  replacement: string;
+  transcriptionBefore: string;
+  transcriptionAfter: string;
+};
+
+function escapeForRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 type RecordingMode = "voice" | "text";
 
 type SpeechEngineStatus = "idle" | "starting" | "listening" | "restarting" | "error" | "unsupported";
@@ -207,8 +230,61 @@ export default function RecordingInterface({
   const [bytesRecorded, setBytesRecorded] = useState(0);
   const [speechEngineStatus, setSpeechEngineStatus] = useState<SpeechEngineStatus>("idle");
   const [speechEngineError, setSpeechEngineError] = useState<string | null>(null);
+  const [transcriptConfidence, setTranscriptConfidence] = useState<number | null>(null);
+  const [lowConfidenceSegments, setLowConfidenceSegments] = useState<TranscriptQualitySegment[]>([]);
+  const [correctionTarget, setCorrectionTarget] = useState<string | null>(null);
+  const [correctionValue, setCorrectionValue] = useState("");
+  const [replaceAllCorrections, setReplaceAllCorrections] = useState(false);
+  const [ignoredFlagPhrases, setIgnoredFlagPhrases] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    const raw = window.localStorage.getItem(RECORDING_IGNORED_FLAGS_KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  const [correctionHistory, setCorrectionHistory] = useState<CorrectionHistoryEntry[]>([]);
+  const [activeFlagIndex, setActiveFlagIndex] = useState(0);
+  const [selectedFlagKeys, setSelectedFlagKeys] = useState<string[]>([]);
+  const [batchReplaceValue, setBatchReplaceValue] = useState("");
+  const [showHighImpactOnly, setShowHighImpactOnly] = useState(false);
+  const [autoPromoteVocabulary, setAutoPromoteVocabulary] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const raw = window.localStorage.getItem(RECORDING_AUTO_PROMOTE_VOCAB_KEY);
+    return raw === null ? true : raw === "1";
+  });
+  const [autoPromoteThreshold, setAutoPromoteThreshold] = useState<number>(() => {
+    if (typeof window === "undefined") return 3;
+    const raw = window.localStorage.getItem(RECORDING_AUTO_PROMOTE_THRESHOLD_KEY);
+    const parsed = raw ? Number(raw) : 3;
+    return Number.isFinite(parsed) && parsed >= 1 && parsed <= 10 ? parsed : 3;
+  });
+  const [phraseFixCounts, setPhraseFixCounts] = useState<Record<string, number>>(() => {
+    if (typeof window === "undefined") return {};
+    const raw = window.localStorage.getItem(RECORDING_PHRASE_FIX_COUNTS_KEY);
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== "object") return {};
+      return Object.entries(parsed as Record<string, unknown>).reduce<Record<string, number>>((acc, [key, value]) => {
+        if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+          acc[key] = Math.floor(value);
+        }
+        return acc;
+      }, {});
+    } catch {
+      return {};
+    }
+  });
   const [isRunningPreflight, setIsRunningPreflight] = useState(false);
   const [preflightResult, setPreflightResult] = useState<string | null>(null);
+  const [customVocabularyInput, setCustomVocabularyInput] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem(RECORDING_CUSTOM_VOCAB_KEY) ?? "";
+  });
   const [hasRecoverableDraft, setHasRecoverableDraft] = useState(() => {
     if (typeof window === "undefined") return false;
     const raw = window.localStorage.getItem(RECORDING_DRAFT_STORAGE_KEY);
@@ -273,6 +349,411 @@ export default function RecordingInterface({
       console.log(...args);
     }
   }, []);
+
+  const customVocabulary = customVocabularyInput
+    .split(",")
+    .map((term) => term.trim())
+    .filter(Boolean);
+
+  const ignoredFlagSet = useMemo(
+    () => new Set(ignoredFlagPhrases.map((phrase) => phrase.toLowerCase())),
+    [ignoredFlagPhrases]
+  );
+
+  const transcriptHighlightParts = useMemo(
+    () => splitTranscriptForHighlights(transcription, lowConfidenceSegments),
+    [lowConfidenceSegments, transcription]
+  );
+
+  const selectedFlagSet = useMemo(() => new Set(selectedFlagKeys), [selectedFlagKeys]);
+
+  const weakPhraseTrends = useMemo(() => {
+    const normalizeFlagText = (text: string) => text.trim().toLowerCase();
+    const buckets = new Map<string, { phrase: string; count: number; minConfidence: number; issues: Set<string> }>();
+    lowConfidenceSegments.forEach((segment) => {
+      const key = normalizeFlagText(segment.text);
+      const existing = buckets.get(key);
+      if (existing) {
+        existing.count += 1;
+        existing.minConfidence = Math.min(existing.minConfidence, segment.confidence);
+        segment.issues.forEach((issue) => existing.issues.add(issue));
+        return;
+      }
+      buckets.set(key, {
+        phrase: segment.text,
+        count: 1,
+        minConfidence: segment.confidence,
+        issues: new Set(segment.issues),
+      });
+    });
+
+    return Array.from(buckets.values())
+      .sort((a, b) => b.count - a.count || a.minConfidence - b.minConfidence)
+      .slice(0, 5)
+      .map((item) => ({
+        phrase: item.phrase,
+        count: item.count,
+        minConfidence: item.minConfidence,
+        issues: Array.from(item.issues),
+      }));
+  }, [lowConfidenceSegments]);
+
+  const selectedBatchPreview = useMemo(() => {
+    const normalizeFlagText = (text: string) => text.trim().toLowerCase();
+    if (!transcription || selectedFlagKeys.length === 0) return [] as Array<{ text: string; matches: number }>;
+
+    const selectedTexts = lowConfidenceSegments
+      .filter((segment) => selectedFlagSet.has(normalizeFlagText(segment.text)))
+      .map((segment) => segment.text)
+      .filter((text, index, array) => array.findIndex((item) => item.toLowerCase() === text.toLowerCase()) === index);
+
+    return selectedTexts
+      .map((text) => ({
+        text,
+        matches: (transcription.match(new RegExp(escapeForRegExp(text), "gi")) ?? []).length,
+      }))
+      .filter((item) => item.matches > 0)
+      .sort((a, b) => b.matches - a.matches);
+  }, [lowConfidenceSegments, selectedFlagKeys.length, selectedFlagSet, transcription]);
+
+  const displayedLowConfidenceSegments = useMemo(() => {
+    if (!showHighImpactOnly) return lowConfidenceSegments;
+    return lowConfidenceSegments.filter((segment) => {
+      const issuesText = segment.issues.join(" ").toLowerCase();
+      return (
+        segment.confidence <= 0.72 ||
+        segment.issues.length >= 2 ||
+        /unclear|low|dosage|medication|drug|name|number|frequency/.test(issuesText)
+      );
+    });
+  }, [lowConfidenceSegments, showHighImpactOnly]);
+
+  const navigableLowConfidenceSegments = displayedLowConfidenceSegments;
+
+  const activeFlag = navigableLowConfidenceSegments[activeFlagIndex] ?? null;
+
+  const qualityPack = useMemo(() => {
+    const lines = [
+      `Study Notes QA Pack (${new Date().toLocaleString()})`,
+      `Subject: ${subject}`,
+      `Mode: ${recordingMode}`,
+      `Language: ${recognitionLanguage}`,
+      `Confidence: ${transcriptConfidence !== null ? `${Math.round(transcriptConfidence * 100)}%` : "n/a"}`,
+      `Flagged segments: ${lowConfidenceSegments.length}`,
+      `Corrections applied: ${correctionHistory.length}`,
+      `Ignored phrases: ${ignoredFlagPhrases.length > 0 ? ignoredFlagPhrases.join(", ") : "none"}`,
+      `Custom vocabulary: ${customVocabulary.length > 0 ? customVocabulary.join(", ") : "none"}`,
+      "",
+      "Flagged phrases:",
+      ...(lowConfidenceSegments.length > 0
+        ? lowConfidenceSegments.map((segment) => {
+            const issues = segment.issues.length > 0 ? ` | issues: ${segment.issues.join(", ")}` : "";
+            return `- ${segment.text} (${Math.round(segment.confidence * 100)}%)${issues}`;
+          })
+        : ["- none"]),
+      "",
+      "Transcript:",
+      transcription || "(empty)",
+    ];
+    return lines.join("\n");
+  }, [correctionHistory.length, customVocabulary, ignoredFlagPhrases, lowConfidenceSegments, recordingMode, recognitionLanguage, subject, transcription, transcriptConfidence]);
+
+  const transcriptionDomain = /med|nurs|clinical|anatom|physio|pharm|triage/i.test(subject)
+    ? "clinical"
+    : "general";
+
+  const applyTranscriptionQuality = useCallback(
+    (value: string) => {
+      const summary = summarizeTranscriptQuality(value, {
+        domain: transcriptionDomain,
+        customVocabulary,
+      });
+      setTranscriptConfidence(summary.averageConfidence);
+      setLowConfidenceSegments(
+        summary.lowConfidenceSegments.filter((segment) => !ignoredFlagSet.has(segment.text.toLowerCase()))
+      );
+      return summary.normalizedText;
+    },
+    [customVocabulary, ignoredFlagSet, transcriptionDomain]
+  );
+
+  const acceptAllCleanups = useCallback(() => {
+    if (!transcription.trim()) {
+      toast.message("No transcript text to clean yet");
+      return;
+    }
+
+    setTranscription((previous) => applyTranscriptionQuality(previous));
+    toast.success("Applied all cleanup suggestions");
+  }, [applyTranscriptionQuality, transcription]);
+
+  const cycleActiveFlag = useCallback((direction: -1 | 1) => {
+    if (navigableLowConfidenceSegments.length === 0) return;
+    setActiveFlagIndex((current) => {
+      const next = current + direction;
+      if (next < 0) return navigableLowConfidenceSegments.length - 1;
+      if (next >= navigableLowConfidenceSegments.length) return 0;
+      return next;
+    });
+  }, [navigableLowConfidenceSegments.length]);
+
+  const openCorrectionEditor = useCallback((segment: string) => {
+    setCorrectionTarget(segment);
+    setCorrectionValue(segment);
+  }, []);
+
+  const ignoreFlagPhrase = useCallback((phrase: string) => {
+    const trimmed = phrase.trim();
+    if (!trimmed) return;
+    setIgnoredFlagPhrases((current) => {
+      const exists = current.some((item) => item.toLowerCase() === trimmed.toLowerCase());
+      if (exists) return current;
+      return [...current, trimmed].slice(0, 30);
+    });
+    toast.success("Phrase ignored from future warnings");
+  }, []);
+
+  const flagKey = useCallback((text: string) => text.trim().toLowerCase(), []);
+
+  const toggleFlagSelection = useCallback((text: string) => {
+    const key = flagKey(text);
+    setSelectedFlagKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+    );
+  }, [flagKey]);
+
+  const selectAllFlags = useCallback(() => {
+    setSelectedFlagKeys(lowConfidenceSegments.map((segment) => flagKey(segment.text)));
+  }, [flagKey, lowConfidenceSegments]);
+
+  const clearSelectedFlags = useCallback(() => {
+    setSelectedFlagKeys([]);
+  }, []);
+
+  const selectMatchingFlags = useCallback((text: string) => {
+    const targetKey = flagKey(text);
+    const matches = displayedLowConfidenceSegments
+      .map((segment) => segment.text)
+      .filter((segmentText) => flagKey(segmentText) === targetKey)
+      .map((segmentText) => flagKey(segmentText));
+
+    if (matches.length === 0) {
+      toast.message("No matching flagged phrases found.");
+      return;
+    }
+
+    setSelectedFlagKeys((current) => Array.from(new Set([...current, ...matches])));
+    toast.success(`Selected ${matches.length} matching phrase(s).`);
+  }, [displayedLowConfidenceSegments, flagKey]);
+
+  const addPhraseToVocabulary = useCallback((phrase: string) => {
+    const trimmed = phrase.trim();
+    if (!trimmed) return;
+
+    const current = customVocabularyInput
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (current.some((item) => item.toLowerCase() === trimmed.toLowerCase())) {
+      toast.message("Phrase is already in custom vocabulary.");
+      return;
+    }
+
+    setCustomVocabularyInput([...current, trimmed].join(", "));
+    toast.success("Added phrase to custom vocabulary.");
+  }, [customVocabularyInput]);
+
+  const recordPhraseCorrection = useCallback((phrase: string) => {
+    const trimmed = phrase.trim();
+    if (!trimmed) return;
+
+    const key = trimmed.toLowerCase();
+    setPhraseFixCounts((current) => {
+      const nextCount = (current[key] ?? 0) + 1;
+      const next = { ...current, [key]: nextCount };
+
+      if (autoPromoteVocabulary && nextCount >= autoPromoteThreshold) {
+        setCustomVocabularyInput((previous) => {
+          const existing = previous
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+
+          if (existing.some((item) => item.toLowerCase() === key)) {
+            return previous;
+          }
+
+          toast.success(`Auto-promoted \"${trimmed}\" to vocabulary.`);
+          return [...existing, trimmed].join(", ");
+        });
+      }
+
+      return next;
+    });
+  }, [autoPromoteThreshold, autoPromoteVocabulary]);
+
+  const batchIgnoreSelected = useCallback(() => {
+    if (selectedFlagKeys.length === 0) {
+      toast.message("Select flagged phrases first.");
+      return;
+    }
+
+    const selectedTexts = lowConfidenceSegments
+      .filter((segment) => selectedFlagSet.has(flagKey(segment.text)))
+      .map((segment) => segment.text);
+
+    if (selectedTexts.length === 0) {
+      toast.message("Selected flagged phrases are no longer available.");
+      return;
+    }
+
+    setIgnoredFlagPhrases((current) => {
+      const next = [...current];
+      selectedTexts.forEach((text) => {
+        if (!next.some((existing) => existing.toLowerCase() === text.toLowerCase())) {
+          next.push(text);
+        }
+      });
+      return next.slice(0, 30);
+    });
+    setSelectedFlagKeys([]);
+    toast.success(`Ignored ${selectedTexts.length} flagged phrase(s).`);
+  }, [flagKey, lowConfidenceSegments, selectedFlagKeys.length, selectedFlagSet]);
+
+  const batchReplaceSelected = useCallback(() => {
+    const replacement = batchReplaceValue.trim();
+    if (selectedFlagKeys.length === 0) {
+      toast.message("Select flagged phrases first.");
+      return;
+    }
+    if (!replacement) {
+      toast.error("Enter replacement text for batch replace.");
+      return;
+    }
+
+    const selectedTexts = lowConfidenceSegments
+      .filter((segment) => selectedFlagSet.has(flagKey(segment.text)))
+      .map((segment) => segment.text)
+      .filter((text, index, array) => array.findIndex((item) => item.toLowerCase() === text.toLowerCase()) === index);
+
+    if (selectedTexts.length === 0) {
+      toast.message("Selected flagged phrases are no longer available.");
+      return;
+    }
+
+    setTranscription((previous) => {
+      let updated = previous;
+      selectedTexts.forEach((text) => {
+        updated = updated.replace(new RegExp(escapeForRegExp(text), "gi"), replacement);
+      });
+
+      recordPhraseCorrection(replacement);
+
+      const processed = applyTranscriptionQuality(updated);
+      setCorrectionHistory((current) => [
+        {
+          at: Date.now(),
+          target: `Batch (${selectedTexts.length})`,
+          replacement,
+          transcriptionBefore: previous,
+          transcriptionAfter: processed,
+        },
+        ...current,
+      ].slice(0, 25));
+      return processed;
+    });
+
+    setSelectedFlagKeys([]);
+    setBatchReplaceValue("");
+    toast.success(`Batch replaced ${selectedTexts.length} flagged phrase(s).`);
+  }, [applyTranscriptionQuality, batchReplaceValue, flagKey, lowConfidenceSegments, recordPhraseCorrection, selectedFlagKeys.length, selectedFlagSet]);
+
+  const clearIgnoredFlags = useCallback(() => {
+    setIgnoredFlagPhrases([]);
+    toast.success("Ignored phrase list cleared");
+  }, []);
+
+  const closeCorrectionEditor = useCallback(() => {
+    setCorrectionTarget(null);
+    setCorrectionValue("");
+  }, []);
+
+  const applyCorrection = useCallback(() => {
+    const target = correctionTarget?.trim();
+    const replacement = correctionValue.trim();
+
+    if (!target || !replacement) {
+      toast.error("Correction text is required");
+      return;
+    }
+
+    const escapedTarget = escapeForRegExp(target);
+    const targetPattern = new RegExp(escapedTarget, replaceAllCorrections ? "gi" : "i");
+
+    setTranscription((previous) => {
+      if (!targetPattern.test(previous)) {
+        toast.error("Selected phrase was not found in transcript");
+        return previous;
+      }
+
+      const updated = previous.replace(targetPattern, replacement);
+      const processed = applyTranscriptionQuality(updated);
+      recordPhraseCorrection(replacement);
+
+      setCorrectionHistory((current) => [
+        {
+          at: Date.now(),
+          target,
+          replacement,
+          transcriptionBefore: previous,
+          transcriptionAfter: processed,
+        },
+        ...current,
+      ].slice(0, 25));
+
+      return processed;
+    });
+
+    closeCorrectionEditor();
+    toast.success("Applied correction");
+  }, [applyTranscriptionQuality, closeCorrectionEditor, correctionTarget, correctionValue, recordPhraseCorrection, replaceAllCorrections]);
+
+  const undoLastCorrection = useCallback(() => {
+    setCorrectionHistory((current) => {
+      if (current.length === 0) {
+        toast.message("No correction to undo");
+        return current;
+      }
+
+      const [latest, ...rest] = current;
+      setTranscription(latest.transcriptionBefore);
+      applyTranscriptionQuality(latest.transcriptionBefore);
+      toast.success("Undid last correction");
+      return rest;
+    });
+  }, [applyTranscriptionQuality]);
+
+  const insertSpeakerTag = useCallback(
+    (speaker: "Instructor" | "Student") => {
+      const tag = `\n[${speaker}]: `;
+      setTranscription((previous) => {
+        const merged = mergeTranscriptFragment(previous, tag);
+        return applyTranscriptionQuality(merged);
+      });
+      toast.success(`${speaker} tag inserted`);
+    },
+    [applyTranscriptionQuality]
+  );
+
+  const copyQualityPack = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(qualityPack);
+      toast.success("QA pack copied");
+    } catch {
+      toast.error("Unable to copy QA pack");
+    }
+  }, [qualityPack]);
 
   const persistTemplates = useCallback((newTemplates: NoteTemplate[]) => {
     setTemplates(newTemplates);
@@ -554,10 +1035,13 @@ export default function RecordingInterface({
 
   const insertTemplate = useCallback(
     (content: string) => {
-      setTranscription((prev) => prev + content + " ");
+      setTranscription((prev) => {
+        const merged = mergeTranscriptFragment(prev, content);
+        return applyTranscriptionQuality(merged);
+      });
       toast.success("Template inserted");
     },
-    []
+    [applyTranscriptionQuality]
   );
 
   const startTimer = useCallback(() => {
@@ -606,6 +1090,81 @@ export default function RecordingInterface({
   useEffect(() => {
     isPausedRef.current = isPaused;
   }, [isPaused]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(RECORDING_CUSTOM_VOCAB_KEY, customVocabularyInput);
+  }, [customVocabularyInput]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(RECORDING_AUTO_PROMOTE_VOCAB_KEY, autoPromoteVocabulary ? "1" : "0");
+  }, [autoPromoteVocabulary]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(RECORDING_AUTO_PROMOTE_THRESHOLD_KEY, String(autoPromoteThreshold));
+  }, [autoPromoteThreshold]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(RECORDING_PHRASE_FIX_COUNTS_KEY, JSON.stringify(phraseFixCounts));
+  }, [phraseFixCounts]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(RECORDING_IGNORED_FLAGS_KEY, JSON.stringify(ignoredFlagPhrases));
+  }, [ignoredFlagPhrases]);
+
+  useEffect(() => {
+    if (navigableLowConfidenceSegments.length === 0) {
+      setActiveFlagIndex(0);
+      return;
+    }
+    setActiveFlagIndex((current) => Math.min(current, navigableLowConfidenceSegments.length - 1));
+  }, [navigableLowConfidenceSegments.length]);
+
+  useEffect(() => {
+    const validKeys = new Set(lowConfidenceSegments.map((segment) => flagKey(segment.text)));
+    setSelectedFlagKeys((current) => current.filter((key) => validKeys.has(key)));
+  }, [flagKey, lowConfidenceSegments]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.altKey) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "n") {
+        event.preventDefault();
+        cycleActiveFlag(1);
+        return;
+      }
+      if (key === "p") {
+        event.preventDefault();
+        cycleActiveFlag(-1);
+        return;
+      }
+      if (key === "e") {
+        if (!activeFlag) return;
+        event.preventDefault();
+        openCorrectionEditor(activeFlag.text);
+        return;
+      }
+      if (key === "a") {
+        event.preventDefault();
+        acceptAllCleanups();
+        return;
+      }
+      if (key === "s") {
+        if (!activeFlag) return;
+        event.preventDefault();
+        selectMatchingFlags(activeFlag.text);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [acceptAllCleanups, activeFlag, cycleActiveFlag, openCorrectionEditor, selectMatchingFlags]);
 
   const startRecognition = useCallback((allowRetry = true) => {
     const recognition = recognitionRef.current;
@@ -845,7 +1404,10 @@ export default function RecordingInterface({
 
           if (isFinal) {
             logDebug(`  ✅ Final transcript: "${transcript}"`);
-            setTranscription((prev) => prev + transcript + " ");
+            setTranscription((prev) => {
+              const merged = mergeTranscriptFragment(prev, transcript);
+              return applyTranscriptionQuality(merged);
+            });
           } else {
             logDebug(`  💬 Interim result: "${transcript}"`);
           }
@@ -877,7 +1439,7 @@ export default function RecordingInterface({
       console.error("❌ Speech: Web Speech API not supported in this browser");
       toast.error("Speech recognition not supported in your browser");
     }
-  }, [clearRecognitionRestart, getSpeechRecognitionCtor, logDebug, startRecognition]);
+  }, [applyTranscriptionQuality, clearRecognitionRestart, getSpeechRecognitionCtor, logDebug, startRecognition]);
 
   useEffect(() => {
     recognitionLanguageRef.current = recognitionLanguage;
@@ -964,6 +1526,11 @@ export default function RecordingInterface({
       setElapsedTime(0);
       setBytesRecorded(0);
       setTranscription("");
+      setTranscriptConfidence(null);
+      setLowConfidenceSegments([]);
+      setCorrectionTarget(null);
+      setCorrectionValue("");
+      setCorrectionHistory([]);
       setHasRecoverableDraft(false);
 
       startTimer();
@@ -1265,14 +1832,15 @@ export default function RecordingInterface({
       logDebug("✅ Session: Ended in backend");
 
       // Create note with transcription
-      if (transcription.trim()) {
-        const { topics } = extractTopicsFromTranscription(transcription, subject);
+      const processedTranscription = applyTranscriptionQuality(transcription);
+      if (processedTranscription.trim()) {
+        const { topics } = extractTopicsFromTranscription(processedTranscription, subject);
 
         setIsTranscribing(true);
         await createNote({
           sessionId: sessionId as Id<"studyClassSessions">,
           userId,
-          rawTranscription: transcription,
+          rawTranscription: processedTranscription,
           subject,
           topics,
           recordingMarkers,
@@ -1291,6 +1859,11 @@ export default function RecordingInterface({
 
         // Reset form
         setTranscription("");
+        setTranscriptConfidence(null);
+        setLowConfidenceSegments([]);
+        setCorrectionTarget(null);
+        setCorrectionValue("");
+        setCorrectionHistory([]);
         setSessionId(null);
         setBytesRecorded(0);
         clearDraft();
@@ -1350,6 +1923,11 @@ export default function RecordingInterface({
       setElapsedTime(0);
       setSessionId(null);
       setBytesRecorded(0);
+      setTranscriptConfidence(null);
+      setLowConfidenceSegments([]);
+      setCorrectionTarget(null);
+      setCorrectionValue("");
+      setCorrectionHistory([]);
       clearDraft();
 
       toast.info("Recording discarded and reset.");
@@ -1805,6 +2383,17 @@ export default function RecordingInterface({
               Default is English. Mixed mode helps with code-switching but is less accurate than a single language.
             </p>
           </div>
+          <div className="md:col-span-4">
+            <label className="block text-sm font-medium mb-1">Priority Vocabulary (comma-separated)</label>
+            <Input
+              value={customVocabularyInput}
+              onChange={(event) => setCustomVocabularyInput(event.target.value)}
+              placeholder="e.g., sepsis, troponin, metoprolol, hemoglobin A1c"
+            />
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Terms listed here are preserved during transcript cleanup to reduce mistakes on key names.
+            </p>
+          </div>
         </div>
       )}
 
@@ -1849,6 +2438,295 @@ export default function RecordingInterface({
               </Button>
             )}
           </div>
+
+          {transcriptConfidence !== null && (
+            <div className="mb-4 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+              <p className="font-medium text-slate-700 dark:text-slate-200">
+                Transcript confidence: {Math.round(transcriptConfidence * 100)}%
+              </p>
+              <p className="text-slate-500 dark:text-slate-400">
+                Review flagged phrases before finalizing when confidence is below 80%.
+              </p>
+            </div>
+          )}
+
+          {lowConfidenceSegments.length > 0 ? (
+            <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium">Review suggested for low-confidence phrases:</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowHighImpactOnly((current) => !current)}
+                >
+                  {showHighImpactOnly ? "Show all" : "High impact"}
+                </Button>
+              </div>
+              <ul className="mt-1 space-y-1">
+                {displayedLowConfidenceSegments.map((segment, index) => (
+                  <li key={`${segment.text}-${index}`}>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={selectedFlagSet.has(flagKey(segment.text))}
+                        onChange={() => toggleFlagSelection(segment.text)}
+                        className="h-3.5 w-3.5"
+                        title="Select for batch action"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => openCorrectionEditor(segment.text)}
+                        className="w-full truncate rounded border border-amber-300/70 px-2 py-1 text-left hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900/20"
+                      >
+                        • {segment.text}
+                      </button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => ignoreFlagPhrase(segment.text)}
+                        className="h-7 px-2 text-[10px]"
+                      >
+                        Ignore
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => selectMatchingFlags(segment.text)}
+                        className="h-7 px-2 text-[10px]"
+                      >
+                        Match
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => addPhraseToVocabulary(segment.text)}
+                        className="h-7 px-2 text-[10px]"
+                      >
+                        Vocab
+                      </Button>
+                    </div>
+                    <p className="mt-0.5 truncate text-[11px] text-amber-700 dark:text-amber-300">
+                      {Math.round(segment.confidence * 100)}% confidence
+                      {segment.issues.length > 0 ? ` • ${segment.issues.join(", ")}` : ""}
+                    </p>
+                  </li>
+                ))}
+                {displayedLowConfidenceSegments.length === 0 && (
+                  <li className="text-[11px] text-amber-700 dark:text-amber-300">No high-impact phrases in current flags.</li>
+                )}
+              </ul>
+            </div>
+          ) : null}
+
+          {lowConfidenceSegments.length > 0 ? (
+            <div className="mb-4 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+              <p className="font-medium text-slate-700 dark:text-slate-200">Batch actions</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="outline" onClick={selectAllFlags}>Select all</Button>
+                <Button type="button" size="sm" variant="outline" onClick={clearSelectedFlags}>Clear</Button>
+                <Button type="button" size="sm" variant="outline" onClick={batchIgnoreSelected}>Ignore selected</Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => activeFlag && selectMatchingFlags(activeFlag.text)}
+                  disabled={!activeFlag}
+                >
+                  Select Active Matches
+                </Button>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <Input
+                  value={batchReplaceValue}
+                  onChange={(event) => setBatchReplaceValue(event.target.value)}
+                  placeholder="Batch replacement text"
+                />
+                <Button type="button" size="sm" variant="outline" onClick={batchReplaceSelected}>Replace selected</Button>
+              </div>
+              {selectedBatchPreview.length > 0 ? (
+                <div className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-2 dark:border-slate-700 dark:bg-slate-800/60">
+                  <p className="text-[11px] font-medium text-slate-700 dark:text-slate-200">Replacement preview</p>
+                  <div className="mt-1 max-h-16 space-y-1 overflow-y-auto text-[11px] text-slate-600 dark:text-slate-300">
+                    {selectedBatchPreview.map((item) => (
+                      <p key={item.text} className="truncate">
+                        {item.text}{" -> "}{item.matches} match(es)
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-300">Selected: {selectedFlagKeys.length}</p>
+            </div>
+          ) : null}
+
+          {weakPhraseTrends.length > 0 ? (
+            <div className="mb-4 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+              <p className="font-medium text-slate-700 dark:text-slate-200">Weak phrase trends</p>
+              <div className="mt-1 space-y-1 text-[11px] text-slate-600 dark:text-slate-300">
+                {weakPhraseTrends.map((item) => (
+                  <p key={item.phrase} className="truncate">
+                    {item.phrase} • {item.count}x • min {Math.round(item.minConfidence * 100)}%
+                    {item.issues.length > 0 ? ` • ${item.issues.join(", ")}` : ""}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mb-4 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+            <p className="font-medium text-slate-700 dark:text-slate-200">Vocabulary auto-promote</p>
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={autoPromoteVocabulary}
+                onChange={(event) => setAutoPromoteVocabulary(event.target.checked)}
+              />
+              Auto-add corrected phrases to vocabulary
+            </label>
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-[11px] text-slate-500 dark:text-slate-300">Threshold</span>
+              <Input
+                type="number"
+                min={1}
+                max={10}
+                value={autoPromoteThreshold}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (!Number.isFinite(next)) return;
+                  setAutoPromoteThreshold(Math.max(1, Math.min(10, Math.round(next))));
+                }}
+                className="h-8 w-20"
+              />
+            </div>
+          </div>
+
+          {transcription.trim().length > 0 && (
+            <div className="mb-4 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium text-slate-700 dark:text-slate-200">Confidence heatmap</p>
+                {lowConfidenceSegments.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500 dark:text-slate-300">
+                      Flag {Math.min(activeFlagIndex + 1, navigableLowConfidenceSegments.length)}/{navigableLowConfidenceSegments.length}
+                    </span>
+                    <Button type="button" size="sm" variant="outline" onClick={() => cycleActiveFlag(-1)}>Prev</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => cycleActiveFlag(1)}>Next</Button>
+                    {activeFlag && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => openCorrectionEditor(activeFlag.text)}>
+                        Edit Active
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap leading-relaxed text-slate-600 dark:text-slate-300">
+                {transcriptHighlightParts.map((part, index) => {
+                  if (!part.flagged) {
+                    return <span key={`plain-${index}`}>{part.text}</span>;
+                  }
+
+                  const isActive = activeFlag?.text.toLowerCase() === part.flagged.text.toLowerCase();
+                  return (
+                    <button
+                      key={`flag-${part.flagged.text}-${index}`}
+                      type="button"
+                      onClick={() => openCorrectionEditor(part.flagged!.text)}
+                      className={`rounded px-1 ${isActive ? "bg-amber-300 text-amber-900 dark:bg-amber-700 dark:text-amber-50" : "bg-amber-200 text-amber-900 dark:bg-amber-800/70 dark:text-amber-100"}`}
+                      title={`Flagged (${Math.round(part.flagged.confidence * 100)}%): ${part.flagged.issues.join(", ") || "review"}`}
+                    >
+                      {part.text}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {(isRecording || lowConfidenceSegments.length > 0) && (
+            <div className="mb-4 flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => insertSpeakerTag("Instructor")}>Tag Instructor</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => insertSpeakerTag("Student")}>Tag Student</Button>
+              <Button type="button" size="sm" variant="outline" onClick={copyQualityPack} className="gap-1">
+                <ClipboardList className="h-3.5 w-3.5" />Copy QA Pack
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={acceptAllCleanups}>
+                Accept All Cleanups
+              </Button>
+              {ignoredFlagPhrases.length > 0 && (
+                <Button type="button" size="sm" variant="outline" onClick={clearIgnoredFlags}>
+                  Reset Ignored
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={undoLastCorrection}
+                disabled={correctionHistory.length === 0}
+                className="gap-1"
+              >
+                <Undo2 className="h-3.5 w-3.5" />Undo Last
+              </Button>
+            </div>
+          )}
+
+          {(isRecording || lowConfidenceSegments.length > 0) && (
+            <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+              Shortcuts: Alt+N next flag, Alt+P previous flag, Alt+E edit active flag, Alt+S select active matches, Alt+A accept all cleanups.
+            </p>
+          )}
+
+          {correctionTarget && (
+            <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+              <p className="font-medium">Correct phrase</p>
+              <p className="mt-1 truncate text-[11px] text-blue-700 dark:text-blue-300">Original: {correctionTarget}</p>
+              <Input
+                value={correctionValue}
+                onChange={(event) => setCorrectionValue(event.target.value)}
+                className="mt-2"
+                placeholder="Replace with correct text"
+              />
+              <label className="mt-2 flex items-center gap-2 text-[11px] font-medium text-blue-700 dark:text-blue-300">
+                <input
+                  type="checkbox"
+                  checked={replaceAllCorrections}
+                  onChange={(event) => setReplaceAllCorrections(event.target.checked)}
+                />
+                Replace all occurrences
+              </label>
+              <div className="mt-2 flex gap-2">
+                <Button type="button" size="sm" onClick={applyCorrection}>Apply</Button>
+                <Button type="button" size="sm" variant="outline" onClick={closeCorrectionEditor}>Cancel</Button>
+              </div>
+            </div>
+          )}
+
+          {ignoredFlagPhrases.length > 0 && (
+            <div className="mb-4 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium text-slate-700 dark:text-slate-200">Ignored flagged phrases</p>
+                <Button type="button" size="sm" variant="outline" onClick={clearIgnoredFlags}>Clear</Button>
+              </div>
+              <p className="mt-1 truncate text-slate-500 dark:text-slate-300">{ignoredFlagPhrases.join(" • ")}</p>
+            </div>
+          )}
+
+          {correctionHistory.length > 0 && (
+            <div className="mb-4 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+              <p className="font-medium text-slate-700 dark:text-slate-200">Correction history</p>
+              <div className="mt-1 max-h-24 space-y-1 overflow-y-auto">
+                {correctionHistory.slice(0, 5).map((entry) => (
+                  <p key={`${entry.at}-${entry.target}`} className="truncate text-slate-500 dark:text-slate-300">
+                    {new Date(entry.at).toLocaleTimeString()} - {entry.target}{" -> "}{entry.replacement}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
 
           {recordingMode === "voice" && (
             <div className="mb-4 rounded-md border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
@@ -1895,7 +2773,11 @@ export default function RecordingInterface({
                 className="h-32 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
                 placeholder="Type your notes here... (They will be captured with timestamps)"
                 value={transcription}
-                onChange={(e) => setTranscription(e.target.value)}
+                onChange={(e) => {
+                  const nextValue = e.target.value;
+                  setTranscription(nextValue);
+                  applyTranscriptionQuality(nextValue);
+                }}
               />
               {templates.length > 0 && (
                 <div className="space-y-2">
@@ -2022,6 +2904,9 @@ export default function RecordingInterface({
             <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
               <p>Markers: {recordingMarkers.length}</p>
               <p>Paused time: {Math.max(0, pauseSeconds)}s</p>
+              {transcriptConfidence !== null && (
+                <p>Confidence: {Math.round(transcriptConfidence * 100)}%</p>
+              )}
               {recordingMode === "voice" && (
                 <>
                   <p>Audio quality: {audioQuality}</p>
