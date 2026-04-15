@@ -20,8 +20,8 @@ export default function ReferencesPage() {
   const normalizedQuery = query.trim().toLowerCase();
 
   // Role-based procedure filtering logic
-  const isObGynRole = actorRole === "RN" || actorRole === "CNM" || actorRole === "CCMA" || actorRole === "DOCTOR";
-  const isClinicalRole = actorRole && actorRole !== "ADMIN";
+  const isObGynRole = actorRole === "NURSE" || actorRole === "CCMA" || actorRole === "DOCTOR";
+  const isClinicalRole = actorRole !== "ADMIN" && actorRole !== "UNKNOWN";
 
   const visibleDrugs = useMemo(() => {
     const allDrugs = CLINICAL_REF.DRUG_DICTIONARY;
