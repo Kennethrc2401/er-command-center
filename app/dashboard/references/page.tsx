@@ -6,6 +6,8 @@ import { CLINICAL_REF } from "@/lib/constants/references";
 
 type ReferenceTab = "drugs" | "clinical";
 type ClinicalGroup = "labs" | "vitals" | "procedures";
+type LabOrVitalEntry = (typeof CLINICAL_REF.LABS)[number];
+type ProcedureEntry = (typeof CLINICAL_REF.PROCEDURE_PREP_GUIDES)[number];
 
 export default function ReferencesPage() {
   const [tab, setTab] = useState<ReferenceTab>("drugs");
@@ -34,7 +36,7 @@ export default function ReferencesPage() {
     });
   }, [normalizedQuery]);
 
-  const visibleClinical = useMemo(() => {
+  const visibleLabOrVital = useMemo<LabOrVitalEntry[]>(() => {
     if (group === "labs") {
       return CLINICAL_REF.LABS.filter((item) => {
         if (!normalizedQuery) return true;
@@ -50,6 +52,12 @@ export default function ReferencesPage() {
         return haystack.includes(normalizedQuery);
       });
     }
+
+    return [];
+  }, [group, normalizedQuery]);
+
+  const visibleProcedures = useMemo<ProcedureEntry[]>(() => {
+    if (group !== "procedures") return [];
 
     return CLINICAL_REF.PROCEDURE_PREP_GUIDES.filter((item) => {
       if (!normalizedQuery) return true;
@@ -219,7 +227,7 @@ export default function ReferencesPage() {
 
             {group !== "procedures" ? (
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {visibleClinical.map((entry) => (
+                {visibleLabOrVital.map((entry) => (
                   <article
                     key={entry.name}
                     className="rounded-4xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
@@ -233,7 +241,7 @@ export default function ReferencesPage() {
               </div>
             ) : (
               <div className="grid gap-4 xl:grid-cols-2">
-                {visibleClinical.map((entry) => (
+                {visibleProcedures.map((entry) => (
                   <article
                     key={`${entry.unit}-${entry.name}`}
                     className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900"
@@ -256,7 +264,13 @@ export default function ReferencesPage() {
               </div>
             )}
 
-            {visibleClinical.length === 0 ? (
+            {group !== "procedures" && visibleLabOrVital.length === 0 ? (
+              <p className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                No clinical reference entries matched your search.
+              </p>
+            ) : null}
+
+            {group === "procedures" && visibleProcedures.length === 0 ? (
               <p className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
                 No clinical reference entries matched your search.
               </p>
