@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -93,6 +93,13 @@ export default function NewPatientModal({ trigger }: NewPatientModalProps) {
       setIsPending(false);
     }
   };
+
+  useEffect(() => {
+    const openHandler = () => setIsOpen(true);
+
+    window.addEventListener("open-new-patient-modal", openHandler);
+    return () => window.removeEventListener("open-new-patient-modal", openHandler);
+  }, []);
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>

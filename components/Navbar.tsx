@@ -9,6 +9,7 @@ import { useEffect, useRef } from "react";
 import { 
   Activity, 
   BrainCircuit,
+  Command,
   LayoutDashboard, 
   UserPlus, 
   ShieldCheck, 
@@ -19,7 +20,8 @@ import {
   FileText,
   ClipboardList,
   Sparkles,
-  BookOpen
+  BookOpen,
+  FlaskConical
 } from "lucide-react";
 import NewPatientModal from "./NewPatientModal";
 import { LucideIcon } from "lucide-react";
@@ -132,6 +134,12 @@ export default function Navbar() {
               label="Study Notes"
               active={pathname.includes("/study-notes")}
             />
+            <NavLink
+              href="/dashboard/references"
+              icon={FlaskConical}
+              label="References"
+              active={pathname.includes("/references")}
+            />
 
             {isAdmin && (
               <NavLink
@@ -146,6 +154,27 @@ export default function Navbar() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-3 lg:justify-end lg:gap-6">
+          <div className="hidden items-center gap-2 xl:flex">
+            <Link
+              href="/dashboard/training?tab=protocols#protocol-stroke-nihss"
+              className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+              Stroke
+            </Link>
+            <Link
+              href="/dashboard/training?tab=protocols#protocol-stemi-cardiac"
+              className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+            >
+              STEMI
+            </Link>
+            <Link
+              href="/dashboard/training?tab=protocols#protocol-sepsis-criteria"
+              className="rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-cyan-700 transition-colors hover:bg-cyan-100 dark:border-cyan-900 dark:bg-cyan-950/40 dark:text-cyan-300"
+            >
+              Sepsis
+            </Link>
+          </div>
+
           <button 
             onClick={togglePrivacy}
             className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all sm:px-4 sm:py-2.5 ${
@@ -156,6 +185,14 @@ export default function Navbar() {
           >
             {isPrivate ? <Shield className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
             <span className="hidden lg:inline">{isPrivate ? "Privacy Active" : "Privacy Off"}</span>
+          </button>
+
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("open-global-launcher"))}
+            className="flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-violet-700 transition-all hover:border-violet-300 hover:bg-violet-100 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300"
+          >
+            <Command className="h-4 w-4" />
+            <span className="hidden sm:inline">Launcher</span>
           </button>
 
         {/* 🔔 NOTIFICATIONS */}

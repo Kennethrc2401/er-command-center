@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { SignInButton } from "@clerk/nextjs";
 import { 
   Monitor, 
@@ -42,7 +42,31 @@ export default function LandingPage() {
   );
 }
 
+function readLauncherUsageTop() {
+  if (typeof window === "undefined") return [] as Array<{ key: string; count: number }>;
+
+  try {
+    const raw = window.localStorage.getItem("global-launcher:usage");
+    if (!raw) return [] as Array<{ key: string; count: number }>;
+
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.entries(parsed ?? {})
+      .filter(([, value]) => typeof value === "number" && Number.isFinite(value))
+      .map(([key, value]) => ({ key, count: Math.floor(value as number) }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6);
+  } catch {
+    return [] as Array<{ key: string; count: number }>;
+  }
+}
+
+function fireLauncherPreferenceAction(action: "export" | "download" | "import" | "reset") {
+  window.dispatchEvent(new CustomEvent("global-launcher-preferences-action", { detail: { action } }));
+}
+
 function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmin: boolean }) {
+  const { actorRole } = useResolvedActor();
+  const [usageTop, setUsageTop] = useState<Array<{ key: string; count: number }>>(() => readLauncherUsageTop());
 
   const portals = [
     {
@@ -93,6 +117,14 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
       color: "bg-purple-600",
       role: "Academic"
     },
+    {
+      title: "Clinical References",
+      desc: "Dedicated drug dictionary and bedside labs, vitals, and procedure guides",
+      href: "/dashboard/references",
+      icon: FlaskConical,
+      color: "bg-sky-600",
+      role: "Staff Knowledge"
+    },
     ...(isAdmin ? [{
       title: "Executive Suite",
       desc: "Revenue analytics and compliance audits",
@@ -133,7 +165,61 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
     "bg-slate-900": "#0f172a",
     "bg-amber-600": "#d97706",
     "bg-purple-600": "#9333ea",
-    "bg-indigo-600": "#4f46e5"
+    "bg-indigo-600": "#4f46e5",
+    "bg-sky-600": "#0284c7"
+  };
+
+  const rolePriorityMap: Record<string, string[]> = {
+    ADMIN: ["Executive Suite", "Clinical Research", "Clinical Command", "Clinical References"],
+    PROVIDER: ["Clinical Command", "Clinical References", "AI Tools Hub", "Training Center"],
+    RN: ["Clinical Command", "Clinical References", "Training Center", "Study Notes"],
+    CCMA: ["Clinical Command", "Clinical References", "Patient Kiosk", "OR Scheduler"],
+  };
+
+  const rolePriority = rolePriorityMap[actorRole] ?? ["Clinical Command", "Training Center", "AI Tools Hub"];
+  const orderedPortals = [...portals].sort((a, b) => {
+    const score = (title: string) => {
+      const index = rolePriority.indexOf(title);
+      return index === -1 ? 999 : index;
+    };
+
+    return score(a.title) - score(b.title);
+  });
+
+  const recommended = orderedPortals.slice(0, 3);
+
+  const usageLabelMap: Record<string, string> = {
+    "action:new-admission": "New Admission",
+    "action:open-scribe": "Open AI Scribe",
+    "action:procedure-prep": "Procedure Prep",
+    "action:protocol-guides": "Protocol Guides",
+    "action:print-triage-pack": "Print Triage Pack",
+    "action:print-procedure-pack": "Print Procedure Pack",
+    "action:stroke-protocol": "Stroke Protocol",
+    "action:stemi-protocol": "STEMI Protocol",
+    "action:sepsis-protocol": "Sepsis Protocol",
+    "action:open-research": "Clinical Research",
+    "action:open-references": "References Hub",
+    "route:triage-board": "Triage Board",
+    "route:training-center": "Training Center",
+    "route:study-notes": "Study Notes",
+    "route:references-hub": "References Hub",
+    "route:ai-tools": "AI Tools Hub",
+    "route:or-scheduler": "OR Scheduler",
+    "route:faxes": "Faxes",
+    "route:procedure-pack": "Procedure Prep",
+    "route:protocol-pack": "Protocol Pack",
+    "route:admin-suite": "Admin Suite",
+    "route:clinical-research": "Clinical Research",
+  };
+
+  const refreshUsage = () => {
+    setUsageTop(readLauncherUsageTop());
+  };
+
+  const clearUsage = () => {
+    window.localStorage.removeItem("global-launcher:usage");
+    setUsageTop([]);
   };
 
   return (
@@ -147,11 +233,136 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
         </p>
       </div>
 
+      <section className="aurora-panel glass-panel rounded-[2rem] p-5 sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-2">
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Recommended for You</p>
+            <h2 className="text-xl font-black uppercase italic tracking-tight text-slate-900 dark:text-slate-100">
+              Role-aware quick access
+            </h2>
+            <p className="max-w-2xl text-sm leading-7 text-slate-600 dark:text-slate-300">
+              Your landing page now prioritizes the tools most relevant to your current role so you can get to work faster.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("open-global-launcher"))}
+            className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white shadow-lg shadow-slate-300 transition-all hover:bg-violet-600 dark:bg-white dark:text-slate-900 dark:hover:bg-violet-200"
+          >
+            <BrainCircuit className="h-4 w-4" />
+            Open Global Launcher
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          {recommended.map((portal) => (
+            <Link
+              key={portal.title}
+              href={portal.href}
+              className="group rounded-[1.5rem] border border-slate-200 bg-white/85 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg dark:border-slate-700 dark:bg-slate-900"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-[0.25em] text-slate-400 dark:text-slate-500">Priority</p>
+                  <h3 className="mt-1 text-sm font-black uppercase tracking-tight text-slate-900 dark:text-slate-100">{portal.title}</h3>
+                </div>
+                <div className={`flex h-10 w-10 items-center justify-center rounded-2xl ${portal.color} text-white shadow-lg`}>
+                  {React.createElement(portal.icon, { className: "h-5 w-5" })}
+                </div>
+              </div>
+              <p className="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400">{portal.desc}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Launcher Usage</p>
+            <h2 className="mt-1 text-xl font-black uppercase italic tracking-tight text-slate-900 dark:text-slate-100">Top Actions This Shift</h2>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("open-global-launcher"))}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:border-violet-300 hover:text-violet-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+            >
+              Open Launcher
+            </button>
+            <button
+              type="button"
+              onClick={refreshUsage}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:border-cyan-300 hover:text-cyan-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+            >
+              Refresh Usage
+            </button>
+            <button
+              type="button"
+              onClick={clearUsage}
+              className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-rose-700 hover:border-rose-300 hover:bg-rose-100 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+              Clear Usage
+            </button>
+            <button
+              type="button"
+              onClick={() => fireLauncherPreferenceAction("export")}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:border-violet-300 hover:text-violet-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+            >
+              Export Prefs
+            </button>
+            <button
+              type="button"
+              onClick={() => fireLauncherPreferenceAction("download")}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:border-indigo-300 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+            >
+              Download Prefs
+            </button>
+            <button
+              type="button"
+              onClick={() => fireLauncherPreferenceAction("import")}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:border-cyan-300 hover:text-cyan-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"
+            >
+              Import Prefs
+            </button>
+            <button
+              type="button"
+              onClick={() => fireLauncherPreferenceAction("reset")}
+              className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-rose-700 hover:border-rose-300 hover:bg-rose-100 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+              Reset Prefs
+            </button>
+          </div>
+        </div>
+
+        {usageTop.length > 0 ? (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {usageTop.map((entry) => (
+              <div key={entry.key} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-950/60">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                  {entry.key.startsWith("action:") ? "Action" : "Route"}
+                </p>
+                <p className="mt-1 text-sm font-black uppercase tracking-tight text-slate-900 dark:text-slate-100">
+                  {usageLabelMap[entry.key] ?? entry.key.replace(/^[^:]+:/, "").replace(/-/g, " ")}
+                </p>
+                <p className="mt-2 text-[10px] font-black uppercase tracking-[0.2em] text-violet-600 dark:text-violet-300">
+                  {entry.count} runs
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
+            No launcher usage yet. Run a few commands and your top shortcuts will appear here.
+          </p>
+        )}
+      </section>
+
       {/* Some space before the grid */}
       <div className="h-6" />
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {portals.map((p) => {
+        {orderedPortals.map((p) => {
           return (
             <Link href={p.href} key={p.title} className="group block">
               <div className="h-full rounded-[2rem] overflow-hidden bg-white shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 dark:bg-slate-900">

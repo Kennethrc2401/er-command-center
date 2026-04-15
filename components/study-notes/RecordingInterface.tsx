@@ -187,6 +187,8 @@ type CorrectionHistoryEntry = {
   transcriptionAfter: string;
 };
 
+type ReviewSuite = "all" | "high-impact" | "strict";
+
 function escapeForRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -250,7 +252,8 @@ export default function RecordingInterface({
   const [activeFlagIndex, setActiveFlagIndex] = useState(0);
   const [selectedFlagKeys, setSelectedFlagKeys] = useState<string[]>([]);
   const [batchReplaceValue, setBatchReplaceValue] = useState("");
-  const [showHighImpactOnly, setShowHighImpactOnly] = useState(false);
+  const [reviewSuite, setReviewSuite] = useState<ReviewSuite>("all");
+  const [confidenceHistory, setConfidenceHistory] = useState<number[]>([]);
   const [autoPromoteVocabulary, setAutoPromoteVocabulary] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     const raw = window.localStorage.getItem(RECORDING_AUTO_PROMOTE_VOCAB_KEY);
@@ -365,6 +368,11 @@ export default function RecordingInterface({
     [lowConfidenceSegments, transcription]
   );
 
+  const recentConfidenceAverage = useMemo(() => {
+    if (confidenceHistory.length === 0) return null;
+    return confidenceHistory.reduce((total, value) => total + value, 0) / confidenceHistory.length;
+  }, [confidenceHistory]);
+
   const selectedFlagSet = useMemo(() => new Set(selectedFlagKeys), [selectedFlagKeys]);
 
   const weakPhraseTrends = useMemo(() => {
@@ -417,16 +425,24 @@ export default function RecordingInterface({
   }, [lowConfidenceSegments, selectedFlagKeys.length, selectedFlagSet, transcription]);
 
   const displayedLowConfidenceSegments = useMemo(() => {
-    if (!showHighImpactOnly) return lowConfidenceSegments;
+    if (reviewSuite === "all") return lowConfidenceSegments;
     return lowConfidenceSegments.filter((segment) => {
       const issuesText = segment.issues.join(" ").toLowerCase();
+      if (reviewSuite === "high-impact") {
+        return (
+          segment.confidence <= 0.72 ||
+          segment.issues.length >= 2 ||
+          /unclear|low|dosage|medication|drug|name|number|frequency/.test(issuesText)
+        );
+      }
+
       return (
-        segment.confidence <= 0.72 ||
-        segment.issues.length >= 2 ||
-        /unclear|low|dosage|medication|drug|name|number|frequency/.test(issuesText)
+        segment.confidence <= 0.6 ||
+        segment.issues.length >= 3 ||
+        /unclear|low|dosage|medication|drug|name|number|frequency|ambiguous|uncertain/.test(issuesText)
       );
     });
-  }, [lowConfidenceSegments, showHighImpactOnly]);
+  }, [lowConfidenceSegments, reviewSuite]);
 
   const navigableLowConfidenceSegments = displayedLowConfidenceSegments;
 
@@ -469,6 +485,7 @@ export default function RecordingInterface({
         customVocabulary,
       });
       setTranscriptConfidence(summary.averageConfidence);
+      setConfidenceHistory((current) => [...current, summary.averageConfidence].slice(-24));
       setLowConfidenceSegments(
         summary.lowConfidenceSegments.filter((segment) => !ignoredFlagSet.has(segment.text.toLowerCase()))
       );
@@ -523,8 +540,8 @@ export default function RecordingInterface({
   }, [flagKey]);
 
   const selectAllFlags = useCallback(() => {
-    setSelectedFlagKeys(lowConfidenceSegments.map((segment) => flagKey(segment.text)));
-  }, [flagKey, lowConfidenceSegments]);
+    setSelectedFlagKeys(displayedLowConfidenceSegments.map((segment) => flagKey(segment.text)));
+  }, [displayedLowConfidenceSegments, flagKey]);
 
   const clearSelectedFlags = useCallback(() => {
     setSelectedFlagKeys([]);
@@ -1527,6 +1544,7 @@ export default function RecordingInterface({
       setBytesRecorded(0);
       setTranscription("");
       setTranscriptConfidence(null);
+      setConfidenceHistory([]);
       setLowConfidenceSegments([]);
       setCorrectionTarget(null);
       setCorrectionValue("");
@@ -1924,6 +1942,7 @@ export default function RecordingInterface({
       setSessionId(null);
       setBytesRecorded(0);
       setTranscriptConfidence(null);
+      setConfidenceHistory([]);
       setLowConfidenceSegments([]);
       setCorrectionTarget(null);
       setCorrectionValue("");
@@ -2450,18 +2469,48 @@ export default function RecordingInterface({
             </div>
           )}
 
+          {confidenceHistory.length > 0 ? (
+            <div className="mb-4 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium text-slate-700 dark:text-slate-200">Confidence trend</p>
+                <span className="text-slate-500 dark:text-slate-400">
+                  Avg {recentConfidenceAverage !== null ? `${Math.round(recentConfidenceAverage * 100)}%` : "n/a"}
+                </span>
+              </div>
+              <div className="mt-2 flex h-10 items-end gap-1">
+                {confidenceHistory.slice(-16).map((value, index) => (
+                  <div
+                    key={`${index}-${value}`}
+                    className="min-w-0 flex-1 rounded-t bg-sky-500/70"
+                    style={{ height: `${Math.max(6, Math.round(value * 40))}px` }}
+                    title={`${Math.round(value * 100)}%`}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           {lowConfidenceSegments.length > 0 ? (
             <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
               <div className="flex items-center justify-between gap-2">
                 <p className="font-medium">Review suggested for low-confidence phrases:</p>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setShowHighImpactOnly((current) => !current)}
-                >
-                  {showHighImpactOnly ? "Show all" : "High impact"}
-                </Button>
+                <div className="flex flex-wrap gap-1">
+                  {([
+                    ["all", "All"],
+                    ["high-impact", "High impact"],
+                    ["strict", "Strict"],
+                  ] as const).map(([value, label]) => (
+                    <Button
+                      key={value}
+                      type="button"
+                      size="sm"
+                      variant={reviewSuite === value ? "default" : "outline"}
+                      onClick={() => setReviewSuite(value)}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </div>
               </div>
               <ul className="mt-1 space-y-1">
                 {displayedLowConfidenceSegments.map((segment, index) => (
@@ -2760,9 +2809,11 @@ export default function RecordingInterface({
           {isRecording && recordingMode === "voice" && (
             <div className="mb-4 p-3 bg-white dark:bg-slate-800 rounded-lg border-l-4 border-blue-500">
               <p className="text-sm font-medium mb-2">Live Transcription:</p>
-              <p className="text-sm text-slate-600 dark:text-slate-300 italic">
-                {isPaused ? "Paused for break" : transcription || "Listening..."}
-              </p>
+              <div className="max-h-36 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 px-2 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+                <p className="whitespace-pre-wrap italic">
+                  {isPaused ? "Paused for break" : transcription || "Listening..."}
+                </p>
+              </div>
             </div>
           )}
 

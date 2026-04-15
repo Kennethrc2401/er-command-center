@@ -73,6 +73,8 @@ type CorrectionHistoryEntry = {
   transcriptAfter: string;
 };
 
+type ReviewSuite = "all" | "high-impact" | "strict";
+
 const LANGUAGE_STORAGE_KEY = "ambient-scribe:language";
 const VOCAB_STORAGE_KEY = "ambient-scribe:custom-vocabulary";
 const IGNORED_FLAGS_STORAGE_KEY = "ambient-scribe:ignored-flags";
@@ -155,7 +157,8 @@ export default function AmbientScribe({ patient, encounter, orders, encounterId 
       return {};
     }
   });
-  const [showHighImpactOnly, setShowHighImpactOnly] = useState(false);
+  const [reviewSuite, setReviewSuite] = useState<ReviewSuite>("all");
+  const [confidenceHistory, setConfidenceHistory] = useState<number[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<CorrectionHistoryEntry[]>([]);
   const [note, setNote] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -178,6 +181,11 @@ export default function AmbientScribe({ patient, encounter, orders, encounterId 
     () => splitTranscriptForHighlights(finalTranscript, lowConfidenceSegments),
     [finalTranscript, lowConfidenceSegments]
   );
+
+  const recentConfidenceAverage = useMemo(() => {
+    if (confidenceHistory.length === 0) return null;
+    return confidenceHistory.reduce((total, value) => total + value, 0) / confidenceHistory.length;
+  }, [confidenceHistory]);
 
   const selectedFlagSet = useMemo(() => new Set(selectedFlagKeys), [selectedFlagKeys]);
 
@@ -231,16 +239,24 @@ export default function AmbientScribe({ patient, encounter, orders, encounterId 
   }, [finalTranscript, lowConfidenceSegments, selectedFlagKeys.length, selectedFlagSet]);
 
   const displayedLowConfidenceSegments = useMemo(() => {
-    if (!showHighImpactOnly) return lowConfidenceSegments;
+    if (reviewSuite === "all") return lowConfidenceSegments;
     return lowConfidenceSegments.filter((segment) => {
       const issuesText = segment.issues.join(" ").toLowerCase();
+      if (reviewSuite === "high-impact") {
+        return (
+          segment.confidence <= 0.72 ||
+          segment.issues.length >= 2 ||
+          /unclear|low|dosage|medication|drug|name|number|frequency/.test(issuesText)
+        );
+      }
+
       return (
-        segment.confidence <= 0.72 ||
-        segment.issues.length >= 2 ||
-        /unclear|low|dosage|medication|drug|name|number|frequency/.test(issuesText)
+        segment.confidence <= 0.6 ||
+        segment.issues.length >= 3 ||
+        /unclear|low|dosage|medication|drug|name|number|frequency|ambiguous|uncertain/.test(issuesText)
       );
     });
-  }, [lowConfidenceSegments, showHighImpactOnly]);
+  }, [lowConfidenceSegments, reviewSuite]);
 
   const navigableLowConfidenceSegments = displayedLowConfidenceSegments;
 
@@ -252,6 +268,7 @@ export default function AmbientScribe({ patient, encounter, orders, encounterId 
       customVocabulary,
     });
     setTranscriptConfidence(summary.averageConfidence);
+    setConfidenceHistory((current) => [...current, summary.averageConfidence].slice(-24));
     setLowConfidenceSegments(
       summary.lowConfidenceSegments.filter((segment) => !ignoredFlagSet.has(segment.text.toLowerCase()))
     );
@@ -321,8 +338,8 @@ export default function AmbientScribe({ patient, encounter, orders, encounterId 
   }, [flagKey]);
 
   const selectAllFlags = useCallback(() => {
-    setSelectedFlagKeys(lowConfidenceSegments.map((segment) => flagKey(segment.text)));
-  }, [flagKey, lowConfidenceSegments]);
+    setSelectedFlagKeys(displayedLowConfidenceSegments.map((segment) => flagKey(segment.text)));
+  }, [displayedLowConfidenceSegments, flagKey]);
 
   const clearSelectedFlags = useCallback(() => {
     setSelectedFlagKeys([]);
@@ -709,6 +726,7 @@ export default function AmbientScribe({ patient, encounter, orders, encounterId 
     setFinalTranscript("");
     setInterimTranscript("");
     setTranscriptConfidence(null);
+    setConfidenceHistory([]);
     setLowConfidenceSegments([]);
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
@@ -802,6 +820,7 @@ export default function AmbientScribe({ patient, encounter, orders, encounterId 
     setFinalTranscript("");
     setInterimTranscript("");
     setTranscriptConfidence(null);
+    setConfidenceHistory([]);
     setLowConfidenceSegments([]);
     setCorrectionTarget(null);
     setCorrectionValue("");
@@ -1078,17 +1097,51 @@ export default function AmbientScribe({ patient, encounter, orders, encounterId 
               </div>
             )}
 
+            {confidenceHistory.length > 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-[10px] text-slate-200">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-black uppercase tracking-widest text-[9px]">Confidence trend</p>
+                  <span className="text-[9px] text-slate-400">
+                    Avg {recentConfidenceAverage !== null ? `${Math.round(recentConfidenceAverage * 100)}%` : "n/a"}
+                  </span>
+                </div>
+                <div className="mt-2 flex h-12 items-end gap-1">
+                  {confidenceHistory.slice(-16).map((value, index) => (
+                    <div
+                      key={`${index}-${value}`}
+                      className="min-w-0 flex-1 rounded-t bg-sky-400/70"
+                      style={{ height: `${Math.max(6, Math.round(value * 40))}px` }}
+                      title={`${Math.round(value * 100)}%`}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {lowConfidenceSegments.length > 0 ? (
               <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-[10px] text-amber-100">
                 <div className="flex items-center justify-between gap-2">
                   <p className="font-black uppercase tracking-widest text-[9px]">Review suggested phrases</p>
-                  <button
-                    type="button"
-                    onClick={() => setShowHighImpactOnly((current) => !current)}
-                    className="rounded border border-amber-300/40 px-2 py-1 text-[9px] font-black uppercase tracking-widest hover:bg-amber-300/10"
-                  >
-                    {showHighImpactOnly ? "Show All" : "High Impact"}
-                  </button>
+                  <div className="flex flex-wrap gap-1">
+                    {([
+                      ["all", "All"],
+                      ["high-impact", "High Impact"],
+                      ["strict", "Strict"],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setReviewSuite(value)}
+                        className={`rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors ${
+                          reviewSuite === value
+                            ? "border-amber-200/70 bg-amber-300/20 text-amber-50"
+                            : "border-amber-300/40 hover:bg-amber-300/10"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <ul className="mt-2 space-y-1 text-[10px]">
                   {displayedLowConfidenceSegments.map((segment, index) => (
@@ -1342,13 +1395,26 @@ export default function AmbientScribe({ patient, encounter, orders, encounterId 
               <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-[10px] text-amber-100">
                 <div className="flex items-center justify-between gap-2">
                   <p className="font-black uppercase tracking-widest text-[9px]">Tap a phrase to correct before save</p>
-                  <button
-                    type="button"
-                    onClick={() => setShowHighImpactOnly((current) => !current)}
-                    className="rounded border border-amber-300/40 px-2 py-1 text-[9px] font-black uppercase tracking-widest hover:bg-amber-300/10"
-                  >
-                    {showHighImpactOnly ? "Show All" : "High Impact"}
-                  </button>
+                  <div className="flex flex-wrap gap-1">
+                    {([
+                      ["all", "All"],
+                      ["high-impact", "High Impact"],
+                      ["strict", "Strict"],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setReviewSuite(value)}
+                        className={`rounded border px-2 py-1 text-[9px] font-black uppercase tracking-widest transition-colors ${
+                          reviewSuite === value
+                            ? "border-amber-200/70 bg-amber-300/20 text-amber-50"
+                            : "border-amber-300/40 hover:bg-amber-300/10"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <ul className="mt-2 space-y-1 text-[10px]">
                   {displayedLowConfidenceSegments.map((segment, index) => (
