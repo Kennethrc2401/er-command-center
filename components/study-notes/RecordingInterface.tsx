@@ -26,6 +26,7 @@ const RECORDING_IGNORED_FLAGS_KEY = "study-notes:ignored-flags";
 const RECORDING_AUTO_PROMOTE_VOCAB_KEY = "study-notes:auto-promote-vocabulary";
 const RECORDING_AUTO_PROMOTE_THRESHOLD_KEY = "study-notes:auto-promote-threshold";
 const RECORDING_PHRASE_FIX_COUNTS_KEY = "study-notes:phrase-fix-counts";
+const PENDING_NOTE_QUEUE_KEY = "study-notes:pending-note-queue";
 
 const RECOGNITION_LANGUAGE_OPTIONS = [
   { value: "en-US", label: "English (US)" },
@@ -156,6 +157,21 @@ type RecordingMarker = {
   markerType: MarkerType;
   elapsedSeconds: number;
   createdAt: number;
+};
+
+type PendingStudyNotePayload = {
+  sessionId: string;
+  userId: string;
+  subject: string;
+  rawTranscription: string;
+  topics: string[];
+  recordingMarkers: RecordingMarker[];
+  transcriptStats: {
+    totalSeconds: number;
+    pauseSeconds: number;
+    markerCount: number;
+  };
+  queuedAt: number;
 };
 
 type NoteTemplate = {
@@ -346,6 +362,116 @@ export default function RecordingInterface({
   const endSession = useMutation(api.academicScribe.endStudySession);
   const createNote = useMutation(api.academicScribe.createStudyNote);
   const discardSession = useMutation(api.academicScribe.discardStudySession);
+
+  const readPendingQueue = useCallback((): PendingStudyNotePayload[] => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(PENDING_NOTE_QUEUE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+
+      return parsed.filter((item): item is PendingStudyNotePayload => {
+        return Boolean(
+          item &&
+          typeof item === "object" &&
+          typeof (item as PendingStudyNotePayload).sessionId === "string" &&
+          typeof (item as PendingStudyNotePayload).userId === "string" &&
+          typeof (item as PendingStudyNotePayload).subject === "string" &&
+          typeof (item as PendingStudyNotePayload).rawTranscription === "string" &&
+          Array.isArray((item as PendingStudyNotePayload).topics) &&
+          Array.isArray((item as PendingStudyNotePayload).recordingMarkers)
+        );
+      });
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const writePendingQueue = useCallback((queue: PendingStudyNotePayload[]) => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(PENDING_NOTE_QUEUE_KEY, JSON.stringify(queue.slice(0, 20)));
+  }, []);
+
+  const queuePendingNote = useCallback((payload: Omit<PendingStudyNotePayload, "queuedAt">) => {
+    const queued: PendingStudyNotePayload = {
+      ...payload,
+      queuedAt: Date.now(),
+    };
+    const current = readPendingQueue();
+    const deduped = [
+      queued,
+      ...current.filter((entry) => {
+        return !(
+          entry.sessionId === queued.sessionId &&
+          entry.userId === queued.userId &&
+          entry.rawTranscription === queued.rawTranscription
+        );
+      }),
+    ];
+    writePendingQueue(deduped);
+  }, [readPendingQueue, writePendingQueue]);
+
+  const exportPendingNoteBackup = useCallback((payload: Omit<PendingStudyNotePayload, "queuedAt">) => {
+    if (typeof window === "undefined") return;
+
+    const backupPayload = {
+      exportedAt: Date.now(),
+      app: "study-notes-fallback-backup",
+      entry: {
+        ...payload,
+        queuedAt: Date.now(),
+      },
+    };
+
+    const blob = new Blob([JSON.stringify(backupPayload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const safeSubject = payload.subject.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "study-note";
+    anchor.href = url;
+    anchor.download = `study-note-backup-${safeSubject}-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+  }, []);
+
+  const flushPendingQueue = useCallback(async () => {
+    const queue = readPendingQueue();
+    if (queue.length === 0) return;
+
+    const remaining: PendingStudyNotePayload[] = [];
+    let recoveredCount = 0;
+
+    for (const entry of queue) {
+      try {
+        await createNote({
+          sessionId: entry.sessionId as Id<"studyClassSessions">,
+          userId: entry.userId as Id<"users">,
+          rawTranscription: entry.rawTranscription,
+          subject: entry.subject,
+          topics: entry.topics,
+          recordingMarkers: entry.recordingMarkers,
+          transcriptStats: entry.transcriptStats,
+        });
+
+        await endSession({
+          sessionId: entry.sessionId as Id<"studyClassSessions">,
+          durationMinutes: Math.max(1, Math.round(entry.transcriptStats.totalSeconds / 60)),
+        });
+
+        recoveredCount += 1;
+      } catch {
+        remaining.push(entry);
+      }
+    }
+
+    writePendingQueue(remaining);
+
+    if (recoveredCount > 0) {
+      toast.success(`Recovered ${recoveredCount} pending study note${recoveredCount === 1 ? "" : "s"}.`);
+    }
+  }, [createNote, endSession, readPendingQueue, writePendingQueue]);
 
   const logDebug = useCallback((...args: unknown[]) => {
     if (RECORDING_DEBUG_ENABLED) {
@@ -1465,6 +1591,10 @@ export default function RecordingInterface({
     logDebug(`🌐 Speech: Active recognition language set to ${recognitionLanguage}`);
   }, [logDebug, recognitionLanguage]);
 
+  useEffect(() => {
+    void flushPendingQueue();
+  }, [flushPendingQueue]);
+
   const startRecording = async () => {
     try {
       // Create session in backend (common to both modes)
@@ -1842,50 +1972,71 @@ export default function RecordingInterface({
       setIsRecording(false);
       setIsPaused(false);
 
-      // End session
-      await endSession({
-        sessionId: sessionId as Id<"studyClassSessions">,
-        durationMinutes: Math.max(1, Math.round((elapsedTime - pauseSeconds) / 60)),
-      });
-      logDebug("✅ Session: Ended in backend");
-
       // Create note with transcription
       const processedTranscription = applyTranscriptionQuality(transcription);
       if (processedTranscription.trim()) {
         const { topics } = extractTopicsFromTranscription(processedTranscription, subject);
+        const transcriptStats = {
+          totalSeconds: elapsedTime,
+          pauseSeconds: pauseSeconds + (pauseStartedAt ? Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000)) : 0),
+          markerCount: recordingMarkers.length,
+        };
 
         setIsTranscribing(true);
-        await createNote({
-          sessionId: sessionId as Id<"studyClassSessions">,
-          userId,
-          rawTranscription: processedTranscription,
-          subject,
-          topics,
-          recordingMarkers,
-          transcriptStats: {
-            totalSeconds: elapsedTime,
-            pauseSeconds: pauseSeconds + (pauseStartedAt ? Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000)) : 0),
-            markerCount: recordingMarkers.length,
-          },
-        });
-        logDebug("✅ Note: Created with", topics.length, "topics");
+        try {
+          await createNote({
+            sessionId: sessionId as Id<"studyClassSessions">,
+            userId,
+            rawTranscription: processedTranscription,
+            subject,
+            topics,
+            recordingMarkers,
+            transcriptStats,
+          });
+          logDebug("✅ Note: Created with", topics.length, "topics");
 
-        setIsTranscribing(false);
-        toast.success(
-          `Study note created with ${topics.length} topics identified`
-        );
+          await endSession({
+            sessionId: sessionId as Id<"studyClassSessions">,
+            durationMinutes: Math.max(1, Math.round((elapsedTime - pauseSeconds) / 60)),
+          });
+          logDebug("✅ Session: Ended in backend");
 
-        // Reset form
-        setTranscription("");
-        setTranscriptConfidence(null);
-        setLowConfidenceSegments([]);
-        setCorrectionTarget(null);
-        setCorrectionValue("");
-        setCorrectionHistory([]);
-        setSessionId(null);
-        setBytesRecorded(0);
-        clearDraft();
+          toast.success(
+            `Study note created with ${topics.length} topics identified`
+          );
+
+          // Reset form
+          setTranscription("");
+          setTranscriptConfidence(null);
+          setLowConfidenceSegments([]);
+          setCorrectionTarget(null);
+          setCorrectionValue("");
+          setCorrectionHistory([]);
+          setSessionId(null);
+          setBytesRecorded(0);
+          clearDraft();
+        } catch (saveError) {
+          console.error("❌ Save note error, queuing for retry:", saveError);
+          const pendingPayload = {
+            sessionId,
+            userId,
+            rawTranscription: processedTranscription,
+            subject,
+            topics,
+            recordingMarkers,
+            transcriptStats,
+          };
+          queuePendingNote(pendingPayload);
+          exportPendingNoteBackup(pendingPayload);
+          toast.error("Could not finalize note to database right now. Saved to retry queue and downloaded backup JSON.");
+        } finally {
+          setIsTranscribing(false);
+        }
       } else {
+        await endSession({
+          sessionId: sessionId as Id<"studyClassSessions">,
+          durationMinutes: Math.max(1, Math.round((elapsedTime - pauseSeconds) / 60)),
+        });
         logDebug("⚠️  Note: No transcription captured");
         toast.error("No transcription captured");
       }

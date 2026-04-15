@@ -124,7 +124,7 @@ export default function TrainingPage() {
 
   const activeTab = (() => {
     const raw = searchParams.get("tab");
-    if (raw === "prep" || raw === "protocols" || raw === "practice") return raw;
+    if (raw === "prep" || raw === "protocols" || raw === "practice" || raw === "references") return raw;
     return "practice";
   })();
 
@@ -134,7 +134,7 @@ export default function TrainingPage() {
     return "quiz";
   })();
 
-  const updateTrainingUrl = useCallback((nextTab: "practice" | "prep" | "protocols", nextPractice?: "quiz" | "esi" | "or" | "analytics") => {
+  const updateTrainingUrl = useCallback((nextTab: "practice" | "prep" | "protocols" | "references", nextPractice?: "quiz" | "esi" | "or" | "analytics") => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", nextTab);
 
@@ -273,11 +273,12 @@ export default function TrainingPage() {
         </section>
 
         <section className="glass-panel rounded-[1.75rem] border border-slate-200 bg-white/70 p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 sm:p-4">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
             {([
               ["practice", "Practice Lab"],
               ["prep", "Procedure Prep"],
               ["protocols", "Protocol Guides"],
+              ["references", "Clinical Refs"],
             ] as const).map(([value, label]) => (
               <button
                 key={value}
@@ -461,6 +462,81 @@ export default function TrainingPage() {
                   </div>
                 </article>
               ))}
+            </div>
+          </section>
+        )}
+
+        {activeTab === "references" && (
+          <section className="space-y-6">
+            <div className="glass-panel rounded-[1.75rem] border border-slate-200 bg-white/75 p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+              <div className="space-y-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Embedded Clinical Reference</p>
+                  <h2 className="mt-2 text-2xl font-black uppercase tracking-tight text-slate-900 dark:text-slate-100">
+                    Quick Access Reference Library
+                  </h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600 dark:text-slate-300">
+                    Access the complete drug dictionary, clinical labs, vitals, and procedure prep guides directly from your training workspace. Use search to quickly find medication information, lab normal ranges, and procedure setup checklists.
+                  </p>
+                </div>
+
+                <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <button
+                    type="button"
+                    onClick={() => router.push("/dashboard/references?tab=drugs")}
+                    className="rounded-2xl border-2 border-dashed border-cyan-300 bg-cyan-50 p-6 text-left transition-all hover:-translate-y-1 hover:shadow-lg dark:border-cyan-900 dark:bg-cyan-950/30"
+                  >
+                    <p className="font-black text-cyan-700 dark:text-cyan-300">💊 Drug Dictionary</p>
+                    <p className="mt-2 text-sm text-cyan-600 dark:text-cyan-400">
+                      12 emergency medications with dosing, monitoring, and cautions.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/dashboard/references?tab=clinical&group=labs")}
+                    className="rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50 p-6 text-left transition-all hover:-translate-y-1 hover:shadow-lg dark:border-blue-900 dark:bg-blue-950/30"
+                  >
+                    <p className="font-black text-blue-700 dark:text-blue-300">🧪 Lab Reference</p>
+                    <p className="mt-2 text-sm text-blue-600 dark:text-blue-400">
+                      Normal ranges, critical values, and clinical notes for 25+ common labs.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/dashboard/references?tab=clinical&group=procedures")}
+                    className="rounded-2xl border-2 border-dashed border-violet-300 bg-violet-50 p-6 text-left transition-all hover:-translate-y-1 hover:shadow-lg dark:border-violet-900 dark:bg-violet-950/30"
+                  >
+                    <p className="font-black text-violet-700 dark:text-violet-300">📋 Procedure Prep</p>
+                    <p className="mt-2 text-sm text-violet-600 dark:text-violet-400">
+                      Complete setup guides, checklists, and supplies for clinical procedures.
+                    </p>
+                  </button>
+                </div>
+
+                <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900/50">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">How to Use</p>
+                  <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+                    <li className="flex gap-3">
+                      <span className="shrink-0 font-black text-purple-600 dark:text-purple-400">1.</span>
+                      <span>Click any reference card above to open the dedicated references hub in a new view.</span>
+                    </li>
+                    <li className="flex gap-3">
+                      <span className="shrink-0 font-black text-purple-600 dark:text-purple-400">2.</span>
+                      <span>Use the search bar to quickly find medications, labs, vitals, or procedures by name or keyword.</span>
+                    </li>
+                    <li className="flex gap-3">
+                      <span className="shrink-0 font-black text-purple-600 dark:text-purple-400">3.</span>
+                      <span>Click any procedure card to view full details including all supplies, prep steps, and the complete setup checklist.</span>
+                    </li>
+                    <li className="flex gap-3">
+                      <span className="shrink-0 font-black text-purple-600 dark:text-purple-400">4.</span>
+                      <span>Bookmark the references page for quick access during your shift or during patient care scenarios.</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </section>
         )}

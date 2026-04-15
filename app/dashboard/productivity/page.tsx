@@ -8,7 +8,7 @@ import mammoth from "mammoth";
 import PptxGenJS from "pptxgenjs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -25,6 +25,7 @@ import {
   validateWorkspaceBackup,
 } from "@/lib/productivity/workspaceUtils";
 import {
+  AlertTriangle,
   Briefcase,
   FileText,
   Folder,
@@ -342,6 +343,7 @@ function ProductivitySuitePage() {
   const [commandQuery, setCommandQuery] = useState("");
   const [favoriteDocIds, setFavoriteDocIds] = useState<string[]>([]);
   const [recentDocIds, setRecentDocIds] = useState<string[]>([]);
+  const [radarNow, setRadarNow] = useState(() => Date.now());
 
   const selectedDoc = useMemo(
     () => docs.find((d) => d.id === selectedDocId) ?? null,
@@ -562,6 +564,52 @@ function ProductivitySuitePage() {
     () => sheetRows.filter((r) => r.priority === "High" && r.status !== "Done").length,
     [sheetRows]
   );
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setRadarNow(Date.now());
+    }, 60 * 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const criticalFollowUps = useMemo(() => {
+    const now = radarNow;
+    const nextTwoHours = now + 2 * 60 * 60 * 1000;
+
+    const candidates = sheetRows
+      .filter((row) => row.status !== "Done" && row.priority === "High")
+      .map((row) => {
+        const dueAt = row.due ? new Date(`${row.due}T23:59:59`).getTime() : Number.NaN;
+        const hasDue = Number.isFinite(dueAt);
+        const isOverdue = hasDue && dueAt < now;
+        const dueSoon = hasDue && dueAt <= nextTwoHours;
+
+        return {
+          row,
+          dueAt,
+          hasDue,
+          isOverdue,
+          dueSoon,
+        };
+      });
+
+    const urgent = candidates
+      .filter((entry) => entry.isOverdue || entry.dueSoon)
+      .sort((a, b) => a.dueAt - b.dueAt)
+      .slice(0, 5);
+
+    if (urgent.length > 0) return urgent;
+
+    return candidates
+      .sort((a, b) => {
+        if (a.hasDue && b.hasDue) return a.dueAt - b.dueAt;
+        if (a.hasDue) return -1;
+        if (b.hasDue) return 1;
+        return a.row.task.localeCompare(b.row.task);
+      })
+      .slice(0, 5);
+  }, [radarNow, sheetRows]);
   const avgCompletion = useMemo(() => {
     if (sheetRows.length === 0) return 0;
     const total = sheetRows.reduce((sum, row) => sum + completionPercent(row), 0);
@@ -865,6 +913,121 @@ function ProductivitySuitePage() {
     setSelectedDocId(doc.id);
     setRecentDocIds((current) => [doc.id, ...current.filter((id) => id !== doc.id)].slice(0, 10));
     toast.success(`${type} document created.`);
+  };
+
+  const createShiftHuddleBundle = () => {
+    const now = nowTs();
+    const huddleDoc = makeDocument("Handoff", "Clinical", ["sbar", "handoff", "huddle"]);
+    huddleDoc.title = `SBAR Shift Huddle ${new Date(now).toLocaleDateString()}`;
+    huddleDoc.content = [
+      "<h2>Situation</h2><p>Current unit pressure points, incoming EMS volume, and immediate escalation needs.</p>",
+      "<h2>Background</h2><p>High-risk patients, boarded admissions, and pending consult constraints.</p>",
+      "<h2>Assessment</h2><ul><li>Bed turnover</li><li>Lab bottlenecks</li><li>Medication delays</li></ul>",
+      "<h2>Recommendation</h2><p>Assign owners for reassessments, discharge targets, and contingency triggers.</p>",
+    ].join("");
+    huddleDoc.audit.unshift({ at: now, action: "bundle", detail: "Created from Shift Huddle quick-start" });
+
+    const due = new Date(now).toISOString().slice(0, 10);
+    const huddleRows: SheetRow[] = [
+      {
+        id: uid("row"),
+        task: "Reassess ESI 2 queue and update escalation notes",
+        owner: "Charge RN",
+        due,
+        estimateHours: 0.5,
+        completedHours: 0,
+        priority: "High",
+        status: "Open",
+        notes: "Confirm stroke/STEMI/sepsis protocol readiness.",
+      },
+      {
+        id: uid("row"),
+        task: "Prepare discharge candidate list for next 4 hours",
+        owner: "Provider",
+        due,
+        estimateHours: 0.75,
+        completedHours: 0,
+        priority: "Med",
+        status: "Open",
+        notes: "Identify pending labs/imaging blocking discharge.",
+      },
+      {
+        id: uid("row"),
+        task: "Follow up critical labs and callback queue",
+        owner: "CCMA",
+        due,
+        estimateHours: 0.5,
+        completedHours: 0,
+        priority: "High",
+        status: "Open",
+        notes: "Escalate abnormal values to assigned clinician.",
+      },
+    ];
+
+    setDocs((current) => [huddleDoc, ...current]);
+    setSelectedDocId(huddleDoc.id);
+    setRecentDocIds((current) => [huddleDoc.id, ...current.filter((id) => id !== huddleDoc.id)].slice(0, 10));
+    setSheetRows((current) => [...huddleRows, ...current]);
+    openWorkspaceTab("documents");
+    toast.success("Shift huddle bundle created (SBAR + tracker tasks).");
+  };
+
+  const createDischargeBundle = () => {
+    const now = nowTs();
+    const dischargeDoc = makeDocument("Discharge", "Clinical", ["discharge", "follow-up", "care-coordination"]);
+    dischargeDoc.title = `Discharge Coordination ${new Date(now).toLocaleDateString()}`;
+    dischargeDoc.audit.unshift({ at: now, action: "bundle", detail: "Created from Discharge quick-start" });
+
+    const due = new Date(now + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const dischargeRows: SheetRow[] = [
+      {
+        id: uid("row"),
+        task: "Medication reconciliation + bedside education",
+        owner: "RN",
+        due,
+        estimateHours: 0.6,
+        completedHours: 0,
+        priority: "High",
+        status: "Open",
+        notes: "Review high-risk meds and return precautions.",
+      },
+      {
+        id: uid("row"),
+        task: "Schedule PCP/specialty follow-up before discharge",
+        owner: "CCMA",
+        due,
+        estimateHours: 0.4,
+        completedHours: 0,
+        priority: "Med",
+        status: "Open",
+        notes: "Document contact attempts and appointment status.",
+      },
+    ];
+
+    setDocs((current) => [dischargeDoc, ...current]);
+    setSelectedDocId(dischargeDoc.id);
+    setRecentDocIds((current) => [dischargeDoc.id, ...current.filter((id) => id !== dischargeDoc.id)].slice(0, 10));
+    setSheetRows((current) => [...dischargeRows, ...current]);
+    openWorkspaceTab("documents");
+    toast.success("Discharge bundle created (summary + follow-up tasks).");
+  };
+
+  const addRapidRoundsTask = () => {
+    const due = new Date().toISOString().slice(0, 10);
+    const task: SheetRow = {
+      id: uid("row"),
+      task: "Hourly rapid rounds: pain, vitals trend, pending diagnostics",
+      owner: "Assigned Nurse",
+      due,
+      estimateHours: 1,
+      completedHours: 0,
+      priority: "High",
+      status: "Open",
+      notes: "Use SBAR format for escalation and update provider queue.",
+    };
+    setSheetRows((current) => [task, ...current]);
+    openWorkspaceTab("tracker");
+    toast.success("Rapid rounds task added to tracker.");
   };
 
   const deleteDocument = (id: string) => {
@@ -1929,6 +2092,24 @@ function ProductivitySuitePage() {
             }}
           />
         </div>
+
+        <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 dark:border-blue-900 dark:bg-blue-950/30">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-700 dark:text-blue-300">Healthcare Quick Start</p>
+          <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+            Launch common ER productivity bundles for shift huddles, discharge coordination, and rapid rounds in one click.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <Button size="sm" variant="outline" onClick={createShiftHuddleBundle} className="justify-start">
+              <Briefcase className="mr-2 h-4 w-4" />Shift Huddle Bundle
+            </Button>
+            <Button size="sm" variant="outline" onClick={createDischargeBundle} className="justify-start">
+              <FileText className="mr-2 h-4 w-4" />Discharge Bundle
+            </Button>
+            <Button size="sm" variant="outline" onClick={addRapidRoundsTask} className="justify-start">
+              <ListChecks className="mr-2 h-4 w-4" />Rapid Rounds Task
+            </Button>
+          </div>
+        </div>
       </header>
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -2001,6 +2182,46 @@ function ProductivitySuitePage() {
                 ))
               )}
             </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section>
+        <Card className="border-rose-200 bg-rose-50/50 dark:border-rose-900 dark:bg-rose-950/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-300" />
+              Critical Follow-ups Radar
+            </CardTitle>
+            <CardDescription>
+              High-priority tracker tasks due within the next 2 hours (or overdue) are surfaced here first.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {criticalFollowUps.length === 0 ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400">No high-priority follow-ups are currently open.</p>
+            ) : (
+              <div className="grid gap-2 md:grid-cols-2">
+                {criticalFollowUps.map((entry) => (
+                  <button
+                    key={entry.row.id}
+                    type="button"
+                    onClick={() => openWorkspaceSheetRow(entry.row.id)}
+                    className="rounded-lg border border-rose-200 bg-white px-3 py-2 text-left transition hover:border-rose-300 hover:bg-rose-50 dark:border-rose-900 dark:bg-slate-900 dark:hover:bg-rose-950/20"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{entry.row.task || "Untitled task"}</p>
+                      <Badge variant={entry.isOverdue ? "destructive" : "outline"}>
+                        {entry.isOverdue ? "Overdue" : entry.hasDue ? "Due Soon" : "No Due"}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {entry.row.owner || "Unassigned"}{" • "}{entry.row.status}{" • "}Due: {entry.row.due || "n/a"}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </section>

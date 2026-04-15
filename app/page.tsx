@@ -15,6 +15,7 @@ import {
   ClipboardList,
   BookOpen,
   FlaskConical,
+  Briefcase,
 } from "lucide-react";
 import Link from "next/link";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
@@ -125,6 +126,14 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
       color: "bg-sky-600",
       role: "Staff Knowledge"
     },
+    {
+      title: "Clinical Productivity",
+      desc: "Healthcare docs, workflow tracker, approvals, and AI productivity in one workspace",
+      href: "/dashboard/productivity",
+      icon: Briefcase,
+      color: "bg-rose-600",
+      role: "Staff Productivity"
+    },
     ...(isAdmin ? [{
       title: "Executive Suite",
       desc: "Revenue analytics and compliance audits",
@@ -166,14 +175,15 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
     "bg-amber-600": "#d97706",
     "bg-purple-600": "#9333ea",
     "bg-indigo-600": "#4f46e5",
-    "bg-sky-600": "#0284c7"
+    "bg-sky-600": "#0284c7",
+    "bg-rose-600": "#e11d48"
   };
 
   const rolePriorityMap: Record<string, string[]> = {
-    ADMIN: ["Executive Suite", "Clinical Research", "Clinical Command", "Clinical References"],
-    PROVIDER: ["Clinical Command", "Clinical References", "AI Tools Hub", "Training Center"],
-    RN: ["Clinical Command", "Clinical References", "Training Center", "Study Notes"],
-    CCMA: ["Clinical Command", "Clinical References", "Patient Kiosk", "OR Scheduler"],
+    ADMIN: ["Executive Suite", "Clinical Productivity", "Clinical Research", "Clinical Command"],
+    PROVIDER: ["Clinical Command", "Clinical Productivity", "Clinical References", "AI Tools Hub"],
+    RN: ["Clinical Command", "Clinical Productivity", "Clinical References", "Training Center"],
+    CCMA: ["Clinical Command", "Clinical Productivity", "Clinical References", "Patient Kiosk"],
   };
 
   const rolePriority = rolePriorityMap[actorRole] ?? ["Clinical Command", "Training Center", "AI Tools Hub"];
@@ -200,10 +210,12 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
     "action:sepsis-protocol": "Sepsis Protocol",
     "action:open-research": "Clinical Research",
     "action:open-references": "References Hub",
+    "action:open-productivity": "Productivity Hub",
     "route:triage-board": "Triage Board",
     "route:training-center": "Training Center",
     "route:study-notes": "Study Notes",
     "route:references-hub": "References Hub",
+    "route:productivity-hub": "Productivity Hub",
     "route:ai-tools": "AI Tools Hub",
     "route:or-scheduler": "OR Scheduler",
     "route:faxes": "Faxes",

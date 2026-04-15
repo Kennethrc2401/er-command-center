@@ -10,7 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Clock, BookOpen, Mic, MessageCircle, Plus, Sparkles } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Clock, BookOpen, Mic, MessageCircle, Plus, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import RecordingInterface from "../../../components/study-notes/RecordingInterface";
 import SessionTimeline from "../../../components/study-notes/SessionTimeline";
@@ -61,6 +62,53 @@ const DEFAULT_SUBJECTS = [
 ];
 
 const CUSTOM_SUBJECTS_STORAGE_KEY = "study-notes-custom-subjects";
+const PENDING_NOTE_QUEUE_KEY = "study-notes:pending-note-queue";
+
+type PendingStudyNoteQueueEntry = {
+  sessionId: string;
+  userId: string;
+  subject: string;
+  rawTranscription: string;
+  topics: string[];
+  recordingMarkers: Array<{
+    label: string;
+    markerType: "Exam" | "Definition" | "Formula" | "Action Item" | "General";
+    elapsedSeconds: number;
+    createdAt: number;
+  }>;
+  transcriptStats: {
+    totalSeconds: number;
+    pauseSeconds: number;
+    markerCount: number;
+  };
+  queuedAt: number;
+};
+
+const readPendingSyncQueue = () => {
+  if (typeof window === "undefined") return [] as PendingStudyNoteQueueEntry[];
+
+  try {
+    const raw = window.localStorage.getItem(PENDING_NOTE_QUEUE_KEY);
+    if (!raw) return [] as PendingStudyNoteQueueEntry[];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [] as PendingStudyNoteQueueEntry[];
+
+    return parsed.filter((entry): entry is PendingStudyNoteQueueEntry => {
+      return Boolean(
+        entry &&
+          typeof entry === "object" &&
+          typeof (entry as PendingStudyNoteQueueEntry).sessionId === "string" &&
+          typeof (entry as PendingStudyNoteQueueEntry).userId === "string" &&
+          typeof (entry as PendingStudyNoteQueueEntry).subject === "string" &&
+          typeof (entry as PendingStudyNoteQueueEntry).rawTranscription === "string" &&
+          Array.isArray((entry as PendingStudyNoteQueueEntry).topics) &&
+          Array.isArray((entry as PendingStudyNoteQueueEntry).recordingMarkers)
+      );
+    });
+  } catch {
+    return [] as PendingStudyNoteQueueEntry[];
+  }
+};
 
 const normalizeTopicName = (value: string) => value.trim().replace(/\s+/g, " ");
 
@@ -117,6 +165,12 @@ export default function StudyNotesPage() {
   const [isAddingTopic, setIsAddingTopic] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [showPendingSyncDialog, setShowPendingSyncDialog] = useState(false);
+  const [isRetryingSync, setIsRetryingSync] = useState(false);
+  const [retryingItemKey, setRetryingItemKey] = useState<string | null>(null);
+  const [pendingSyncQueue, setPendingSyncQueue] = useState<PendingStudyNoteQueueEntry[]>(() => readPendingSyncQueue());
+
+  const pendingSyncCount = pendingSyncQueue.length;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -169,6 +223,53 @@ export default function StudyNotesPage() {
   );
 
   const deleteNote = useMutation(api.academicScribe.deleteStudyNote);
+  const createNote = useMutation(api.academicScribe.createStudyNote);
+  const endSession = useMutation(api.academicScribe.endStudySession);
+
+  const refreshPendingSyncQueue = () => {
+    setPendingSyncQueue(readPendingSyncQueue());
+  };
+
+  const exportQueuePayload = (entries: PendingStudyNoteQueueEntry[], filenameBase: string) => {
+    if (entries.length === 0) {
+      toast.message("No queued data to export.");
+      return;
+    }
+
+    const payload = {
+      exportedAt: Date.now(),
+      app: "study-notes-pending-sync",
+      count: entries.length,
+      entries,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${filenameBase}-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  useEffect(() => {
+    const onFocus = () => refreshPendingSyncQueue();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === PENDING_NOTE_QUEUE_KEY) {
+        refreshPendingSyncQueue();
+      }
+    };
+
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("storage", onStorage);
+    const intervalId = window.setInterval(refreshPendingSyncQueue, 4000);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("storage", onStorage);
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   if (!user) {
     return (
@@ -271,6 +372,123 @@ export default function StudyNotesPage() {
     toast.success(`Added topic: ${trimmed}`);
   };
 
+  const retryPendingSyncNow = async () => {
+    if (pendingSyncQueue.length === 0) {
+      toast.message("No pending items to sync.");
+      return;
+    }
+
+    setIsRetryingSync(true);
+
+    const remaining: PendingStudyNoteQueueEntry[] = [];
+    let syncedCount = 0;
+
+    for (const entry of pendingSyncQueue) {
+      try {
+        await createNote({
+          sessionId: entry.sessionId as Id<"studyClassSessions">,
+          userId: entry.userId as Id<"users">,
+          rawTranscription: entry.rawTranscription,
+          subject: entry.subject,
+          topics: entry.topics,
+          recordingMarkers: entry.recordingMarkers,
+          transcriptStats: entry.transcriptStats,
+        });
+
+        await endSession({
+          sessionId: entry.sessionId as Id<"studyClassSessions">,
+          durationMinutes: Math.max(1, Math.round((entry.transcriptStats.totalSeconds || 0) / 60)),
+        });
+
+        syncedCount += 1;
+      } catch {
+        remaining.push(entry);
+      }
+    }
+
+    window.localStorage.setItem(PENDING_NOTE_QUEUE_KEY, JSON.stringify(remaining));
+    refreshPendingSyncQueue();
+
+    if (syncedCount > 0) {
+      toast.success(`Synced ${syncedCount} pending note${syncedCount === 1 ? "" : "s"}.`);
+    }
+    if (remaining.length > 0) {
+      toast.error(`${remaining.length} note${remaining.length === 1 ? "" : "s"} still pending sync.`);
+    }
+    if (syncedCount === 0 && remaining.length === 0) {
+      toast.message("No pending items to sync.");
+    }
+
+    setIsRetryingSync(false);
+  };
+
+  const exportAllPendingSyncItems = () => {
+    exportQueuePayload(pendingSyncQueue, "study-notes-pending-sync-all");
+    toast.success("Pending sync queue exported.");
+  };
+
+  const removePendingSyncItem = (itemKey: string) => {
+    const nextQueue = pendingSyncQueue.filter((entry, index) => `${entry.sessionId}-${entry.queuedAt}-${index}` !== itemKey);
+    window.localStorage.setItem(PENDING_NOTE_QUEUE_KEY, JSON.stringify(nextQueue));
+    setPendingSyncQueue(nextQueue);
+    toast.message("Removed queued item.");
+  };
+
+  const exportPendingSyncItem = (itemKey: string) => {
+    const targetIndex = pendingSyncQueue.findIndex(
+      (entry, index) => `${entry.sessionId}-${entry.queuedAt}-${index}` === itemKey
+    );
+
+    if (targetIndex === -1) {
+      toast.message("Queue item not found.");
+      return;
+    }
+
+    const target = pendingSyncQueue[targetIndex];
+    exportQueuePayload([target], `study-notes-pending-item-${target.subject.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "note"}`);
+    toast.success("Queued item exported.");
+  };
+
+  const retryPendingSyncItem = async (itemKey: string) => {
+    const targetIndex = pendingSyncQueue.findIndex(
+      (entry, index) => `${entry.sessionId}-${entry.queuedAt}-${index}` === itemKey
+    );
+
+    if (targetIndex === -1) {
+      toast.message("Queue item not found.");
+      return;
+    }
+
+    const target = pendingSyncQueue[targetIndex];
+    setRetryingItemKey(itemKey);
+
+    try {
+      await createNote({
+        sessionId: target.sessionId as Id<"studyClassSessions">,
+        userId: target.userId as Id<"users">,
+        rawTranscription: target.rawTranscription,
+        subject: target.subject,
+        topics: target.topics,
+        recordingMarkers: target.recordingMarkers,
+        transcriptStats: target.transcriptStats,
+      });
+
+      await endSession({
+        sessionId: target.sessionId as Id<"studyClassSessions">,
+        durationMinutes: Math.max(1, Math.round((target.transcriptStats.totalSeconds || 0) / 60)),
+      });
+
+      const nextQueue = pendingSyncQueue.filter((_, index) => index !== targetIndex);
+      window.localStorage.setItem(PENDING_NOTE_QUEUE_KEY, JSON.stringify(nextQueue));
+      setPendingSyncQueue(nextQueue);
+      toast.success("Queued item synced.");
+    } catch {
+      toast.error("Retry failed for this item. It remains in queue.");
+    } finally {
+      setRetryingItemKey(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-6">
       <div className="max-w-7xl mx-auto">
@@ -279,6 +497,15 @@ export default function StudyNotesPage() {
           <div className="flex items-center gap-3 mb-2">
             <BookOpen className="w-8 h-8 text-blue-600" />
             <h1 className="text-4xl font-bold text-slate-900 dark:text-white">Study Notes</h1>
+            {pendingSyncCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => setShowPendingSyncDialog(true)}
+                className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/40"
+              >
+                Pending Sync: {pendingSyncCount}
+              </button>
+            ) : null}
             <Button asChild variant="outline" size="sm" className="ml-auto">
               <Link href="/dashboard/productivity">Open Productivity Suite</Link>
             </Button>
@@ -286,6 +513,11 @@ export default function StudyNotesPage() {
           <p className="text-slate-600 dark:text-slate-400">
             Record, organize, and revisit your class notes with AI-powered topic extraction
           </p>
+          {pendingSyncCount > 0 ? (
+            <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+              Some recordings are queued locally and will auto-sync when backend writes succeed.
+            </p>
+          ) : null}
         </div>
 
         {/* Subject Selector */}
@@ -550,6 +782,89 @@ export default function StudyNotesPage() {
           </div>
         )}
       </div>
+
+      <Dialog open={showPendingSyncDialog} onOpenChange={setShowPendingSyncDialog}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Pending Sync Queue</DialogTitle>
+            <DialogDescription>
+              These recordings are stored locally and waiting to be written to the backend.
+            </DialogDescription>
+          </DialogHeader>
+
+          {pendingSyncQueue.length === 0 ? (
+            <p className="text-sm text-slate-500">No pending sync items.</p>
+          ) : (
+            <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+              {pendingSyncQueue.map((entry, index) => (
+                (() => {
+                  const itemKey = `${entry.sessionId}-${entry.queuedAt}-${index}`;
+                  return (
+                <div
+                  key={itemKey}
+                  className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-900/40"
+                >
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{entry.subject}</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    Queued: {new Date(entry.queuedAt).toLocaleString()}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    Transcript: {entry.rawTranscription.length.toLocaleString()} chars • Markers: {entry.recordingMarkers.length} • Topics: {entry.topics.length}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={isRetryingSync || retryingItemKey === itemKey}
+                      onClick={() => void retryPendingSyncItem(itemKey)}
+                    >
+                      {retryingItemKey === itemKey ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                      Retry Item
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={isRetryingSync || retryingItemKey === itemKey}
+                      onClick={() => exportPendingSyncItem(itemKey)}
+                    >
+                      Export Item
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="text-rose-600 hover:text-rose-700 dark:text-rose-300"
+                      disabled={isRetryingSync || retryingItemKey === itemKey}
+                      onClick={() => removePendingSyncItem(itemKey)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+                  );
+                })()
+              ))}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={refreshPendingSyncQueue}>
+                Refresh
+              </Button>
+              <Button type="button" variant="outline" onClick={exportAllPendingSyncItems} disabled={pendingSyncQueue.length === 0}>
+                Export All
+              </Button>
+            </div>
+            <Button type="button" onClick={() => void retryPendingSyncNow()} disabled={isRetryingSync || pendingSyncQueue.length === 0}>
+              {isRetryingSync ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Retry Now
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

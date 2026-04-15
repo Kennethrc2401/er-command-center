@@ -21,7 +21,8 @@ import {
   ClipboardList,
   Sparkles,
   BookOpen,
-  FlaskConical
+  FlaskConical,
+  Briefcase
 } from "lucide-react";
 import NewPatientModal from "./NewPatientModal";
 import { LucideIcon } from "lucide-react";
@@ -139,6 +140,12 @@ export default function Navbar() {
               icon={FlaskConical}
               label="References"
               active={pathname.includes("/references")}
+            />
+            <NavLink
+              href="/dashboard/productivity"
+              icon={Briefcase}
+              label="Productivity"
+              active={pathname.includes("/productivity")}
             />
 
             {isAdmin && (

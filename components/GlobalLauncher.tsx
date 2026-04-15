@@ -99,6 +99,15 @@ const BASE_ITEMS: LauncherItem[] = [
     kind: "route",
   },
   {
+    id: "productivity-hub",
+    title: "Productivity Hub",
+    description: "Open healthcare documentation, tracker, approvals, and AI productivity tools.",
+    href: "/dashboard/productivity",
+    tags: ["productivity", "documents", "tracker", "handoff", "workflow"],
+    roles: ["ANY"],
+    kind: "route",
+  },
+  {
     id: "ai-tools",
     title: "AI Tools Hub",
     description: "Launch the clinical, handoff, and documentation copilot tools.",
@@ -373,6 +382,9 @@ export default function GlobalLauncher() {
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [importDraft, setImportDraft] = useState("");
   const [importMode, setImportMode] = useState<"merge" | "replace">("replace");
+  const [showImportDetails, setShowImportDetails] = useState(false);
+  const [draggedPin, setDraggedPin] = useState<string | null>(null);
+  const [dragOverPin, setDragOverPin] = useState<string | null>(null);
   const roleKey = isAdmin ? "ADMIN" : actorRole;
 
   const currentPreferences = useMemo<LauncherPreferences>(() => ({
@@ -468,10 +480,10 @@ export default function GlobalLauncher() {
 
   const recommendedItems = useMemo(() => {
     const orderByRole: Record<string, string[]> = {
-      ADMIN: ["admin-suite", "clinical-research", "triage-board", "references-hub"],
-      PROVIDER: ["triage-board", "references-hub", "ai-tools", "protocol-pack"],
-      RN: ["triage-board", "references-hub", "procedure-pack", "study-notes"],
-      CCMA: ["triage-board", "references-hub", "procedure-pack", "faxes"],
+      ADMIN: ["admin-suite", "clinical-research", "productivity-hub", "triage-board"],
+      PROVIDER: ["triage-board", "productivity-hub", "references-hub", "ai-tools"],
+      RN: ["triage-board", "productivity-hub", "references-hub", "procedure-pack"],
+      CCMA: ["triage-board", "productivity-hub", "references-hub", "faxes"],
     };
 
     const preferred = orderByRole[actorRole] ?? ["triage-board", "training-center", "ai-tools"];
@@ -531,6 +543,14 @@ export default function GlobalLauncher() {
         tags: ["references", "drug", "labs", "vitals", "guide"],
         roles: ["ANY"],
         run: () => router.push("/dashboard/references"),
+      },
+      {
+        id: "open-productivity",
+        title: "Open Productivity Hub",
+        description: "Jump to clinical docs, tracker tasks, approvals, and AI assist workspace.",
+        tags: ["productivity", "docs", "tracker", "workflow", "handoff"],
+        roles: ["ANY"],
+        run: () => router.push("/dashboard/productivity"),
       },
       {
         id: "print-triage-pack",
@@ -693,7 +713,7 @@ export default function GlobalLauncher() {
       return {
         title: "Admin Command Bundle",
         subtitle: "Oversight and escalation tools",
-        actions: ["open-research", "print-triage-pack", "open-scribe"],
+        actions: ["open-research", "open-productivity", "print-triage-pack"],
         routes: ["admin-suite", "triage-board", "references-hub"],
       };
     }
@@ -704,16 +724,16 @@ export default function GlobalLauncher() {
       return {
         title: "Provider Command Bundle",
         subtitle: "Decision support and rapid protocol jumps",
-        actions: ["open-scribe", "stroke-protocol", "open-references"],
-        routes: ["triage-board", "ai-tools", "references-hub"],
+        actions: ["open-productivity", "open-scribe", "stroke-protocol"],
+        routes: ["triage-board", "productivity-hub", "references-hub"],
       };
     }
 
     return {
       title: "Nursing Command Bundle",
       subtitle: "Fast intake and protocol workflow",
-      actions: ["new-admission", "sepsis-protocol", "open-references"],
-      routes: ["triage-board", "references-hub", "study-notes"],
+      actions: ["new-admission", "open-productivity", "sepsis-protocol"],
+      routes: ["triage-board", "productivity-hub", "references-hub"],
     };
   }, [actorRole, isAdmin]);
 
@@ -747,18 +767,36 @@ export default function GlobalLauncher() {
     });
   }, [roleKey]);
 
-  const moveBundlePin = useCallback((actionId: string, direction: "up" | "down") => {
+  const handleDragStartPin = useCallback((actionId: string) => {
+    setDraggedPin(actionId);
+  }, []);
+
+  const handleDragOverPin = useCallback((actionId: string, e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOverPin(actionId);
+  }, []);
+
+  const handleDragLeavePin = useCallback(() => {
+    setDragOverPin(null);
+  }, []);
+
+  const handleDropPin = useCallback((targetId: string) => {
+    if (!draggedPin || draggedPin === targetId) {
+      setDraggedPin(null);
+      setDragOverPin(null);
+      return;
+    }
+
     setBundlePinsByRole((current) => {
       const existing = [...(current[roleKey] ?? [])];
-      const index = existing.indexOf(actionId);
-      if (index === -1) return current;
+      const dragIndex = existing.indexOf(draggedPin);
+      const targetIndex = existing.indexOf(targetId);
 
-      const swapWith = direction === "up" ? index - 1 : index + 1;
-      if (swapWith < 0 || swapWith >= existing.length) return current;
+      if (dragIndex === -1 || targetIndex === -1) return current;
 
-      const temp = existing[index];
-      existing[index] = existing[swapWith];
-      existing[swapWith] = temp;
+      const temp = existing[dragIndex];
+      existing[dragIndex] = existing[targetIndex];
+      existing[targetIndex] = temp;
 
       const next = {
         ...current,
@@ -767,7 +805,11 @@ export default function GlobalLauncher() {
       writeBundlePinsMap(next);
       return next;
     });
-  }, [roleKey]);
+
+    setDraggedPin(null);
+    setDragOverPin(null);
+    toast.success("Pin reordered.");
+  }, [draggedPin, roleKey]);
 
   const resetBundlePins = useCallback(() => {
     setBundlePinsByRole((current) => {
@@ -1070,7 +1112,16 @@ export default function GlobalLauncher() {
                     </div>
 
                     <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-900">
-                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Impact Preview ({importMode})</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Impact Preview ({importMode})</p>
+                        <button
+                          type="button"
+                          onClick={() => setShowImportDetails(!showImportDetails)}
+                          className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                        >
+                          {showImportDetails ? "Hide" : "Show"} Details
+                        </button>
+                      </div>
                       <div className="mt-1 grid grid-cols-2 gap-1 text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                         <span>Fav +{importImpact?.favoritesAdded ?? "-"} / -{importImpact?.favoritesRemoved ?? "-"}</span>
                         <span>Recent +{importImpact?.recentsAdded ?? "-"} / -{importImpact?.recentsRemoved ?? "-"}</span>
@@ -1078,6 +1129,30 @@ export default function GlobalLauncher() {
                         <span>Run +{importImpact?.runLogAdded ?? "-"} / -{importImpact?.runLogRemoved ?? "-"}</span>
                         <span className="col-span-2">Role Pin Sets Changed: {importImpact?.rolePinChanges ?? "-"}</span>
                       </div>
+
+                      {showImportDetails && previewPreferences ? (
+                        <div className="mt-2 space-y-2 text-[8px] text-slate-600 dark:text-slate-300">
+                          {previewPreferences.favorites.length > 0 && (
+                            <div className="rounded-lg border border-slate-200 bg-white p-1.5 dark:border-slate-700 dark:bg-slate-950">
+                              <p className="font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">Favorites ({previewPreferences.favorites.length})</p>
+                              <p className="mt-1 max-h-16 overflow-y-auto">
+                                {previewPreferences.favorites.map(id => {
+                                  const item = BASE_ITEMS.find(i => i.id === id);
+                                  return item ? <span key={id} className="block">{item.title}</span> : null;
+                                })}
+                              </p>
+                            </div>
+                          )}
+                          {Object.keys(previewPreferences.usageMap).length > 0 && (
+                            <div className="rounded-lg border border-slate-200 bg-white p-1.5 dark:border-slate-700 dark:bg-slate-950">
+                              <p className="font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">Usage Keys ({Object.keys(previewPreferences.usageMap).length})</p>
+                              <p className="mt-1 max-h-16 overflow-y-auto">
+                                {Object.keys(previewPreferences.usageMap).map(key => <span key={key} className="block">{key}</span>)}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="mt-2 flex gap-1.5">
@@ -1127,7 +1202,21 @@ export default function GlobalLauncher() {
                     const pinnedIndex = bundlePinnedActions.indexOf(action.id);
                     const isPinned = pinnedIndex !== -1;
                     return (
-                      <div key={action.id} className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-violet-300 dark:border-slate-700 dark:bg-slate-950">
+                      <div
+                        key={action.id}
+                        draggable={isPinned && bundlePinnedActions.length > 1}
+                        onDragStart={() => handleDragStartPin(action.id)}
+                        onDragOver={(e) => handleDragOverPin(action.id, e)}
+                        onDragLeave={handleDragLeavePin}
+                        onDrop={() => handleDropPin(action.id)}
+                        className={`w-full rounded-2xl border px-3 py-2 text-left shadow-sm transition-all ${
+                          draggedPin === action.id
+                            ? "opacity-50 border-dashed"
+                            : dragOverPin === action.id
+                            ? "border-violet-400 bg-violet-50 dark:bg-violet-950/30"
+                            : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-violet-300 dark:border-slate-700 dark:bg-slate-950"
+                        } ${isPinned && bundlePinnedActions.length > 1 ? "cursor-grab active:cursor-grabbing" : ""}`}
+                      >
                         <div className="flex items-start gap-2">
                           <button
                             type="button"
@@ -1137,26 +1226,9 @@ export default function GlobalLauncher() {
                             <span className="block text-[11px] font-black uppercase text-slate-900 dark:text-slate-100">{action.title}</span>
                           </button>
                           {isPinned && bundlePinnedActions.length > 1 ? (
-                            <div className="flex gap-1">
-                              <button
-                                type="button"
-                                onClick={() => moveBundlePin(action.id, "up")}
-                                disabled={pinnedIndex <= 0}
-                                className="rounded-lg border border-slate-200 px-1.5 py-0.5 text-[9px] font-black text-slate-500 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300"
-                                aria-label={`Move ${action.title} up`}
-                              >
-                                ^
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => moveBundlePin(action.id, "down")}
-                                disabled={pinnedIndex >= bundlePinnedActions.length - 1}
-                                className="rounded-lg border border-slate-200 px-1.5 py-0.5 text-[9px] font-black text-slate-500 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300"
-                                aria-label={`Move ${action.title} down`}
-                              >
-                                v
-                              </button>
-                            </div>
+                            <span className="rounded-lg border border-slate-200 px-1.5 py-0.5 text-[9px] font-black text-slate-400 dark:border-slate-700 dark:text-slate-500">
+                              ⋮⋮
+                            </span>
                           ) : null}
                         </div>
                       </div>
