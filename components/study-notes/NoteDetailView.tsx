@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Trash2, Edit2, Check, X, FileText, BookMarked, Download, Search, Clock3, Bookmark, Sparkles } from "lucide-react";
+import { Trash2, Edit2, Check, X, FileText, BookMarked, Download, Search, Clock3, Bookmark, Sparkles, AlertTriangle, ClipboardList, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 import {
   extractKeyPoints,
@@ -20,6 +20,57 @@ import {
   createTopicHierarchy,
   organizeTranscriptionByTopics,
 } from "@/lib/helpers/academicAI";
+
+const PRODUCTIVITY_TASK_INBOX_KEY = "productivity-suite:task-inbox";
+const SAFETY_TREND_KEY = "study-notes:safety-trends";
+
+type ProductivityTaskInboxItem = {
+  id: string;
+  task: string;
+  owner: string;
+  destination?: "rn" | "provider" | "shared";
+  due: string;
+  priority: "Low" | "Med" | "High";
+  status: "Open" | "In Progress" | "Done";
+  estimateHours: number;
+  confidence?: number;
+  notes: string;
+  source: string;
+  createdAt: number;
+};
+
+const readProductivityTaskInbox = (): ProductivityTaskInboxItem[] => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(PRODUCTIVITY_TASK_INBOX_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is ProductivityTaskInboxItem => {
+      return Boolean(
+        item &&
+          typeof item === "object" &&
+          typeof (item as ProductivityTaskInboxItem).id === "string" &&
+          typeof (item as ProductivityTaskInboxItem).task === "string" &&
+          typeof (item as ProductivityTaskInboxItem).owner === "string" &&
+          typeof (item as ProductivityTaskInboxItem).due === "string" &&
+          typeof (item as ProductivityTaskInboxItem).priority === "string" &&
+          typeof (item as ProductivityTaskInboxItem).status === "string" &&
+          typeof (item as ProductivityTaskInboxItem).estimateHours === "number" &&
+          typeof (item as ProductivityTaskInboxItem).notes === "string" &&
+          typeof (item as ProductivityTaskInboxItem).source === "string" &&
+          typeof (item as ProductivityTaskInboxItem).createdAt === "number"
+      );
+    });
+  } catch {
+    return [];
+  }
+};
+
+const writeProductivityTaskInbox = (items: ProductivityTaskInboxItem[]) => {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(PRODUCTIVITY_TASK_INBOX_KEY, JSON.stringify(items.slice(0, 80)));
+};
 
 interface NoteDetailViewProps {
   note: Omit<Doc<"studyNotes">, "topics"> & {
@@ -41,6 +92,8 @@ export default function NoteDetailView({
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcriptSearch, setTranscriptSearch] = useState("");
   const [cleanupDraft, setCleanupDraft] = useState(editedContent || note.content);
+  const [taskDestination, setTaskDestination] = useState<"rn" | "provider" | "shared">("shared");
+  const [safetyTrendHistory, setSafetyTrendHistory] = useState<Array<{ at: number; score: number; level: string }>>([]);
 
   const updateContent = useMutation(api.academicScribe.updateStudyNoteContent);
   const updateSummary = useMutation(api.academicScribe.updateNoteSummary);
@@ -100,6 +153,290 @@ export default function NoteDetailView({
 
     return { targets, flashcards, quiz, reminders };
   }, [definitions, keyPoints]);
+
+  const clinicalActionItems = useMemo(() => {
+    const source = (editedContent || note.content || "")
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const actionPattern = /\b(follow up|reassess|monitor|repeat|check|verify|escalate|consult|notify|review|administer|hold|call|document|order|discharge|admit|transfer)\b/i;
+    const extracted = source
+      .filter((line) => actionPattern.test(line) || /^[-*]\s/.test(line) || /^\d+[.)]\s/.test(line))
+      .slice(0, 8)
+      .map((line) => line.replace(/^[-*]\s*/, "").replace(/^\d+[.)]\s*/, ""));
+
+    return extracted;
+  }, [editedContent, note.content]);
+
+  const safetySignals = useMemo(() => {
+    const source = editedContent || note.content || "";
+    const checks: Array<{ label: string; pattern: RegExp; severity: "watch" | "high" }> = [
+      { label: "Hemodynamic concern", pattern: /\b(hypotension|tachycardia|bradycardia|unstable|shock)\b/i, severity: "high" },
+      { label: "Respiratory concern", pattern: /\b(hypoxia|desaturat|respiratory distress|shortness of breath|dyspnea)\b/i, severity: "high" },
+      { label: "Infection concern", pattern: /\b(sepsis|septic|fever|lactate|infection)\b/i, severity: "watch" },
+      { label: "Neurologic concern", pattern: /\b(ams|altered mental status|stroke|seizure|confusion)\b/i, severity: "high" },
+      { label: "Medication safety", pattern: /\b(allergy|anaphylaxis|contraindicat|interaction|high-risk med)\b/i, severity: "watch" },
+    ];
+
+    return checks
+      .map((check) => {
+        const match = source.match(check.pattern);
+        if (!match) return null;
+        const index = source.toLowerCase().indexOf(match[0].toLowerCase());
+        const start = Math.max(0, index - 60);
+        const end = Math.min(source.length, index + match[0].length + 60);
+        const context = source.slice(start, end).replace(/\s+/g, " ").trim();
+        return {
+          ...check,
+          context,
+          matchedText: match[0],
+        };
+      })
+      .filter((item): item is { label: string; pattern: RegExp; severity: "watch" | "high"; context: string; matchedText: string } => Boolean(item));
+  }, [editedContent, note.content]);
+
+  const suggestOwnerForTask = useCallback((task: string) => {
+    if (/medication|dose|administer|hold|allergy|anaphylaxis/i.test(task)) return "RN";
+    if (/consult|admit|discharge|transfer|escalate|provider|diagnostic/i.test(task)) return "Provider";
+    if (/schedule|call|follow up|education|document/i.test(task)) return "CCMA";
+    return "Clinical Team";
+  }, []);
+
+  const ownerForDestination = useCallback((baseOwner: string) => {
+    if (taskDestination === "rn") return "RN";
+    if (taskDestination === "provider") return "Provider";
+    return baseOwner;
+  }, [taskDestination]);
+
+  const safetyRiskScore = useMemo(() => {
+    const high = safetySignals.filter((signal) => signal.severity === "high").length;
+    const watch = safetySignals.length - high;
+    const pauseRatio = note.transcriptStats && note.transcriptStats.totalSeconds > 0
+      ? note.transcriptStats.pauseSeconds / note.transcriptStats.totalSeconds
+      : 0;
+    const markerPenalty = note.transcriptStats && note.transcriptStats.markerCount === 0 ? 1 : 0;
+
+    const score = high * 3 + watch * 1 + (pauseRatio >= 0.25 ? 1 : 0) + markerPenalty;
+    const level = score >= 8 ? "Escalate" : score >= 4 ? "Monitor" : "Stable";
+
+    return {
+      score,
+      level,
+      high,
+      watch,
+      pauseRatio,
+    };
+  }, [note.transcriptStats, safetySignals]);
+
+  const signalConfidence = useMemo(() => {
+    const score = Math.max(0, Math.min(100, 88 - safetySignals.length * 8 - (safetyRiskScore.level === "Escalate" ? 12 : 0)));
+    return score;
+  }, [safetyRiskScore.level, safetySignals.length]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(SAFETY_TREND_KEY);
+      if (!raw) {
+        setSafetyTrendHistory([]);
+        return;
+      }
+      const parsed = JSON.parse(raw) as Record<string, Array<{ at: number; score: number; level: string }>>;
+      const entries = Array.isArray(parsed[note.subject]) ? parsed[note.subject] : [];
+      setSafetyTrendHistory(entries.slice(-8));
+    } catch {
+      setSafetyTrendHistory([]);
+    }
+  }, [note.subject]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(SAFETY_TREND_KEY);
+      const parsed = raw ? (JSON.parse(raw) as Record<string, Array<{ at: number; score: number; level: string }>>) : {};
+      const current = Array.isArray(parsed[note.subject]) ? parsed[note.subject] : [];
+
+      const alreadyRecorded = current.some((entry) => entry.level === safetyRiskScore.level && entry.score === safetyRiskScore.score && entry.at === note.createdAt);
+      if (alreadyRecorded) return;
+
+      const next = [
+        ...current,
+        {
+          at: note.createdAt,
+          score: safetyRiskScore.score,
+          level: safetyRiskScore.level,
+        },
+      ].slice(-20);
+
+      parsed[note.subject] = next.map((entry) => ({ at: entry.at, score: entry.score, level: entry.level }));
+      window.localStorage.setItem(SAFETY_TREND_KEY, JSON.stringify(parsed));
+      setSafetyTrendHistory(parsed[note.subject].slice(-8));
+    } catch {
+      // Ignore local storage write issues.
+    }
+  }, [note._id, note.createdAt, note.subject, safetyRiskScore.level, safetyRiskScore.score]);
+
+  const taskConfidence = useMemo(() => {
+    const hasActions = clinicalActionItems.length > 0;
+    const base = hasActions ? 82 : 58;
+    const markerBoost = note.transcriptStats && note.transcriptStats.markerCount > 0 ? 8 : 0;
+    const pausePenalty = note.transcriptStats && note.transcriptStats.totalSeconds > 0 && note.transcriptStats.pauseSeconds / note.transcriptStats.totalSeconds > 0.3 ? 8 : 0;
+    return Math.max(0, Math.min(100, base + markerBoost - pausePenalty));
+  }, [clinicalActionItems.length, note.transcriptStats]);
+
+  const productivityTaskDrafts = useMemo(() => {
+    const dueToday = new Date().toISOString().slice(0, 10);
+    const dueTomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const fromActions = clinicalActionItems.slice(0, 6).map((item, index) => ({
+      id: crypto.randomUUID(),
+      task: item,
+      owner: ownerForDestination(suggestOwnerForTask(item)),
+      destination: taskDestination,
+      due: index < 3 ? dueToday : dueTomorrow,
+      priority: /escalate|critical|urgent|sepsis|hypoxia|unstable/i.test(item) ? "High" as const : "Med" as const,
+      status: "Open" as const,
+      estimateHours: 0.5,
+      confidence: taskConfidence,
+      notes: `Generated from scribe note ${note.subject}.`,
+      source: `study-note:${note._id}:actions`,
+      createdAt: Date.now(),
+    }));
+
+    const fromSignals = safetySignals
+      .filter((signal) => signal.severity === "high")
+      .slice(0, 3)
+      .map((signal) => ({
+        id: crypto.randomUUID(),
+        task: `Safety follow-up: ${signal.label}`,
+        owner: ownerForDestination("Charge RN"),
+        destination: taskDestination,
+        due: dueToday,
+        priority: "High" as const,
+        status: "Open" as const,
+        estimateHours: 0.5,
+        confidence: signalConfidence,
+        notes: `Matched phrase "${signal.matchedText}". Context: ${signal.context}`,
+        source: `study-note:${note._id}:signals`,
+        createdAt: Date.now(),
+      }));
+
+    return [...fromSignals, ...fromActions];
+  }, [clinicalActionItems, note._id, note.subject, ownerForDestination, safetySignals, signalConfidence, taskConfidence, suggestOwnerForTask, taskDestination]);
+
+  const sbarTaskDrafts = useMemo(() => {
+    const dueToday = new Date().toISOString().slice(0, 10);
+    return clinicalActionItems.slice(0, 5).map((item) => ({
+      id: crypto.randomUUID(),
+      task: `SBAR follow-up: ${item}`,
+      owner: ownerForDestination(suggestOwnerForTask(item)),
+      destination: taskDestination,
+      due: dueToday,
+      priority: /escalate|critical|urgent|sepsis|hypoxia|unstable|shock/i.test(item) ? "High" as const : "Med" as const,
+      status: "Open" as const,
+      estimateHours: 0.5,
+      confidence: taskConfidence,
+      notes: `Generated from SBAR recommendation in ${note.subject}.`,
+      source: `study-note:${note._id}:sbar`,
+      createdAt: Date.now(),
+    }));
+  }, [clinicalActionItems, note._id, note.subject, ownerForDestination, suggestOwnerForTask, taskConfidence, taskDestination]);
+
+  const sbarBrief = useMemo(() => {
+    const topPoints = keyPoints.slice(0, 3);
+    const topActions = clinicalActionItems.slice(0, 5);
+    const topSignals = safetySignals.slice(0, 3);
+
+    const situation = topPoints.length > 0
+      ? topPoints.join(" ")
+      : "No concise situation extracted yet. Review transcript highlights.";
+    const background = `Subject: ${note.subject}. Session captured ${new Date(note.createdAt).toLocaleString()}.`;
+    const assessment = topSignals.length > 0
+      ? topSignals.map((signal) => `${signal.label} (${signal.matchedText})`).join("; ")
+      : "No explicit safety signals auto-detected from current text.";
+    const recommendation = topActions.length > 0
+      ? topActions.map((item, index) => `${index + 1}. ${item}`).join("\n")
+      : "1. Recheck transcript for follow-up tasks.\n2. Add owner and timeframe for next shift.";
+
+    return [
+      `SBAR Brief - ${note.subject}`,
+      "",
+      "Situation:",
+      situation,
+      "",
+      "Background:",
+      background,
+      "",
+      "Assessment:",
+      assessment,
+      "",
+      "Recommendation:",
+      recommendation,
+    ].join("\n");
+  }, [clinicalActionItems, keyPoints, note.createdAt, note.subject, safetySignals]);
+
+  const copySbarBrief = async () => {
+    try {
+      await navigator.clipboard.writeText(sbarBrief);
+      toast.success("SBAR brief copied.");
+    } catch {
+      toast.error("Unable to copy SBAR brief.");
+    }
+  };
+
+  const injectSbarIntoEditor = () => {
+    const source = editedContent || note.content || "";
+    const next = `${source.trim()}\n\n---\n\n${sbarBrief}`.trim();
+    setEditedContent(next);
+    setCleanupDraft(next);
+    toast.success("SBAR brief appended to editor draft.");
+  };
+
+  const sendActionsToProductivity = () => {
+    if (productivityTaskDrafts.length === 0) {
+      toast.message("No actionable tasks were extracted from this note yet.");
+      return;
+    }
+
+    const escalationNeeded =
+      safetyRiskScore.level === "Escalate" &&
+      productivityTaskDrafts.some((task) => !task.owner.trim() || task.owner === "Clinical Team");
+
+    const escalationTask = escalationNeeded
+      ? [{
+          id: crypto.randomUUID(),
+          task: "Escalation huddle now: assign owners for all high-risk follow-ups",
+          owner: ownerForDestination("Charge RN"),
+          destination: taskDestination,
+          due: new Date().toISOString().slice(0, 10),
+          priority: "High" as const,
+          status: "Open" as const,
+          estimateHours: 0.5,
+          confidence: signalConfidence,
+          notes: "Auto-generated because risk level is Escalate with unowned/shared tasks.",
+          source: `study-note:${note._id}:auto-escalation`,
+          createdAt: Date.now(),
+        }]
+      : [];
+
+    const current = readProductivityTaskInbox();
+    const payload = [...escalationTask, ...productivityTaskDrafts];
+    writeProductivityTaskInbox([...payload, ...current]);
+    toast.success(`Queued ${payload.length} task(s) for Productivity Tracker.`);
+  };
+
+  const sendSbarToProductivity = () => {
+    if (sbarTaskDrafts.length === 0) {
+      toast.message("No SBAR recommendation tasks were detected yet.");
+      return;
+    }
+
+    const current = readProductivityTaskInbox();
+    writeProductivityTaskInbox([...sbarTaskDrafts, ...current]);
+    toast.success(`Queued ${sbarTaskDrafts.length} SBAR task(s) for Productivity Tracker.`);
+  };
+
   const transcriptLines = (editedContent || note.content || "")
     .split(/\n+/)
     .map((line) => line.trim())
@@ -260,7 +597,7 @@ export default function NoteDetailView({
 
       {/* Main Tabs */}
       <Tabs defaultValue="content" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 gap-2 sm:grid-cols-6">
+        <TabsList className="grid w-full grid-cols-2 gap-2 sm:grid-cols-7">
           <TabsTrigger value="content" className="gap-2">
             <FileText className="w-4 h-4" />
             <span className="hidden sm:inline">Content</span>
@@ -272,6 +609,10 @@ export default function NoteDetailView({
           <TabsTrigger value="summary" className="gap-2">
             <BookMarked className="w-4 h-4" />
             <span className="hidden sm:inline">Summary</span>
+          </TabsTrigger>
+          <TabsTrigger value="clinical" className="gap-2">
+            <Stethoscope className="w-4 h-4" />
+            <span className="hidden sm:inline">Clinical Ops</span>
           </TabsTrigger>
           <TabsTrigger value="compare" className="gap-2">
             <FileText className="w-4 h-4" />
@@ -394,6 +735,122 @@ export default function NoteDetailView({
                   </CardContent>
                 </Card>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="clinical" className="space-y-4">
+          <Card className="border-rose-200 bg-rose-50/60 dark:border-rose-900 dark:bg-rose-950/30">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> Safety Signal Radar</CardTitle>
+              <CardDescription>Potential high-risk language detected from transcript and edited content.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="mb-2 grid gap-2 sm:grid-cols-4">
+                <Badge variant={safetyRiskScore.level === "Escalate" ? "destructive" : "secondary"}>Risk: {safetyRiskScore.level}</Badge>
+                <Badge variant="secondary">Score: {safetyRiskScore.score}</Badge>
+                <Badge variant="secondary">High Signals: {safetyRiskScore.high}</Badge>
+                <Badge variant="secondary">Watch Signals: {safetyRiskScore.watch}</Badge>
+              </div>
+              <p className="mb-2 text-xs text-slate-500">
+                Pause ratio: {Math.round(safetyRiskScore.pauseRatio * 100)}%
+              </p>
+              {safetySignals.length === 0 ? (
+                <p className="text-slate-500">No safety signals detected from current text.</p>
+              ) : (
+                safetySignals.map((signal, index) => (
+                  <div key={`${signal.label}-${index}`} className="rounded-lg border border-rose-200 bg-white p-3 dark:border-rose-900 dark:bg-slate-900">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-semibold">{signal.label}</p>
+                      <Badge variant={signal.severity === "high" ? "destructive" : "secondary"}>{signal.severity === "high" ? "High" : "Watch"}</Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Matched: {signal.matchedText}</p>
+                    <p className="mt-1 text-xs text-slate-500">{signal.context}</p>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-orange-200 bg-orange-50/60 dark:border-orange-900 dark:bg-orange-950/30">
+            <CardHeader>
+              <CardTitle className="text-base">Safety Trend Timeline</CardTitle>
+              <CardDescription>Recent risk trajectory for this subject based on note captures.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {safetyTrendHistory.length === 0 ? (
+                <p className="text-slate-500">No trend history yet for this subject.</p>
+              ) : (
+                safetyTrendHistory
+                  .slice()
+                  .reverse()
+                  .map((entry) => (
+                    <div key={`${entry.at}-${entry.score}-${entry.level}`} className="flex items-center justify-between rounded-lg border border-orange-200 bg-white px-3 py-2 dark:border-orange-900 dark:bg-slate-900">
+                      <p className="text-xs text-slate-500">{new Date(entry.at).toLocaleString()}</p>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={entry.level === "Escalate" ? "destructive" : "secondary"}>{entry.level}</Badge>
+                        <Badge variant="outline">Score {entry.score}</Badge>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-blue-200 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/30">
+            <CardHeader>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2"><ClipboardList className="h-4 w-4" /> Extracted Action Queue</CardTitle>
+                  <CardDescription>Auto-detected tasks that sound like follow-up work.</CardDescription>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">Task Confidence: {taskConfidence}%</Badge>
+                  <select
+                    className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                    value={taskDestination}
+                    onChange={(event) => setTaskDestination(event.target.value as "rn" | "provider" | "shared")}
+                  >
+                    <option value="shared">Shared Queue</option>
+                    <option value="rn">RN Queue</option>
+                    <option value="provider">Provider Queue</option>
+                  </select>
+                  <Button size="sm" variant="outline" onClick={sendActionsToProductivity}>Send To Productivity</Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {clinicalActionItems.length === 0 ? (
+                <p className="text-slate-500">No action items extracted yet.</p>
+              ) : (
+                clinicalActionItems.map((item, index) => (
+                  <div key={`${item}-${index}`} className="rounded-lg border border-blue-200 bg-white p-3 dark:border-blue-900 dark:bg-slate-900">
+                    <p><span className="font-semibold text-blue-700 dark:text-blue-300">{index + 1}.</span> {item}</p>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-emerald-200 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/30">
+            <CardHeader>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="text-base">SBAR Handoff Brief</CardTitle>
+                  <CardDescription>Operational summary ready for shift handoff or rapid update.</CardDescription>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">Signal Confidence: {signalConfidence}%</Badge>
+                  <Button size="sm" variant="outline" onClick={() => void copySbarBrief()}>Copy SBAR</Button>
+                  <Button size="sm" variant="outline" onClick={sendSbarToProductivity}>Send SBAR Tasks</Button>
+                  <Button size="sm" onClick={injectSbarIntoEditor}>Append to Editor</Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <pre className="whitespace-pre-wrap rounded-lg border border-emerald-200 bg-white p-3 text-xs leading-6 text-slate-700 dark:border-emerald-900 dark:bg-slate-900 dark:text-slate-200">
+                {sbarBrief}
+              </pre>
             </CardContent>
           </Card>
         </TabsContent>

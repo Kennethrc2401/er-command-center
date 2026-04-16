@@ -25,16 +25,26 @@ import {
   validateWorkspaceBackup,
 } from "@/lib/productivity/workspaceUtils";
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   AlertTriangle,
+  Bold,
   Briefcase,
   FileText,
   Folder,
+  Italic,
   Layout,
+  List,
   ListChecks,
+  ListOrdered,
+  Pilcrow,
+  Quote,
   Save,
   Search,
   Sheet,
   Sparkles,
+  Underline,
   Download,
   Upload,
   ClipboardCheck,
@@ -143,6 +153,8 @@ type AiOperationLog = {
 
 type TimelineFilter = "all" | "selected" | "ai" | "workflow" | "sync";
 type WorkspaceTab = "documents" | "tracker" | "slides" | "approvals" | "timeline" | "ai";
+type WorkspaceSuite = "documentation" | "operations";
+type PrintProfilePreset = "general" | "handoff" | "discharge" | "summary";
 
 type TimelineEntry = {
   id: string;
@@ -154,9 +166,29 @@ type TimelineEntry = {
   rowId?: string;
 };
 
+type ProductivityTaskInboxItem = {
+  id: string;
+  task: string;
+  owner: string;
+  destination?: "rn" | "provider" | "shared";
+  due: string;
+  priority: "Low" | "Med" | "High";
+  status: "Open" | "In Progress" | "Done";
+  estimateHours: number;
+  confidence?: number;
+  notes: string;
+  source: string;
+  createdAt: number;
+};
+
+type TaskDestinationLane = "rn" | "provider" | "shared" | "unassigned";
+
+const DOCUMENTATION_TABS: WorkspaceTab[] = ["documents", "slides", "approvals"];
+
 const STORAGE_KEY = "productivity-suite:v1";
 const RECYCLE_BIN_RETENTION_DAYS = 14;
 const WORKFLOW_REMINDER_KEY = "productivity-suite:due-reminders";
+const PRODUCTIVITY_TASK_INBOX_KEY = "productivity-suite:task-inbox";
 
 const DOC_TEMPLATES: Record<DocType, { title: string; html: string }> = {
   SOAP: {
@@ -283,10 +315,89 @@ function normalizeDocs(docs: SuiteDocument[]): SuiteDocument[] {
   }));
 }
 
+function readProductivityTaskInbox(): ProductivityTaskInboxItem[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(PRODUCTIVITY_TASK_INBOX_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is ProductivityTaskInboxItem => {
+      return Boolean(
+        item &&
+          typeof item === "object" &&
+          typeof (item as ProductivityTaskInboxItem).id === "string" &&
+          typeof (item as ProductivityTaskInboxItem).task === "string" &&
+          typeof (item as ProductivityTaskInboxItem).owner === "string" &&
+          typeof (item as ProductivityTaskInboxItem).due === "string" &&
+          typeof (item as ProductivityTaskInboxItem).priority === "string" &&
+          typeof (item as ProductivityTaskInboxItem).status === "string" &&
+          typeof (item as ProductivityTaskInboxItem).estimateHours === "number" &&
+          typeof (item as ProductivityTaskInboxItem).notes === "string" &&
+          typeof (item as ProductivityTaskInboxItem).source === "string" &&
+          typeof (item as ProductivityTaskInboxItem).createdAt === "number"
+      );
+    });
+  } catch {
+    return [];
+  }
+}
+
+function clearProductivityTaskInbox() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(PRODUCTIVITY_TASK_INBOX_KEY);
+}
+
+function toSheetRowsFromInbox(items: ProductivityTaskInboxItem[]): SheetRow[] {
+  return items.map((item) => ({
+    id: uid("row"),
+    task: item.task,
+    owner: item.destination === "rn" ? "RN" : item.destination === "provider" ? "Provider" : item.owner,
+    due: item.due,
+    estimateHours: item.estimateHours,
+    completedHours: 0,
+    priority: item.priority,
+    status: item.status,
+    notes: [
+      item.notes,
+      item.destination ? `Destination: ${item.destination.toUpperCase()}` : "",
+      typeof item.confidence === "number" ? `Confidence: ${item.confidence}%` : "",
+    ]
+      .filter(Boolean)
+      .join(" | "),
+  }));
+}
+
+function inferTaskDestinationLane(row: SheetRow): TaskDestinationLane {
+  const notes = row.notes.toLowerCase();
+  const owner = row.owner.toLowerCase();
+
+  if (notes.includes("destination: rn") || /\brn\b|charge rn/.test(owner)) return "rn";
+  if (notes.includes("destination: provider") || /provider|doctor|attending|md|do/.test(owner)) return "provider";
+  if (notes.includes("destination: shared") || /clinical team/.test(owner)) return "shared";
+  return "unassigned";
+}
+
+function extractDocumentSectionText(html: string, section: "header" | "footer"): string {
+  if (!html) return "";
+  const pattern = section === "header"
+    ? /<header\s+data-doc-header="true"[^>]*>([\s\S]*?)<\/header>/i
+    : /<footer\s+data-doc-footer="true"[^>]*>([\s\S]*?)<\/footer>/i;
+  const match = html.match(pattern);
+  if (!match) return "";
+  return stripHtml(match[1]).replace(/\s+/g, " ").trim();
+}
+
+function getWorkspaceSuiteForTab(tab: WorkspaceTab): WorkspaceSuite {
+  return DOCUMENTATION_TABS.includes(tab) ? "documentation" : "operations";
+}
+
 function ProductivitySuitePage() {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   const docxInputRef = useRef<HTMLInputElement | null>(null);
+  const docHeaderInputRef = useRef<HTMLInputElement | null>(null);
+  const docFooterInputRef = useRef<HTMLInputElement | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const workspaceInputRef = useRef<HTMLInputElement | null>(null);
   const aiApplyShortcutRef = useRef<() => void>(() => {});
@@ -336,6 +447,9 @@ function ProductivitySuitePage() {
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
   const [largeText, setLargeText] = useState(false);
+  const [showLeftRailMobile, setShowLeftRailMobile] = useState(true);
+  const [densityMode, setDensityMode] = useState<"comfortable" | "compact">("comfortable");
+  const [docListView, setDocListView] = useState<"cards" | "list">("cards");
   const [selectedTimelineEntryId, setSelectedTimelineEntryId] = useState<string | null>(null);
   const [selectedSheetRowId, setSelectedSheetRowId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("documents");
@@ -344,11 +458,91 @@ function ProductivitySuitePage() {
   const [favoriteDocIds, setFavoriteDocIds] = useState<string[]>([]);
   const [recentDocIds, setRecentDocIds] = useState<string[]>([]);
   const [radarNow, setRadarNow] = useState(() => Date.now());
+  const [trackerLaneFilter, setTrackerLaneFilter] = useState<"all" | TaskDestinationLane>("all");
+  const [docEditorFontFamily, setDocEditorFontFamily] = useState("Calibri, 'Segoe UI', sans-serif");
+  const [docEditorFontSize, setDocEditorFontSize] = useState(15);
+  const [docEditorLineHeight, setDocEditorLineHeight] = useState(1.6);
+  const [docEditorZoom, setDocEditorZoom] = useState(100);
+  const [docEditorPrintLayout, setDocEditorPrintLayout] = useState(true);
+  const [docEditorShowRuler, setDocEditorShowRuler] = useState(true);
+  const [docEditorShowPageGuides, setDocEditorShowPageGuides] = useState(true);
+  const [docEditorPagePreset, setDocEditorPagePreset] = useState<"Letter" | "A4">("Letter");
+  const [docEditorMargins, setDocEditorMargins] = useState({ top: 56, right: 64, bottom: 56, left: 64 });
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
+  const [printProfilePreset, setPrintProfilePreset] = useState<PrintProfilePreset>("general");
+  const [printIncludePageNumbers, setPrintIncludePageNumbers] = useState(true);
 
   const selectedDoc = useMemo(
     () => docs.find((d) => d.id === selectedDocId) ?? null,
     [docs, selectedDocId]
   );
+
+  const selectedDocPlainText = useMemo(
+    () => stripHtml(selectedDoc?.content ?? "").replace(/\s+/g, " ").trim(),
+    [selectedDoc?.content]
+  );
+
+  const selectedDocWordCount = useMemo(
+    () => (selectedDocPlainText ? selectedDocPlainText.split(/\s+/).length : 0),
+    [selectedDocPlainText]
+  );
+
+  const selectedDocCharacterCount = useMemo(
+    () => selectedDocPlainText.length,
+    [selectedDocPlainText]
+  );
+
+  const selectedDocReadMinutes = useMemo(
+    () => Math.max(1, Math.ceil(selectedDocWordCount / 220)),
+    [selectedDocWordCount]
+  );
+
+  const selectedDocHeaderText = useMemo(
+    () => extractDocumentSectionText(selectedDoc?.content ?? "", "header"),
+    [selectedDoc?.content]
+  );
+
+  const selectedDocFooterText = useMemo(
+    () => extractDocumentSectionText(selectedDoc?.content ?? "", "footer"),
+    [selectedDoc?.content]
+  );
+
+  const printPreviewModel = useMemo(() => {
+    const charsPerPageByProfile: Record<PrintProfilePreset, number> = {
+      general: 3000,
+      handoff: 2400,
+      discharge: 2600,
+      summary: 3200,
+    };
+
+    const body = selectedDocPlainText || "(empty document)";
+    const sections = [selectedDocHeaderText, body, selectedDocFooterText].filter(Boolean).join("\n\n");
+    const charsPerPage = charsPerPageByProfile[printProfilePreset];
+    const totalPages = Math.max(1, Math.ceil(sections.length / charsPerPage));
+    const previewPages = Array.from({ length: Math.min(totalPages, 3) }, (_, index) => {
+      const start = index * charsPerPage;
+      const end = start + charsPerPage;
+      return sections.slice(start, end) || "(empty page)";
+    });
+
+    return {
+      totalPages,
+      previewPages,
+      charsPerPage,
+    };
+  }, [printProfilePreset, selectedDocFooterText, selectedDocHeaderText, selectedDocPlainText]);
+
+  const editorPageMaxWidth = docEditorPagePreset === "Letter" ? 920 : 880;
+  const editorPageHeight = docEditorPagePreset === "Letter" ? 1080 : 1120;
+  const printGuideScaleByProfile: Record<PrintProfilePreset, number> = {
+    general: 1,
+    handoff: 0.94,
+    discharge: 1,
+    summary: 1.06,
+  };
+  const editorPageGuideHeight = Math.round(editorPageHeight * printGuideScaleByProfile[printProfilePreset]);
+  const editorLeftMarginPct = Math.max(0, Math.min(50, (docEditorMargins.left / editorPageMaxWidth) * 100));
+  const editorRightMarginPct = Math.max(0, Math.min(50, (docEditorMargins.right / editorPageMaxWidth) * 100));
 
   const effectiveLeftVersionId = leftVersionId || selectedDoc?.versions[0]?.id || "";
   const effectiveRightVersionId = rightVersionId || selectedDoc?.versions[1]?.id || selectedDoc?.versions[0]?.id || "";
@@ -616,6 +810,104 @@ function ProductivitySuitePage() {
     return Math.round(total / sheetRows.length);
   }, [sheetRows]);
 
+  const sortedSheetRows = useMemo(() => {
+    const now = radarNow;
+    const scoreRow = (row: SheetRow) => {
+      const dueAt = row.due ? new Date(`${row.due}T23:59:59`).getTime() : Number.NaN;
+      const hasDue = Number.isFinite(dueAt);
+      const isOverdue = hasDue && dueAt < now && row.status !== "Done";
+      const dueSoon = hasDue && dueAt <= now + 2 * 60 * 60 * 1000 && row.status !== "Done";
+      const highPriority = row.priority === "High" && row.status !== "Done";
+
+      return {
+        row,
+        dueAt,
+        score: isOverdue ? 0 : dueSoon ? 1 : highPriority ? 2 : hasDue ? 3 : 4,
+        isOverdue,
+      };
+    };
+
+    return [...sheetRows]
+      .map(scoreRow)
+      .sort((a, b) => a.score - b.score || (a.dueAt || Number.POSITIVE_INFINITY) - (b.dueAt || Number.POSITIVE_INFINITY) || a.row.task.localeCompare(b.row.task))
+      .map((entry) => entry.row);
+  }, [radarNow, sheetRows]);
+
+  const trackerLaneCounts = useMemo(() => {
+    const counts = {
+      rn: 0,
+      provider: 0,
+      shared: 0,
+      unassigned: 0,
+    };
+
+    sortedSheetRows.forEach((row) => {
+      const lane = inferTaskDestinationLane(row);
+      counts[lane] += 1;
+    });
+
+    return counts;
+  }, [sortedSheetRows]);
+
+  const visibleTrackerRows = useMemo(() => {
+    if (trackerLaneFilter === "all") return sortedSheetRows;
+    return sortedSheetRows.filter((row) => inferTaskDestinationLane(row) === trackerLaneFilter);
+  }, [sortedSheetRows, trackerLaneFilter]);
+  const workspaceSuite = getWorkspaceSuiteForTab(activeTab);
+  const suiteHeaderAccentClass = workspaceSuite === "documentation"
+    ? "from-blue-50/40 to-cyan-50/20 dark:from-blue-950/20 dark:to-cyan-950/10"
+    : "from-emerald-50/40 to-amber-50/20 dark:from-emerald-950/20 dark:to-amber-950/10";
+  const suiteTabPanelClass = workspaceSuite === "documentation"
+    ? "rounded-xl bg-blue-50/30 p-2 dark:bg-blue-950/15"
+    : "rounded-xl bg-emerald-50/20 p-2 dark:bg-emerald-950/10";
+  const actionBarClass = "flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/60";
+  const emptyStateClass = "rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-3 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-400";
+  const interactiveCardClass = "transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 motion-reduce:transform-none";
+  const interactiveButtonClass = "transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 motion-reduce:transform-none";
+  const interactiveListItemClass = "transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 motion-reduce:transform-none";
+
+  const shiftRiskSnapshot = useMemo(() => {
+    const now = radarNow;
+    const today = new Date(now).toISOString().slice(0, 10);
+
+    let overdueHigh = 0;
+    let dueTodayHigh = 0;
+    let unassignedOpen = 0;
+
+    for (const row of sheetRows) {
+      const isOpen = row.status !== "Done";
+      if (!isOpen) continue;
+
+      if (!row.owner.trim()) {
+        unassignedOpen += 1;
+      }
+
+      if (row.priority === "High") {
+        if (row.due) {
+          const dueAt = new Date(`${row.due}T23:59:59`).getTime();
+          if (Number.isFinite(dueAt) && dueAt < now) {
+            overdueHigh += 1;
+          }
+        }
+
+        if (row.due === today) {
+          dueTodayHigh += 1;
+        }
+      }
+    }
+
+    const score = overdueHigh * 3 + dueTodayHigh * 2 + unassignedOpen * 2;
+    const level = score >= 8 ? "Escalate" : score >= 4 ? "Watch" : "Stable";
+
+    return {
+      overdueHigh,
+      dueTodayHigh,
+      unassignedOpen,
+      score,
+      level,
+    };
+  }, [radarNow, sheetRows]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -682,6 +974,60 @@ function ProductivitySuitePage() {
       if (timeoutId !== null) {
         window.clearTimeout(timeoutId);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const consumeInbox = () => {
+      const inboxItems = readProductivityTaskInbox();
+      if (inboxItems.length === 0) return;
+
+      let insertedCount = 0;
+
+      setSheetRows((current) => {
+        const existingSignatures = new Set(
+          current.map((row) => `${row.task.trim().toLowerCase()}::${row.owner.trim().toLowerCase()}::${row.due}::${row.priority}`)
+        );
+
+        const incomingRows = toSheetRowsFromInbox(inboxItems).filter((row) => {
+          const signature = `${row.task.trim().toLowerCase()}::${row.owner.trim().toLowerCase()}::${row.due}::${row.priority}`;
+          return !existingSignatures.has(signature);
+        });
+
+        if (incomingRows.length === 0) {
+          return current;
+        }
+
+        insertedCount = incomingRows.length;
+
+        return [...incomingRows, ...current];
+      });
+
+      clearProductivityTaskInbox();
+      if (insertedCount > 0) {
+        toast.success(`Imported ${insertedCount} scribe task(s) into tracker.`);
+      } else {
+        toast.message("Scribe tasks were already present in tracker. Inbox cleared.");
+      }
+    };
+
+    consumeInbox();
+
+    const onFocus = () => consumeInbox();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === PRODUCTIVITY_TASK_INBOX_KEY) {
+        consumeInbox();
+      }
+    };
+
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
@@ -1030,6 +1376,86 @@ function ProductivitySuitePage() {
     toast.success("Rapid rounds task added to tracker.");
   };
 
+  const createEscalationHuddleTask = () => {
+    const due = new Date().toISOString().slice(0, 10);
+    const task: SheetRow = {
+      id: uid("row"),
+      task: "Escalation huddle: review overdue high-priority follow-ups",
+      owner: "Charge RN",
+      due,
+      estimateHours: 0.5,
+      completedHours: 0,
+      priority: "High",
+      status: "Open",
+      notes: "Confirm owner assignment, barriers, and next checkpoint time.",
+    };
+    setSheetRows((current) => [task, ...current]);
+    openWorkspaceTab("tracker");
+    toast.success("Escalation huddle task added.");
+  };
+
+  const assignCriticalOwners = () => {
+    let assigned = 0;
+    setSheetRows((current) =>
+      current.map((row) => {
+        if (row.status === "Done" || row.priority !== "High" || row.owner.trim()) {
+          return row;
+        }
+        assigned += 1;
+        return {
+          ...row,
+          owner: "Charge RN",
+          notes: row.notes
+            ? `${row.notes} Auto-assigned to Charge RN for escalation coverage.`
+            : "Auto-assigned to Charge RN for escalation coverage.",
+        };
+      })
+    );
+
+    if (assigned === 0) {
+      toast.message("No unassigned high-priority tasks found.");
+      return;
+    }
+
+    toast.success(`Assigned ${assigned} high-priority task(s) to Charge RN.`);
+  };
+
+  const generateShiftHandoffBrief = () => {
+    const targets = sortedSheetRows
+      .filter((row) => row.status !== "Done" && row.priority === "High")
+      .slice(0, 6);
+
+    if (targets.length === 0) {
+      toast.message("No high-priority open tasks to summarize.");
+      return;
+    }
+
+    const now = nowTs();
+    const handoffDoc = makeDocument("Handoff", "Clinical", ["handoff", "shift", "risk-brief"]);
+    handoffDoc.title = `Shift Risk Brief ${new Date(now).toLocaleDateString()}`;
+    handoffDoc.content = [
+      "<h2>Escalation Overview</h2>",
+      `<p>Risk level: <strong>${shiftRiskSnapshot.level}</strong> (score ${shiftRiskSnapshot.score}).</p>`,
+      "<h2>Critical Follow-ups</h2>",
+      `<ul>${targets
+        .map(
+          (row) =>
+            `<li><strong>${escapeHtml(row.task || "Untitled task")}</strong> - owner: ${escapeHtml(
+              row.owner || "Unassigned"
+            )}, due: ${escapeHtml(row.due || "n/a")}, status: ${escapeHtml(row.status)}</li>`
+        )
+        .join("")}</ul>`,
+      "<h2>Next Shift Priorities</h2><p>Confirm owner, blocker, and callback plan for each item above.</p>",
+    ].join("");
+    handoffDoc.audit.unshift({ at: now, action: "bundle", detail: "Generated shift risk brief from tracker" });
+
+    setDocs((current) => [handoffDoc, ...current]);
+    setSelectedDocId(handoffDoc.id);
+    setRecentDocIds((current) => [handoffDoc.id, ...current.filter((id) => id !== handoffDoc.id)].slice(0, 10));
+    openWorkspaceTab("documents");
+    toast.success("Shift handoff brief generated.");
+  };
+
   const deleteDocument = (id: string) => {
     const target = docs.find((doc) => doc.id === id);
     if (!target) return;
@@ -1105,6 +1531,106 @@ function ProductivitySuitePage() {
     setCheckpointName("");
     toast.success("Version snapshot saved.");
   }, [checkpointName, selectedDoc, updateSelectedDoc]);
+
+  const updateDocumentSectionText = (section: "header" | "footer", nextText: string) => {
+    if (!selectedDoc) return;
+
+    const label = section === "header" ? "Header" : "Footer";
+    const trimmed = nextText.trim();
+    const escaped = escapeHtml(trimmed).replace(/\n/g, "<br/>");
+    const pattern = section === "header"
+      ? /<header\s+data-doc-header="true"[^>]*>[\s\S]*?<\/header>/i
+      : /<footer\s+data-doc-footer="true"[^>]*>[\s\S]*?<\/footer>/i;
+
+    const block = section === "header"
+      ? `<header data-doc-header="true" style="border-bottom:1px solid #cbd5e1;padding:8px 0;margin-bottom:16px;font-size:12px;color:#334155;">${escaped}</header>`
+      : `<footer data-doc-footer="true" style="border-top:1px solid #cbd5e1;padding:8px 0;margin-top:16px;font-size:12px;color:#334155;">${escaped}</footer>`;
+
+    let nextContent = selectedDoc.content;
+
+    if (!trimmed) {
+      nextContent = nextContent.replace(pattern, "");
+    } else if (pattern.test(nextContent)) {
+      nextContent = nextContent.replace(pattern, block);
+    } else if (section === "header") {
+      nextContent = `${block}${nextContent}`;
+    } else {
+      nextContent = `${nextContent}${block}`;
+    }
+
+    if (nextContent === selectedDoc.content) {
+      toast.message(`${label} unchanged.`);
+      return;
+    }
+
+    updateSelectedDoc((doc) => withAudit({ ...doc, content: nextContent }, "edit", `${label} updated`));
+    if (editorRef.current) {
+      editorRef.current.innerHTML = nextContent;
+    }
+    toast.success(trimmed ? `${label} updated.` : `${label} removed.`);
+  };
+
+  const applyPrintTemplatePreset = (preset: PrintProfilePreset) => {
+    setPrintProfilePreset(preset);
+    setDocEditorPrintLayout(true);
+    setDocEditorShowPageGuides(true);
+    setPrintIncludePageNumbers(true);
+
+    if (preset === "handoff") {
+      const headerTemplate = "ED Shift Handoff | Unit: ____ | Date/Time: ____ | From: ____ | To: ____";
+      const footerTemplate = "Escalation: Charge RN ____ | On-call MD ____ | Callback ____ | PHI confidential";
+      setDocEditorPagePreset("Letter");
+      setDocEditorMargins({ top: 52, right: 58, bottom: 52, left: 58 });
+      setDocEditorFontFamily("Calibri, 'Segoe UI', sans-serif");
+      setDocEditorFontSize(14);
+      setDocEditorLineHeight(1.5);
+      updateDocumentSectionText("header", headerTemplate);
+      updateDocumentSectionText("footer", footerTemplate);
+      if (docHeaderInputRef.current) docHeaderInputRef.current.value = headerTemplate;
+      if (docFooterInputRef.current) docFooterInputRef.current.value = footerTemplate;
+      toast.success("Applied Shift Handoff print template.");
+      return;
+    }
+
+    if (preset === "discharge") {
+      const headerTemplate = "Discharge Summary | Patient: ____ | MRN: ____ | DOB: ____ | Date: ____";
+      const footerTemplate = "Return precautions reviewed | Follow-up within ____ days | 24/7 triage line: ____";
+      setDocEditorPagePreset("Letter");
+      setDocEditorMargins({ top: 56, right: 64, bottom: 64, left: 64 });
+      setDocEditorFontFamily("Cambria, Georgia, serif");
+      setDocEditorFontSize(15);
+      setDocEditorLineHeight(1.7);
+      updateDocumentSectionText("header", headerTemplate);
+      updateDocumentSectionText("footer", footerTemplate);
+      if (docHeaderInputRef.current) docHeaderInputRef.current.value = headerTemplate;
+      if (docFooterInputRef.current) docFooterInputRef.current.value = footerTemplate;
+      toast.success("Applied Discharge print template.");
+      return;
+    }
+
+    if (preset === "summary") {
+      const headerTemplate = "Clinical Summary | Service: ____ | Encounter Date: ____ | Attending: ____";
+      const footerTemplate = "Prepared by: ____ | Reviewed at: ____ | Contact: ____";
+      setDocEditorPagePreset("A4");
+      setDocEditorMargins({ top: 54, right: 56, bottom: 54, left: 56 });
+      setDocEditorFontFamily("'Times New Roman', serif");
+      setDocEditorFontSize(15);
+      setDocEditorLineHeight(1.6);
+      updateDocumentSectionText("header", headerTemplate);
+      updateDocumentSectionText("footer", footerTemplate);
+      if (docHeaderInputRef.current) docHeaderInputRef.current.value = headerTemplate;
+      if (docFooterInputRef.current) docFooterInputRef.current.value = footerTemplate;
+      toast.success("Applied Clinical Summary print template.");
+      return;
+    }
+
+    setDocEditorPagePreset("Letter");
+    setDocEditorMargins({ top: 56, right: 64, bottom: 56, left: 64 });
+    setDocEditorFontFamily("Calibri, 'Segoe UI', sans-serif");
+    setDocEditorFontSize(15);
+    setDocEditorLineHeight(1.6);
+    toast.success("Applied General print template.");
+  };
 
   const openWorkspaceTab = (tab: WorkspaceTab) => {
     setActiveTab(tab);
@@ -2017,39 +2543,122 @@ function ProductivitySuitePage() {
     );
   };
 
+  const roleQuickActions = userRole === "admin"
+    ? [
+        { label: "Open Timeline", description: "Review work and sync events.", run: () => openWorkspaceTab("timeline") },
+        { label: "Export Workspace", description: "Backup all documents and tracker rows.", run: exportWorkspaceBackup },
+        { label: "Assign Critical Owners", description: "Auto-assign unowned high-priority tasks.", run: assignCriticalOwners },
+      ]
+    : userRole === "nurse"
+      ? [
+          { label: "Add Rapid Rounds", description: "Create a high-priority bedside task.", run: addRapidRoundsTask },
+          { label: "New Handoff", description: "Start a new handoff note.", run: () => newDocument("Handoff") },
+          { label: "Shift Risk Brief", description: "Generate handoff summary from open critical tasks.", run: generateShiftHandoffBrief },
+        ]
+      : [
+          { label: "New SOAP Note", description: "Create a fresh clinical document.", run: () => newDocument("SOAP") },
+          { label: "Add Task", description: "Log a follow-up in the tracker.", run: addSheetRow },
+          { label: "Open AI Assist", description: "Move into AI productivity tools.", run: () => openWorkspaceTab("ai") },
+        ];
+
   return (
-    <main className={`mx-auto w-full max-w-7xl space-y-6 p-4 md:p-8 ${highContrast ? "bg-black text-white" : ""} ${largeText ? "text-base" : ""}`}>
-      <header className="space-y-2">
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600">Productivity Workspace</p>
-        <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-slate-100">
-          Clinical Productivity Suite
-        </h1>
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          Word-like documents, Excel-like trackers, slide composition, approvals, and AI helpers in one dashboard page.
-        </p>
-        <div className="flex flex-wrap gap-2 pt-1">
-          <select
-            className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
-            value={userRole}
-            onChange={(e) => setUserRole(e.target.value as UserRole)}
-          >
-            <option value="viewer">Viewer</option>
-            <option value="clinician">Clinician</option>
-            <option value="nurse">Nurse</option>
-            <option value="admin">Admin</option>
-          </select>
-          <Button size="sm" variant={highContrast ? "default" : "outline"} onClick={() => setHighContrast((v) => !v)}>
-            {highContrast ? "High Contrast: On" : "High Contrast: Off"}
-          </Button>
-          <Button size="sm" variant={largeText ? "default" : "outline"} onClick={() => setLargeText((v) => !v)}>
-            {largeText ? "Large Text: On" : "Large Text: Off"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setShowShortcutHelp((v) => !v)}>
-            {showShortcutHelp ? "Hide Shortcut Map" : "Show Shortcut Map"}
+    <main className={`relative isolate mx-auto w-full max-w-7xl space-y-6 overflow-x-hidden p-4 md:p-8 ${highContrast ? "bg-black text-white" : ""} ${largeText ? "text-base" : ""}`}>
+      <header className={`space-y-4 rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white p-4 shadow-sm dark:border-slate-800 dark:via-slate-950 ${suiteHeaderAccentClass}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-2">
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Productivity Workspace</p>
+            <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-slate-100">
+              Clinical Productivity Suite
+            </h1>
+            <p className="max-w-3xl text-sm text-slate-600 dark:text-slate-300">
+              Word-like documents, Excel-like trackers, slide composition, approvals, and AI helpers in one organized control tower.
+            </p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => setCommandOpen(true)}>
+            <Search className="mr-1 h-4 w-4" />Quick Jump
           </Button>
         </div>
+
+        <div className="grid gap-3 lg:grid-cols-[1.3fr,1fr]">
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/70">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Workspace Controls</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <select
+                className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                value={userRole}
+                onChange={(e) => setUserRole(e.target.value as UserRole)}
+              >
+                <option value="viewer">Viewer</option>
+                <option value="clinician">Clinician</option>
+                <option value="nurse">Nurse</option>
+                <option value="admin">Admin</option>
+              </select>
+              <Button size="sm" variant={highContrast ? "default" : "outline"} onClick={() => setHighContrast((v) => !v)}>
+                {highContrast ? "High Contrast: On" : "High Contrast: Off"}
+              </Button>
+              <Button size="sm" variant={largeText ? "default" : "outline"} onClick={() => setLargeText((v) => !v)}>
+                {largeText ? "Large Text: On" : "Large Text: Off"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setShowShortcutHelp((v) => !v)}>
+                {showShortcutHelp ? "Hide Shortcut Map" : "Show Shortcut Map"}
+              </Button>
+              <Button size="sm" variant="outline" className="xl:hidden" onClick={() => setShowLeftRailMobile((v) => !v)}>
+                {showLeftRailMobile ? "Hide Rail" : "Show Rail"}
+              </Button>
+              <select
+                className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                value={densityMode}
+                onChange={(e) => setDensityMode(e.target.value as "comfortable" | "compact")}
+              >
+                <option value="comfortable">Density: Comfortable</option>
+                <option value="compact">Density: Compact</option>
+              </select>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge variant="secondary">Documents {docs.length}</Badge>
+              <Badge variant="secondary">Open Tasks {openCount}</Badge>
+              <Badge variant="secondary">High Priority {highPriorityCount}</Badge>
+              <Badge variant="secondary">Slides {slides.length}</Badge>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/70">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Backup & Transfer</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={exportWorkspaceBackup}>
+                <Download className="mr-1 h-4 w-4" />Workspace
+              </Button>
+              <Button size="sm" variant="outline" onClick={exportSelectedDocumentPack} disabled={!selectedDoc}>
+                <Download className="mr-1 h-4 w-4" />Doc Pack
+              </Button>
+              <Button size="sm" variant="outline" onClick={exportAuditPack}>
+                <Download className="mr-1 h-4 w-4" />Audit
+              </Button>
+              <Button size="sm" variant="outline" onClick={exportRecyclePack}>
+                <Download className="mr-1 h-4 w-4" />Recycle
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => workspaceInputRef.current?.click()}>
+                <Upload className="mr-1 h-4 w-4" />Import
+              </Button>
+              <input
+                ref={workspaceInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    void importWorkspaceBackup(file);
+                  }
+                  e.target.value = "";
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
         {showShortcutHelp && (
-          <div className="rounded-md border border-slate-300 p-3 text-xs dark:border-slate-700">
+          <div className="rounded-md border border-slate-300 bg-white/80 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/70">
             <p className="font-semibold uppercase tracking-wider text-slate-500">Global Shortcut Map</p>
             <p>Ctrl/Cmd+K or Ctrl+/ : Open Quick Jump</p>
             <p className="mt-1">Ctrl/Cmd+S: Save checkpoint</p>
@@ -2059,39 +2668,6 @@ function ProductivitySuitePage() {
             <p>Ctrl/Cmd+Alt+R: Redo AI apply</p>
           </div>
         )}
-        <div className="flex flex-wrap gap-2 pt-1">
-          <Button size="sm" variant="outline" onClick={exportWorkspaceBackup}>
-            <Download className="mr-1 h-4 w-4" />Export Workspace Backup
-          </Button>
-          <Button size="sm" variant="outline" onClick={exportSelectedDocumentPack} disabled={!selectedDoc}>
-            <Download className="mr-1 h-4 w-4" />Export Doc Pack
-          </Button>
-          <Button size="sm" variant="outline" onClick={exportAuditPack}>
-            <Download className="mr-1 h-4 w-4" />Export Audit Pack
-          </Button>
-          <Button size="sm" variant="outline" onClick={exportRecyclePack}>
-            <Download className="mr-1 h-4 w-4" />Export Recycle Pack
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => workspaceInputRef.current?.click()}>
-            <Upload className="mr-1 h-4 w-4" />Import Workspace Backup
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => setCommandOpen(true)}>
-            <Search className="mr-1 h-4 w-4" />Quick Jump
-          </Button>
-          <input
-            ref={workspaceInputRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                void importWorkspaceBackup(file);
-              }
-              e.target.value = "";
-            }}
-          />
-        </div>
 
         <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 dark:border-blue-900 dark:bg-blue-950/30">
           <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-700 dark:text-blue-300">Healthcare Quick Start</p>
@@ -2099,144 +2675,268 @@ function ProductivitySuitePage() {
             Launch common ER productivity bundles for shift huddles, discharge coordination, and rapid rounds in one click.
           </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <Button size="sm" variant="outline" onClick={createShiftHuddleBundle} className="justify-start">
+            <Button size="sm" variant="outline" onClick={createShiftHuddleBundle} className={`justify-start ${interactiveButtonClass}`}>
               <Briefcase className="mr-2 h-4 w-4" />Shift Huddle Bundle
             </Button>
-            <Button size="sm" variant="outline" onClick={createDischargeBundle} className="justify-start">
+            <Button size="sm" variant="outline" onClick={createDischargeBundle} className={`justify-start ${interactiveButtonClass}`}>
               <FileText className="mr-2 h-4 w-4" />Discharge Bundle
             </Button>
-            <Button size="sm" variant="outline" onClick={addRapidRoundsTask} className="justify-start">
+            <Button size="sm" variant="outline" onClick={addRapidRoundsTask} className={`justify-start ${interactiveButtonClass}`}>
               <ListChecks className="mr-2 h-4 w-4" />Rapid Rounds Task
             </Button>
           </div>
         </div>
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Documents</p>
-            <p className="mt-1 text-2xl font-black">{docs.length}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Open Tasks</p>
-            <p className="mt-1 text-2xl font-black">{openCount}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-xs uppercase tracking-wider text-slate-500">High Priority</p>
-            <p className="mt-1 text-2xl font-black">{highPriorityCount}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Slides</p>
-            <p className="mt-1 text-2xl font-black">{slides.length}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-xs uppercase tracking-wider text-slate-500">Recent Actions</p>
-                <p className="mt-1 text-2xl font-black">{recentActions.length}</p>
+      <div className={`grid items-start ${densityMode === "compact" ? "gap-3" : "gap-4"} xl:grid-cols-[280px,minmax(0,1fr)]`}>
+        <aside className={`${showLeftRailMobile ? "block" : "hidden"} space-y-4 xl:block xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto xl:pr-1 xl:shadow-[inset_0_10px_8px_-10px_rgba(15,23,42,0.28),inset_0_-10px_8px_-10px_rgba(15,23,42,0.28)]`}>
+          <Card className={`border-slate-200 bg-slate-50/60 shadow-sm dark:border-slate-800 dark:bg-slate-900/40 ${interactiveCardClass}`}>
+            <CardHeader className="border-b border-slate-200 pb-3 dark:border-slate-700">
+              <CardTitle className="text-base">Workspace Focus</CardTitle>
+              <CardDescription>
+                A split view keeps document authoring separate from operational execution.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 pt-3">
+              <Button
+                type="button"
+                className="w-full justify-start"
+                variant={workspaceSuite === "documentation" ? "default" : "outline"}
+                onClick={() => {
+                  openWorkspaceTab("documents");
+                }}
+              >
+                <FileText className="mr-2 h-4 w-4" />Documentation Suite
+              </Button>
+              <Button
+                type="button"
+                className="w-full justify-start"
+                variant={workspaceSuite === "operations" ? "default" : "outline"}
+                onClick={() => {
+                  openWorkspaceTab("tracker");
+                }}
+              >
+                <Sheet className="mr-2 h-4 w-4" />Operations Suite
+              </Button>
+              <div className="mt-3 space-y-1 border-t border-slate-200 pt-3 dark:border-slate-700">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Quick Navigation</p>
+                <Button size="sm" variant="ghost" className="w-full justify-start" onClick={() => openWorkspaceTab("documents")}>Docs</Button>
+                <Button size="sm" variant="ghost" className="w-full justify-start" onClick={() => openWorkspaceTab("tracker")}>Tracker</Button>
+                <Button size="sm" variant="ghost" className="w-full justify-start" onClick={() => openWorkspaceTab("timeline")}>Timeline</Button>
+                <Button size="sm" variant="ghost" className="w-full justify-start" onClick={() => openWorkspaceTab("ai")}>AI Assist</Button>
               </div>
-              <Button size="sm" variant="outline" onClick={() => openWorkspaceTab("timeline")}>Open Timeline</Button>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1">
-              <Badge variant="secondary">Docs {recentActionBreakdown.docs}</Badge>
-              <Badge variant="secondary">AI {recentActionBreakdown.ai}</Badge>
-              <Badge variant="secondary">Tasks {recentActionBreakdown.workflow}</Badge>
-              <Badge variant="secondary">Sync {recentActionBreakdown.sync}</Badge>
-            </div>
-            <div className="mt-3 space-y-2">
-              {recentActions.length === 0 ? (
-                <p className="text-xs text-slate-500">No actions yet.</p>
-              ) : (
-                recentActions.map((entry) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    onClick={() => {
-                      if (entry.docId) {
-                        openWorkspaceDoc(entry.docId);
-                        return;
-                      }
-                      if (entry.rowId) {
-                        openWorkspaceSheetRow(entry.rowId);
-                        return;
-                      }
-                      openWorkspaceTimelineEntry(entry.id);
-                    }}
-                    className="w-full rounded-md border border-slate-200 px-2 py-1 text-left text-[11px] transition hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:hover:bg-blue-950/20"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate font-semibold">{entry.title}</span>
-                      <Badge variant="outline">{entry.source}</Badge>
-                    </div>
-                    <p className="truncate text-slate-500">{entry.detail}</p>
-                  </button>
-                ))
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </section>
+            </CardContent>
+          </Card>
 
-      <section>
-        <Card className="border-rose-200 bg-rose-50/50 dark:border-rose-900 dark:bg-rose-950/20">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-300" />
-              Critical Follow-ups Radar
-            </CardTitle>
-            <CardDescription>
-              High-priority tracker tasks due within the next 2 hours (or overdue) are surfaced here first.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {criticalFollowUps.length === 0 ? (
-              <p className="text-sm text-slate-500 dark:text-slate-400">No high-priority follow-ups are currently open.</p>
-            ) : (
-              <div className="grid gap-2 md:grid-cols-2">
-                {criticalFollowUps.map((entry) => (
-                  <button
-                    key={entry.row.id}
+          {roleQuickActions.length > 0 && (
+            <Card className={`border-sky-200 bg-sky-50/50 shadow-sm dark:border-sky-900 dark:bg-sky-950/20 ${interactiveCardClass}`}>
+              <CardHeader className="border-b border-sky-200 pb-3 dark:border-sky-900/60">
+                <CardTitle className="text-base">Role Quick Actions</CardTitle>
+                <CardDescription>
+                  One-click actions for the selected role.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2 pt-3">
+                {roleQuickActions.map((action) => (
+                  <Button
+                    key={action.label}
                     type="button"
-                    onClick={() => openWorkspaceSheetRow(entry.row.id)}
-                    className="rounded-lg border border-rose-200 bg-white px-3 py-2 text-left transition hover:border-rose-300 hover:bg-rose-50 dark:border-rose-900 dark:bg-slate-900 dark:hover:bg-rose-950/20"
+                    variant="outline"
+                    onClick={action.run}
+                    className="h-auto w-full flex-col items-start justify-start gap-1 whitespace-normal py-2 text-left"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{entry.row.task || "Untitled task"}</p>
-                      <Badge variant={entry.isOverdue ? "destructive" : "outline"}>
-                        {entry.isOverdue ? "Overdue" : entry.hasDue ? "Due Soon" : "No Due"}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {entry.row.owner || "Unassigned"}{" • "}{entry.row.status}{" • "}Due: {entry.row.due || "n/a"}
-                    </p>
-                  </button>
+                    <span className="text-sm font-semibold">{action.label}</span>
+                    <span className="text-xs font-normal text-slate-500 dark:text-slate-400">{action.description}</span>
+                  </Button>
                 ))}
+              </CardContent>
+            </Card>
+          )}
+
+          <Card className={`shadow-sm ${interactiveCardClass}`}>
+            <CardHeader className="border-b border-slate-200 pb-3 dark:border-slate-700">
+              <CardTitle className="text-base">Recent Activity</CardTitle>
+              <CardDescription>
+                Jump back into your latest edits and workflow updates.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 pt-3">
+              <div className="flex items-center justify-between">
+                <Badge variant="secondary">{recentActions.length} recent</Badge>
+                <Button size="sm" variant="outline" onClick={() => openWorkspaceTab("timeline")}>Open Timeline</Button>
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </section>
+              <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                {recentActions.length === 0 ? (
+                  <p className="text-xs text-slate-500">No actions yet.</p>
+                ) : (
+                  recentActions.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      onClick={() => {
+                        if (entry.docId) {
+                          openWorkspaceDoc(entry.docId);
+                          return;
+                        }
+                        if (entry.rowId) {
+                          openWorkspaceSheetRow(entry.rowId);
+                          return;
+                        }
+                        openWorkspaceTimelineEntry(entry.id);
+                      }}
+                      className={`w-full rounded-md border border-slate-200 px-2 py-1 text-left text-[11px] transition hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:hover:bg-blue-950/20 ${interactiveListItemClass}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-semibold">{entry.title}</span>
+                        <Badge variant="outline">{entry.source}</Badge>
+                      </div>
+                      <p className="truncate text-slate-500">{entry.detail}</p>
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                <Badge variant="secondary">Docs {recentActionBreakdown.docs}</Badge>
+                <Badge variant="secondary">AI {recentActionBreakdown.ai}</Badge>
+                <Badge variant="secondary">Tasks {recentActionBreakdown.workflow}</Badge>
+                <Badge variant="secondary">Sync {recentActionBreakdown.sync}</Badge>
+              </div>
+            </CardContent>
+          </Card>
+        </aside>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as WorkspaceTab)} className="w-full">
-        <TabsList className="grid w-full grid-cols-6">
-          <TabsTrigger value="documents"><FileText className="mr-2 h-4 w-4" />Docs</TabsTrigger>
-          <TabsTrigger value="tracker"><Sheet className="mr-2 h-4 w-4" />Tracker</TabsTrigger>
-          <TabsTrigger value="slides"><Layout className="mr-2 h-4 w-4" />Slides</TabsTrigger>
-          <TabsTrigger value="approvals"><Signature className="mr-2 h-4 w-4" />Approvals</TabsTrigger>
-          <TabsTrigger value="timeline"><ClipboardCheck className="mr-2 h-4 w-4" />Timeline</TabsTrigger>
-          <TabsTrigger value="ai"><Sparkles className="mr-2 h-4 w-4" />AI Assist</TabsTrigger>
-        </TabsList>
+        <div className={`min-w-0 ${densityMode === "compact" ? "space-y-3" : "space-y-4"}`}>
+          <section className={`grid ${densityMode === "compact" ? "gap-2" : "gap-3"} sm:grid-cols-2 xl:grid-cols-5`}>
+            <Card className={`border-slate-200/80 shadow-sm dark:border-slate-800 ${interactiveCardClass}`}>
+              <CardContent className="pt-3">
+                <p className="text-xs uppercase tracking-wider text-slate-500">Documents</p>
+                <p className="mt-1 text-2xl font-black">{docs.length}</p>
+              </CardContent>
+            </Card>
+            <Card className={`border-slate-200/80 shadow-sm dark:border-slate-800 ${interactiveCardClass}`}>
+              <CardContent className="pt-3">
+                <p className="text-xs uppercase tracking-wider text-slate-500">Open Tasks</p>
+                <p className="mt-1 text-2xl font-black">{openCount}</p>
+              </CardContent>
+            </Card>
+            <Card className={`border-slate-200/80 shadow-sm dark:border-slate-800 ${interactiveCardClass}`}>
+              <CardContent className="pt-3">
+                <p className="text-xs uppercase tracking-wider text-slate-500">High Priority</p>
+                <p className="mt-1 text-2xl font-black">{highPriorityCount}</p>
+              </CardContent>
+            </Card>
+            <Card className={`border-slate-200/80 shadow-sm dark:border-slate-800 ${interactiveCardClass}`}>
+              <CardContent className="pt-3">
+                <p className="text-xs uppercase tracking-wider text-slate-500">Slides</p>
+                <p className="mt-1 text-2xl font-black">{slides.length}</p>
+              </CardContent>
+            </Card>
+            <Card className={`border-slate-200/80 shadow-sm dark:border-slate-800 ${interactiveCardClass}`}>
+              <CardContent className="pt-3">
+                <p className="text-xs uppercase tracking-wider text-slate-500">Current Suite</p>
+                <p className="mt-1 text-lg font-black">{workspaceSuite === "documentation" ? "Documentation" : "Operations"}</p>
+              </CardContent>
+            </Card>
+          </section>
 
-        <TabsContent value="documents" className="space-y-4">
+          {workspaceSuite === "operations" && (
+            <section className={`grid ${densityMode === "compact" ? "gap-2" : "gap-3"} lg:grid-cols-2`}>
+              <Card className={`border-amber-200 bg-amber-50/50 shadow-sm dark:border-amber-900 dark:bg-amber-950/20 ${interactiveCardClass}`}>
+                <CardHeader className="border-b border-amber-200 pb-3 dark:border-amber-900/60">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-300" />
+                    Shift Risk Snapshot
+                  </CardTitle>
+                  <CardDescription>
+                    Live risk score based on overdue critical tasks, due-today pressure, and unassigned ownership.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    <Badge variant={shiftRiskSnapshot.level === "Escalate" ? "destructive" : "secondary"}>
+                      Level: {shiftRiskSnapshot.level}
+                    </Badge>
+                    <Badge variant="secondary">Score: {shiftRiskSnapshot.score}</Badge>
+                    <Badge variant="secondary">Overdue High: {shiftRiskSnapshot.overdueHigh}</Badge>
+                    <Badge variant="secondary">Due Today High: {shiftRiskSnapshot.dueTodayHigh}</Badge>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-300">
+                    Unassigned open tasks: {shiftRiskSnapshot.unassignedOpen}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="outline" onClick={createEscalationHuddleTask}>
+                      Create Escalation Huddle Task
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={assignCriticalOwners}>
+                      Assign Critical Owners
+                    </Button>
+                    <Button type="button" size="sm" onClick={generateShiftHandoffBrief}>
+                      Generate Shift Brief
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className={`border-rose-200 bg-rose-50/50 shadow-sm dark:border-rose-900 dark:bg-rose-950/20 ${interactiveCardClass}`}>
+                <CardHeader className="border-b border-rose-200 pb-3 dark:border-rose-900/60">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-300" />
+                    Critical Follow-ups Radar
+                  </CardTitle>
+                  <CardDescription>
+                    High-priority tracker tasks due within the next 2 hours (or overdue) are surfaced here first.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {criticalFollowUps.length === 0 ? (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">No high-priority follow-ups are currently open.</p>
+                  ) : (
+                    <div className="grid gap-2">
+                      {criticalFollowUps.slice(0, 6).map((entry) => (
+                        <button
+                          key={entry.row.id}
+                          type="button"
+                          onClick={() => openWorkspaceSheetRow(entry.row.id)}
+                          className={`rounded-lg border border-rose-200 bg-white px-3 py-2 text-left transition hover:border-rose-300 hover:bg-rose-50 dark:border-rose-900 dark:bg-slate-900 dark:hover:bg-rose-950/20 ${interactiveListItemClass}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{entry.row.task || "Untitled task"}</p>
+                            <Badge variant={entry.isOverdue ? "destructive" : "outline"}>
+                              {entry.isOverdue ? "Overdue" : entry.hasDue ? "Due Soon" : "No Due"}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            {entry.row.owner || "Unassigned"}{" • "}{entry.row.status}{" • "}Due: {entry.row.due || "n/a"}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </section>
+          )}
+
+          <Tabs value={activeTab} onValueChange={(value) => openWorkspaceTab(value as WorkspaceTab)} className="min-h-0 w-full rounded-2xl border border-slate-200 bg-white/80 p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
+            <div className="overflow-x-auto pb-1">
+              <TabsList className="grid min-w-[540px] grid-cols-3 border border-slate-200 bg-slate-100/80 p-1 dark:border-slate-700 dark:bg-slate-900">
+          {workspaceSuite === "documentation" ? (
+            <>
+              <TabsTrigger value="documents" className={`rounded-md text-xs font-semibold tracking-wide ${interactiveButtonClass}`}><FileText className="mr-2 h-4 w-4" />Docs</TabsTrigger>
+              <TabsTrigger value="slides" className={`rounded-md text-xs font-semibold tracking-wide ${interactiveButtonClass}`}><Layout className="mr-2 h-4 w-4" />Slides</TabsTrigger>
+              <TabsTrigger value="approvals" className={`rounded-md text-xs font-semibold tracking-wide ${interactiveButtonClass}`}><Signature className="mr-2 h-4 w-4" />Approvals</TabsTrigger>
+            </>
+          ) : (
+            <>
+              <TabsTrigger value="tracker" className={`rounded-md text-xs font-semibold tracking-wide ${interactiveButtonClass}`}><Sheet className="mr-2 h-4 w-4" />Tracker</TabsTrigger>
+              <TabsTrigger value="timeline" className={`rounded-md text-xs font-semibold tracking-wide ${interactiveButtonClass}`}><ClipboardCheck className="mr-2 h-4 w-4" />Timeline</TabsTrigger>
+              <TabsTrigger value="ai" className={`rounded-md text-xs font-semibold tracking-wide ${interactiveButtonClass}`}><Sparkles className="mr-2 h-4 w-4" />AI Assist</TabsTrigger>
+            </>
+          )}
+              </TabsList>
+            </div>
+
+        <TabsContent value="documents" className={`min-h-0 space-y-4 ${suiteTabPanelClass}`}>
           {conflictState && (
             <Card className="border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
               <CardHeader>
@@ -2255,12 +2955,12 @@ function ProductivitySuitePage() {
               </CardContent>
             </Card>
           )}
-          <div className="grid gap-4 lg:grid-cols-[320px,1fr]">
-            <Card>
+          <div className="grid min-h-0 gap-4 lg:grid-cols-[320px,1fr]">
+            <Card className="min-h-0">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base"><Folder className="h-4 w-4" />Workspace</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="max-h-[76vh] space-y-3 overflow-y-auto pr-1 shadow-[inset_0_10px_8px_-10px_rgba(15,23,42,0.28),inset_0_-10px_8px_-10px_rgba(15,23,42,0.28)]">
                 <div className="flex gap-2">
                   <Input value={docSearch} onChange={(e) => setDocSearch(e.target.value)} placeholder="Search docs" />
                   <Button size="icon" variant="outline"><Search className="h-4 w-4" /></Button>
@@ -2282,11 +2982,19 @@ function ProductivitySuitePage() {
                   <Button size="sm" variant="outline" onClick={() => newDocument("Letter")} disabled={userRole === "viewer"}>Letter</Button>
                 </div>
 
-                <div className="max-h-105 space-y-2 overflow-y-auto pr-1">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">View</p>
+                  <div className="flex items-center gap-1">
+                    <Button size="sm" variant={docListView === "cards" ? "default" : "outline"} onClick={() => setDocListView("cards")}>Cards</Button>
+                    <Button size="sm" variant={docListView === "list" ? "default" : "outline"} onClick={() => setDocListView("list")}>List</Button>
+                  </div>
+                </div>
+
+                <div className={`max-h-105 overflow-y-auto pr-1 ${docListView === "cards" ? "space-y-2" : "space-y-1"}`}>
                   {filteredDocs.map((doc) => (
-                    <div key={doc.id} className={`rounded-md border p-2 transition ${selectedDocId === doc.id ? "border-blue-500 bg-blue-50 dark:bg-blue-950/20" : "border-slate-200 dark:border-slate-700"}`}>
+                    <div key={doc.id} className={`rounded-md border transition ${selectedDocId === doc.id ? "border-blue-500 bg-blue-50 dark:bg-blue-950/20" : "border-slate-200 dark:border-slate-700"} ${docListView === "cards" ? "p-2" : "px-2 py-1.5"}`}>
                       <div className="flex items-start gap-2">
-                        <Button size="icon" variant="ghost" onClick={() => toggleFavoriteDoc(doc.id)} className="mt-0.5 h-7 w-7 shrink-0">
+                        <Button size="icon" variant="ghost" onClick={() => toggleFavoriteDoc(doc.id)} className={`mt-0.5 shrink-0 ${docListView === "cards" ? "h-7 w-7" : "h-6 w-6"}`}>
                           {favoriteDocIds.includes(doc.id) ? "★" : "☆"}
                         </Button>
                         <button
@@ -2298,15 +3006,17 @@ function ProductivitySuitePage() {
                           className="min-w-0 flex-1 text-left"
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <p className="truncate text-sm font-semibold">{doc.title}</p>
-                            <Badge variant="outline">{doc.type}</Badge>
+                            <p className={`truncate font-semibold ${docListView === "cards" ? "text-sm" : "text-xs"}`}>{doc.title}</p>
+                            <Badge variant="outline" className={docListView === "cards" ? "" : "text-[10px]"}>{doc.type}</Badge>
                           </div>
-                          <p className="mt-1 text-xs text-slate-500">{doc.folder} • {new Date(doc.updatedAt).toLocaleString()}</p>
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {doc.tags.slice(0, 3).map((t) => (
-                              <Badge key={`${doc.id}-${t}`} variant="secondary" className="text-[10px]">{t}</Badge>
-                            ))}
-                          </div>
+                          <p className={`text-slate-500 ${docListView === "cards" ? "mt-1 text-xs" : "mt-0.5 text-[11px]"}`}>{doc.folder} • {new Date(doc.updatedAt).toLocaleString()}</p>
+                          {docListView === "cards" && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {doc.tags.slice(0, 3).map((t) => (
+                                <Badge key={`${doc.id}-${t}`} variant="secondary" className="text-[10px]">{t}</Badge>
+                              ))}
+                            </div>
+                          )}
                         </button>
                       </div>
                     </div>
@@ -2351,7 +3061,7 @@ function ProductivitySuitePage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="min-h-0">
               <CardHeader>
                 <CardTitle className="flex items-center justify-between gap-2 text-base">
                   <span className="flex items-center gap-2"><Briefcase className="h-4 w-4" />Document Builder</span>
@@ -2362,9 +3072,9 @@ function ProductivitySuitePage() {
                   ) : null}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="max-h-[76vh] space-y-3 overflow-y-auto pr-1 shadow-[inset_0_10px_8px_-10px_rgba(15,23,42,0.28),inset_0_-10px_8px_-10px_rgba(15,23,42,0.28)]">
                 {!selectedDoc ? (
-                  <p className="text-sm text-slate-500">Create or select a document to begin.</p>
+                  <div className={emptyStateClass}>Create or select a document to begin.</div>
                 ) : (
                   <>
                     <div className="grid gap-2 md:grid-cols-3">
@@ -2392,32 +3102,255 @@ function ProductivitySuitePage() {
                       </select>
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
-                      <Input
-                        value={checkpointName}
-                        onChange={(e) => setCheckpointName(e.target.value)}
-                        placeholder="Checkpoint name"
-                        className="max-w-45"
-                      />
-                      <Button size="sm" variant="outline" onClick={() => execCmd("bold")} disabled={!canEditSelectedDoc}>Bold</Button>
-                      <Button size="sm" variant="outline" onClick={() => execCmd("italic")} disabled={!canEditSelectedDoc}>Italic</Button>
-                      <Button size="sm" variant="outline" onClick={() => execCmd("insertUnorderedList")} disabled={!canEditSelectedDoc}>Bullets</Button>
-                      <Button size="sm" variant="outline" onClick={() => execCmd("formatBlock", "<h2>")} disabled={!canEditSelectedDoc}>H2</Button>
-                      <Button size="sm" variant="outline" onClick={() => execCmd("formatBlock", "<p>")} disabled={!canEditSelectedDoc}>Paragraph</Button>
-                      <Button size="sm" onClick={saveVersion} disabled={!canEditSelectedDoc}><Save className="mr-1 h-4 w-4" />Save Version</Button>
-                      <Button size="sm" variant="outline" onClick={duplicateSelectedDocument} disabled={!canEditSelectedDoc}>Duplicate</Button>
+                    <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/50">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Typography</p>
+                          <div className="flex items-center gap-2">
+                            <select
+                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                              value={docEditorFontFamily}
+                              onChange={(e) => setDocEditorFontFamily(e.target.value)}
+                            >
+                              <option value="Calibri, 'Segoe UI', sans-serif">Calibri</option>
+                              <option value="'Segoe UI', sans-serif">Segoe UI</option>
+                              <option value="Cambria, Georgia, serif">Cambria</option>
+                              <option value="'Times New Roman', serif">Times New Roman</option>
+                              <option value="Arial, sans-serif">Arial</option>
+                            </select>
+                            <select
+                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                              value={docEditorFontSize}
+                              onChange={(e) => setDocEditorFontSize(Number(e.target.value) || 15)}
+                            >
+                              {[11, 12, 13, 14, 15, 16, 18, 20].map((size) => (
+                                <option key={size} value={size}>{size}px</option>
+                              ))}
+                            </select>
+                            <select
+                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                              value={docEditorLineHeight}
+                              onChange={(e) => setDocEditorLineHeight(Number(e.target.value) || 1.6)}
+                            >
+                              <option value={1.3}>Tight</option>
+                              <option value={1.6}>Standard</option>
+                              <option value={1.9}>Relaxed</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Style</p>
+                          <div className="flex flex-wrap gap-1">
+                            <Button size="sm" variant="outline" onClick={() => execCmd("bold")} disabled={!canEditSelectedDoc}><Bold className="h-4 w-4" /></Button>
+                            <Button size="sm" variant="outline" onClick={() => execCmd("italic")} disabled={!canEditSelectedDoc}><Italic className="h-4 w-4" /></Button>
+                            <Button size="sm" variant="outline" onClick={() => execCmd("underline")} disabled={!canEditSelectedDoc}><Underline className="h-4 w-4" /></Button>
+                            <Button size="sm" variant="outline" onClick={() => execCmd("formatBlock", "<h2>")} disabled={!canEditSelectedDoc}>H2</Button>
+                            <Button size="sm" variant="outline" onClick={() => execCmd("formatBlock", "<p>")} disabled={!canEditSelectedDoc}><Pilcrow className="h-4 w-4" /></Button>
+                            <Button size="sm" variant="outline" onClick={() => execCmd("formatBlock", "<blockquote>")} disabled={!canEditSelectedDoc}><Quote className="h-4 w-4" /></Button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Paragraph</p>
+                          <div className="flex flex-wrap gap-1">
+                            <Button size="sm" variant="outline" onClick={() => execCmd("insertUnorderedList")} disabled={!canEditSelectedDoc}><List className="h-4 w-4" /></Button>
+                            <Button size="sm" variant="outline" onClick={() => execCmd("insertOrderedList")} disabled={!canEditSelectedDoc}><ListOrdered className="h-4 w-4" /></Button>
+                            <Button size="sm" variant="outline" onClick={() => execCmd("justifyLeft")} disabled={!canEditSelectedDoc}><AlignLeft className="h-4 w-4" /></Button>
+                            <Button size="sm" variant="outline" onClick={() => execCmd("justifyCenter")} disabled={!canEditSelectedDoc}><AlignCenter className="h-4 w-4" /></Button>
+                            <Button size="sm" variant="outline" onClick={() => execCmd("justifyRight")} disabled={!canEditSelectedDoc}><AlignRight className="h-4 w-4" /></Button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Document Structure</p>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <div className="flex items-center gap-1">
+                              <Input
+                                key={`header-${selectedDoc?.id ?? "none"}-${selectedDocHeaderText}`}
+                                ref={docHeaderInputRef}
+                                defaultValue={selectedDocHeaderText}
+                                placeholder="Header text"
+                                className="h-8 text-xs"
+                                disabled={!canEditSelectedDoc}
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => updateDocumentSectionText("header", docHeaderInputRef.current?.value ?? "")}
+                                disabled={!canEditSelectedDoc}
+                              >
+                                Apply
+                              </Button>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Input
+                                key={`footer-${selectedDoc?.id ?? "none"}-${selectedDocFooterText}`}
+                                ref={docFooterInputRef}
+                                defaultValue={selectedDocFooterText}
+                                placeholder="Footer text"
+                                className="h-8 text-xs"
+                                disabled={!canEditSelectedDoc}
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => updateDocumentSectionText("footer", docFooterInputRef.current?.value ?? "")}
+                                disabled={!canEditSelectedDoc}
+                              >
+                                Apply
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            <Button size="sm" variant="outline" onClick={() => execCmd("insertHorizontalRule")} disabled={!canEditSelectedDoc}>Page Break Line</Button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Input
+                            value={checkpointName}
+                            onChange={(e) => setCheckpointName(e.target.value)}
+                            placeholder="Checkpoint name"
+                            className="max-w-45"
+                          />
+                          <Button size="sm" onClick={saveVersion} disabled={!canEditSelectedDoc}><Save className="mr-1 h-4 w-4" />Save Version</Button>
+                          <Button size="sm" variant="outline" onClick={duplicateSelectedDocument} disabled={!canEditSelectedDoc}>Duplicate</Button>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setDocEditorZoom((z) => Math.max(80, z - 10))}>-</Button>
+                          <Badge variant="outline">Zoom {docEditorZoom}%</Badge>
+                          <Button size="sm" variant="outline" onClick={() => setDocEditorZoom((z) => Math.min(140, z + 10))}>+</Button>
+                          <select
+                            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                            value={docEditorPagePreset}
+                            onChange={(e) => setDocEditorPagePreset(e.target.value as "Letter" | "A4")}
+                          >
+                            <option value="Letter">Letter</option>
+                            <option value="A4">A4</option>
+                          </select>
+                          <Button size="sm" variant={docEditorPrintLayout ? "default" : "outline"} onClick={() => setDocEditorPrintLayout((v) => !v)}>
+                            {docEditorPrintLayout ? "Print Layout On" : "Print Layout Off"}
+                          </Button>
+                          <Button size="sm" variant={docEditorShowRuler ? "default" : "outline"} onClick={() => setDocEditorShowRuler((v) => !v)}>
+                            {docEditorShowRuler ? "Ruler On" : "Ruler Off"}
+                          </Button>
+                          <Button size="sm" variant={docEditorShowPageGuides ? "default" : "outline"} onClick={() => setDocEditorShowPageGuides((v) => !v)}>
+                            {docEditorShowPageGuides ? "Guides On" : "Guides Off"}
+                          </Button>
+                          <select
+                            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                            value={printProfilePreset}
+                            onChange={(e) => applyPrintTemplatePreset(e.target.value as PrintProfilePreset)}
+                          >
+                            <option value="general">General Print</option>
+                            <option value="handoff">Shift Handoff</option>
+                            <option value="discharge">Discharge Packet</option>
+                            <option value="summary">Clinical Summary</option>
+                          </select>
+                          <Button size="sm" variant={printIncludePageNumbers ? "default" : "outline"} onClick={() => setPrintIncludePageNumbers((v) => !v)}>
+                            {printIncludePageNumbers ? "Page # On" : "Page # Off"}
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setPrintPreviewOpen(true)}>Print Preview</Button>
+                          <Badge variant="secondary">Words {selectedDocWordCount}</Badge>
+                          <Badge variant="secondary">Chars {selectedDocCharacterCount}</Badge>
+                          <Badge variant="secondary">Read {selectedDocReadMinutes} min</Badge>
+                          <Badge variant="outline">Pages ~{printPreviewModel.totalPages}</Badge>
+                        </div>
+                      </div>
+
+                      {docEditorShowRuler && (
+                        <div className="space-y-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+                          <div className="relative h-7 rounded-md border border-slate-300 bg-white px-2 dark:border-slate-700 dark:bg-slate-900">
+                            <div className="relative h-full w-full">
+                              {Array.from({ length: 17 }).map((_, index) => (
+                                <div
+                                  key={index}
+                                  className="absolute bottom-0"
+                                  style={{ left: `${(index / 16) * 100}%` }}
+                                >
+                                  <div className={`w-px bg-slate-300 dark:bg-slate-600 ${index % 4 === 0 ? "h-5" : "h-3"}`} />
+                                </div>
+                              ))}
+                              <div className="absolute inset-y-0 border-l-2 border-blue-500" style={{ left: `${editorLeftMarginPct}%` }} />
+                              <div className="absolute inset-y-0 border-r-2 border-blue-500" style={{ right: `${editorRightMarginPct}%` }} />
+                            </div>
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-4">
+                            <label className="flex items-center gap-2 text-xs">
+                              Left
+                              <Input
+                                type="number"
+                                min={24}
+                                max={160}
+                                value={docEditorMargins.left}
+                                onChange={(e) => setDocEditorMargins((current) => ({ ...current, left: Number(e.target.value) || 64 }))}
+                              />
+                            </label>
+                            <label className="flex items-center gap-2 text-xs">
+                              Right
+                              <Input
+                                type="number"
+                                min={24}
+                                max={160}
+                                value={docEditorMargins.right}
+                                onChange={(e) => setDocEditorMargins((current) => ({ ...current, right: Number(e.target.value) || 64 }))}
+                              />
+                            </label>
+                            <label className="flex items-center gap-2 text-xs">
+                              Top
+                              <Input
+                                type="number"
+                                min={24}
+                                max={180}
+                                value={docEditorMargins.top}
+                                onChange={(e) => setDocEditorMargins((current) => ({ ...current, top: Number(e.target.value) || 56 }))}
+                              />
+                            </label>
+                            <label className="flex items-center gap-2 text-xs">
+                              Bottom
+                              <Input
+                                type="number"
+                                min={24}
+                                max={180}
+                                value={docEditorMargins.bottom}
+                                onChange={(e) => setDocEditorMargins((current) => ({ ...current, bottom: Number(e.target.value) || 56 }))}
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    <div
-                      ref={editorRef}
-                      contentEditable={canEditSelectedDoc}
-                      suppressContentEditableWarning
-                      onInput={(e) => {
-                        const html = (e.currentTarget as HTMLDivElement).innerHTML;
-                        updateSelectedDoc((doc) => ({ ...doc, content: html, updatedAt: nowTs() }));
-                      }}
-                      className="min-h-70 rounded-md border border-slate-300 bg-white p-3 text-sm leading-6 focus:outline-none dark:border-slate-700 dark:bg-slate-900"
-                    />
+                    <div className={docEditorPrintLayout ? "rounded-xl border border-slate-200 bg-slate-100 p-4 dark:border-slate-700 dark:bg-slate-900/50" : "rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-950"}>
+                      <div
+                        ref={editorRef}
+                        contentEditable={canEditSelectedDoc}
+                        suppressContentEditableWarning
+                        onInput={(e) => {
+                          const html = (e.currentTarget as HTMLDivElement).innerHTML;
+                          updateSelectedDoc((doc) => ({ ...doc, content: html, updatedAt: nowTs() }));
+                        }}
+                        style={{
+                          fontFamily: docEditorFontFamily,
+                          fontSize: `${docEditorFontSize}px`,
+                          lineHeight: docEditorLineHeight,
+                          zoom: `${docEditorZoom}%`,
+                          padding: `${docEditorMargins.top}px ${docEditorMargins.right}px ${docEditorMargins.bottom}px ${docEditorMargins.left}px`,
+                          maxWidth: docEditorPrintLayout ? `${editorPageMaxWidth}px` : "100%",
+                          backgroundImage: docEditorPrintLayout && docEditorShowPageGuides
+                            ? "linear-gradient(to bottom, transparent calc(100% - 1px), rgba(148,163,184,0.35) calc(100% - 1px))"
+                            : undefined,
+                          backgroundSize: docEditorPrintLayout && docEditorShowPageGuides ? `100% ${editorPageGuideHeight}px` : undefined,
+                        }}
+                        className={docEditorPrintLayout
+                          ? "mx-auto min-h-220 w-full rounded-md border border-slate-300 bg-white text-slate-900 shadow-[0_8px_24px_rgba(15,23,42,0.12)] focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                          : "min-h-170 w-full rounded-md border border-slate-300 bg-white text-slate-900 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"}
+                      />
+                    </div>
 
                     <div className="flex flex-wrap gap-2">
                       <Input
@@ -2496,13 +3429,13 @@ function ProductivitySuitePage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="tracker" className="space-y-4">
+        <TabsContent value="tracker" className={`min-h-0 space-y-4 ${suiteTabPanelClass}`}>
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><ListChecks className="h-4 w-4" />Spreadsheet-like Tracker</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap gap-2">
+            <CardContent className="max-h-[76vh] space-y-3 overflow-y-auto pr-1 shadow-[inset_0_10px_8px_-10px_rgba(15,23,42,0.28),inset_0_-10px_8px_-10px_rgba(15,23,42,0.28)]">
+              <div className={actionBarClass}>
                 <Button size="sm" onClick={addSheetRow}>Add Row</Button>
                 <Button size="sm" variant="outline" onClick={exportSheetCsv}><Download className="mr-1 h-4 w-4" />Export CSV</Button>
                 <Button size="sm" variant="outline" onClick={() => csvInputRef.current?.click()}><Upload className="mr-1 h-4 w-4" />Import CSV</Button>
@@ -2524,11 +3457,31 @@ function ProductivitySuitePage() {
                 <Badge variant="secondary">Open: {openCount}</Badge>
                 <Badge variant="secondary">High Priority: {highPriorityCount}</Badge>
                 <Badge variant="secondary">Avg Completion: {avgCompletion}%</Badge>
+                <Badge variant="secondary">RN Lane: {trackerLaneCounts.rn}</Badge>
+                <Badge variant="secondary">Provider Lane: {trackerLaneCounts.provider}</Badge>
+                <Badge variant="secondary">Shared Lane: {trackerLaneCounts.shared}</Badge>
+                <Badge variant="secondary">Unassigned Lane: {trackerLaneCounts.unassigned}</Badge>
               </div>
 
-              <div className="overflow-x-auto rounded-md border border-slate-200 dark:border-slate-700">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Lane Filter</p>
+                <select
+                  className="h-9 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                  value={trackerLaneFilter}
+                  onChange={(event) => setTrackerLaneFilter(event.target.value as "all" | TaskDestinationLane)}
+                >
+                  <option value="all">All</option>
+                  <option value="rn">RN</option>
+                  <option value="provider">Provider</option>
+                  <option value="shared">Shared</option>
+                  <option value="unassigned">Unassigned</option>
+                </select>
+                <Badge variant="outline">Visible: {visibleTrackerRows.length}</Badge>
+              </div>
+
+              <div className="max-h-[62vh] overflow-auto rounded-md border border-slate-200 shadow-[inset_0_10px_8px_-10px_rgba(15,23,42,0.28),inset_0_-10px_8px_-10px_rgba(15,23,42,0.28)] dark:border-slate-700">
                 <table className="min-w-full text-xs">
-                  <thead className="bg-slate-50 dark:bg-slate-900">
+                  <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900">
                     <tr>
                       <th className="px-2 py-2 text-left">Task</th>
                       <th className="px-2 py-2 text-left">Owner</th>
@@ -2544,7 +3497,7 @@ function ProductivitySuitePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sheetRows.map((row) => (
+                    {visibleTrackerRows.map((row) => (
                       <tr key={row.id} className={`border-t border-slate-200 dark:border-slate-700 ${selectedSheetRowId === row.id ? "bg-blue-50 dark:bg-blue-950/20" : ""}`}>
                         <td className="px-2 py-1"><Input value={row.task} onChange={(e) => updateSheetRow(row.id, { task: e.target.value })} /></td>
                         <td className="px-2 py-1"><Input value={row.owner} onChange={(e) => updateSheetRow(row.id, { owner: e.target.value })} /></td>
@@ -2583,19 +3536,22 @@ function ProductivitySuitePage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="slides" className="space-y-4">
+        <TabsContent value="slides" className={`space-y-4 ${suiteTabPanelClass}`}>
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><Layout className="h-4 w-4" />Slide Composer</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="flex flex-wrap gap-2">
+              <div className={actionBarClass}>
                 <Button size="sm" onClick={addSlide}>Add Slide</Button>
                 <Button size="sm" variant="outline" onClick={generateSlidesFromDoc}>Generate from Active Doc</Button>
                 <Button size="sm" variant="outline" onClick={exportSlidesHtml}>Export HTML Deck</Button>
                 <Button size="sm" variant="outline" onClick={() => { void exportSlidesPptx(); }}>Export PPTX</Button>
               </div>
 
+              {slides.length === 0 ? (
+                <div className={emptyStateClass}>No slides yet. Add one or generate from the active document.</div>
+              ) : (
               <div className="grid gap-3 md:grid-cols-2">
                 {slides.map((slide, idx) => (
                   <Card key={slide.id} className="border border-slate-200 dark:border-slate-700">
@@ -2613,18 +3569,19 @@ function ProductivitySuitePage() {
                   </Card>
                 ))}
               </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="approvals" className="space-y-4">
+        <TabsContent value="approvals" className={`space-y-4 ${suiteTabPanelClass}`}>
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><ClipboardCheck className="h-4 w-4" />E-sign & Approvals</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {!selectedDoc ? (
-                <p className="text-sm text-slate-500">Select a document in Docs tab first.</p>
+                <div className={emptyStateClass}>Select a document in Docs tab first.</div>
               ) : (
                 <>
                   <div className="grid gap-2 md:grid-cols-3">
@@ -2682,7 +3639,7 @@ function ProductivitySuitePage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="ai" className="space-y-4">
+        <TabsContent value="ai" className={`space-y-4 ${suiteTabPanelClass}`}>
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-4 w-4" />AI Assistant</CardTitle>
@@ -2702,7 +3659,7 @@ function ProductivitySuitePage() {
                 </label>
                 <p className="mt-1 text-slate-500">When disabled, likely PHI content is blocked from outbound AI calls and only local transforms are used.</p>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className={actionBarClass}>
                 <Button size="sm" onClick={() => { void aiRewrite(); }}>Rewrite for Clarity</Button>
                 <Button size="sm" variant="outline" onClick={() => { void aiSummarize(); }}>Summarize</Button>
                 <Button size="sm" variant="outline" onClick={() => { void aiTranslate("es"); }}>Translate to Spanish</Button>
@@ -2792,13 +3749,13 @@ function ProductivitySuitePage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="timeline" className="space-y-4">
+        <TabsContent value="timeline" className={`min-h-0 space-y-4 ${suiteTabPanelClass}`}>
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><ClipboardCheck className="h-4 w-4" />Audit Timeline</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap gap-2">
+            <CardContent className="max-h-[76vh] space-y-3 overflow-y-auto pr-1 shadow-[inset_0_10px_8px_-10px_rgba(15,23,42,0.28),inset_0_-10px_8px_-10px_rgba(15,23,42,0.28)]">
+              <div className={actionBarClass}>
                 <select className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900" value={timelineFilter} onChange={(e) => setTimelineFilter(e.target.value as TimelineFilter)}>
                   <option value="all">All events</option>
                   <option value="selected">Selected document</option>
@@ -2853,6 +3810,37 @@ function ProductivitySuitePage() {
           </Card>
         </TabsContent>
       </Tabs>
+        </div>
+      </div>
+
+      <Dialog open={printPreviewOpen} onOpenChange={setPrintPreviewOpen}>
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Print Preview</DialogTitle>
+            <DialogDescription>
+              Profile: {printProfilePreset} • Estimated pages: {printPreviewModel.totalPages} • Page numbers: {printIncludePageNumbers ? "On" : "Off"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[70vh] space-y-3 overflow-y-auto pr-1">
+            {printPreviewModel.previewPages.map((page, index) => (
+              <div key={`preview-page-${index + 1}`} className="rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/40">
+                <div className="mb-2 flex items-center justify-between">
+                  <Badge variant="outline">Page {index + 1}</Badge>
+                  {printIncludePageNumbers ? <p className="text-xs text-slate-500">Page {index + 1} of {printPreviewModel.totalPages}</p> : null}
+                </div>
+                <pre className="whitespace-pre-wrap rounded-md border border-slate-200 bg-white p-3 text-xs leading-6 dark:border-slate-700 dark:bg-slate-950">
+                  {page}
+                </pre>
+              </div>
+            ))}
+            {printPreviewModel.totalPages > printPreviewModel.previewPages.length ? (
+              <p className="text-xs text-slate-500">
+                Preview limited to first {printPreviewModel.previewPages.length} pages. Full output estimated at {printPreviewModel.totalPages} pages.
+              </p>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={commandOpen} onOpenChange={setCommandOpen}>
         <DialogContent className="max-w-2xl gap-0 overflow-hidden p-0">

@@ -64,14 +64,11 @@ export const getNotesBySubject = query({
     limit: v.optional(v.number()),
   },
   async handler(ctx, args) {
-    const notes = await ctx.db
+    const userNotes = await ctx.db
       .query("studyNotes")
-      .withIndex("by_subject", (q) => q.eq("subject", args.subject))
+      .withIndex("by_user_subject", (q) => q.eq("userId", args.userId).eq("subject", args.subject))
       .order("desc")
       .take(args.limit || 100);
-
-    // Filter by user (convex doesn't support chained indexes well, so filter after)
-    const userNotes = notes.filter((n) => n.userId === args.userId);
 
     // Enrich with topic data
     const enriched = await Promise.all(
@@ -124,13 +121,11 @@ export const getTopicIndex = query({
     subject: v.string(),
   },
   async handler(ctx, args) {
-    // Get all notes for this subject
-    const notes = await ctx.db
+    // Get all notes for this user + subject
+    const userNotes = await ctx.db
       .query("studyNotes")
-      .withIndex("by_subject", (q) => q.eq("subject", args.subject))
+      .withIndex("by_user_subject", (q) => q.eq("userId", args.userId).eq("subject", args.subject))
       .collect();
-
-    const userNotes = notes.filter((n) => n.userId === args.userId);
 
     // Aggregate topics across all notes
     const topicMap = new Map<
@@ -238,6 +233,7 @@ export const createStudyNote = mutation({
   args: {
     sessionId: v.id("studyClassSessions"),
     userId: v.id("users"),
+    syncFingerprint: v.optional(v.string()),
     rawTranscription: v.string(),
     subject: v.string(),
     topics: v.optional(v.array(v.string())),
@@ -268,11 +264,24 @@ export const createStudyNote = mutation({
     ),
   },
   async handler(ctx, args) {
+    if (args.syncFingerprint) {
+      const existing = await ctx.db
+        .query("studyNotes")
+        .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+        .filter((q) => q.eq(q.field("syncFingerprint"), args.syncFingerprint))
+        .first();
+
+      if (existing) {
+        return existing._id;
+      }
+    }
+
     const now = Date.now();
 
     const noteId = await ctx.db.insert("studyNotes", {
       sessionId: args.sessionId,
       userId: args.userId,
+      syncFingerprint: args.syncFingerprint,
       rawTranscription: args.rawTranscription,
       content: args.rawTranscription, // Start with raw, will be edited
       subject: args.subject,

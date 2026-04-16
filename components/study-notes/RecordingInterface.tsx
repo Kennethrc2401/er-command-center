@@ -162,6 +162,7 @@ type RecordingMarker = {
 type PendingStudyNotePayload = {
   sessionId: string;
   userId: string;
+  syncFingerprint: string;
   subject: string;
   rawTranscription: string;
   topics: string[];
@@ -173,6 +174,8 @@ type PendingStudyNotePayload = {
   };
   queuedAt: number;
 };
+
+type PendingStudyNoteDraft = Omit<PendingStudyNotePayload, "queuedAt" | "syncFingerprint">;
 
 type NoteTemplate = {
   id: string;
@@ -393,9 +396,30 @@ export default function RecordingInterface({
     window.localStorage.setItem(PENDING_NOTE_QUEUE_KEY, JSON.stringify(queue.slice(0, 20)));
   }, []);
 
-  const queuePendingNote = useCallback((payload: Omit<PendingStudyNotePayload, "queuedAt">) => {
+  const buildStudyNoteFingerprint = useCallback((payload: PendingStudyNoteDraft) => {
+    const markerDigest = payload.recordingMarkers
+      .map((marker) => `${marker.label}:${marker.markerType}:${marker.elapsedSeconds}:${marker.createdAt}`)
+      .join("|");
+    const topicDigest = [...payload.topics].map((topic) => topic.trim().toLowerCase()).sort().join("|");
+
+    return [
+      payload.sessionId,
+      payload.userId,
+      payload.subject.trim().toLowerCase(),
+      payload.rawTranscription.trim().toLowerCase(),
+      topicDigest,
+      markerDigest,
+      payload.transcriptStats.totalSeconds,
+      payload.transcriptStats.pauseSeconds,
+      payload.transcriptStats.markerCount,
+    ].join("::");
+  }, []);
+
+  const queuePendingNote = useCallback((payload: PendingStudyNoteDraft) => {
+    const syncFingerprint = buildStudyNoteFingerprint(payload);
     const queued: PendingStudyNotePayload = {
       ...payload,
+      syncFingerprint,
       queuedAt: Date.now(),
     };
     const current = readPendingQueue();
@@ -403,23 +427,29 @@ export default function RecordingInterface({
       queued,
       ...current.filter((entry) => {
         return !(
-          entry.sessionId === queued.sessionId &&
-          entry.userId === queued.userId &&
-          entry.rawTranscription === queued.rawTranscription
+          entry.syncFingerprint === queued.syncFingerprint ||
+          (
+            entry.sessionId === queued.sessionId &&
+            entry.userId === queued.userId &&
+            entry.rawTranscription === queued.rawTranscription
+          )
         );
       }),
     ];
     writePendingQueue(deduped);
   }, [readPendingQueue, writePendingQueue]);
 
-  const exportPendingNoteBackup = useCallback((payload: Omit<PendingStudyNotePayload, "queuedAt">) => {
+  const exportPendingNoteBackup = useCallback((payload: PendingStudyNoteDraft) => {
     if (typeof window === "undefined") return;
+
+    const syncFingerprint = buildStudyNoteFingerprint(payload);
 
     const backupPayload = {
       exportedAt: Date.now(),
       app: "study-notes-fallback-backup",
       entry: {
         ...payload,
+        syncFingerprint,
         queuedAt: Date.now(),
       },
     };
@@ -445,9 +475,11 @@ export default function RecordingInterface({
 
     for (const entry of queue) {
       try {
+        const syncFingerprint = entry.syncFingerprint ?? buildStudyNoteFingerprint(entry);
         await createNote({
           sessionId: entry.sessionId as Id<"studyClassSessions">,
           userId: entry.userId as Id<"users">,
+          syncFingerprint,
           rawTranscription: entry.rawTranscription,
           subject: entry.subject,
           topics: entry.topics,
@@ -1981,12 +2013,22 @@ export default function RecordingInterface({
           pauseSeconds: pauseSeconds + (pauseStartedAt ? Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000)) : 0),
           markerCount: recordingMarkers.length,
         };
+        const syncFingerprint = buildStudyNoteFingerprint({
+          sessionId: sessionId as string,
+          userId: userId as string,
+          subject,
+          rawTranscription: processedTranscription,
+          topics,
+          recordingMarkers,
+          transcriptStats,
+        });
 
         setIsTranscribing(true);
         try {
           await createNote({
             sessionId: sessionId as Id<"studyClassSessions">,
             userId,
+            syncFingerprint,
             rawTranscription: processedTranscription,
             subject,
             topics,

@@ -62,11 +62,13 @@ const DEFAULT_SUBJECTS = [
 ];
 
 const CUSTOM_SUBJECTS_STORAGE_KEY = "study-notes-custom-subjects";
+const SELECTED_SUBJECT_STORAGE_KEY = "study-notes:selected-subject";
 const PENDING_NOTE_QUEUE_KEY = "study-notes:pending-note-queue";
 
 type PendingStudyNoteQueueEntry = {
   sessionId: string;
   userId: string;
+  syncFingerprint: string;
   subject: string;
   rawTranscription: string;
   topics: string[];
@@ -104,10 +106,31 @@ const readPendingSyncQueue = () => {
           Array.isArray((entry as PendingStudyNoteQueueEntry).topics) &&
           Array.isArray((entry as PendingStudyNoteQueueEntry).recordingMarkers)
       );
-    });
+    }).map((entry) =>
+      entry.syncFingerprint ? entry : { ...entry, syncFingerprint: buildPendingQueueFingerprint(entry) }
+    );
   } catch {
     return [] as PendingStudyNoteQueueEntry[];
   }
+};
+
+const buildPendingQueueFingerprint = (entry: Pick<PendingStudyNoteQueueEntry, "sessionId" | "userId" | "subject" | "rawTranscription" | "topics" | "recordingMarkers" | "transcriptStats">) => {
+  const markerDigest = entry.recordingMarkers
+    .map((marker) => `${marker.label}:${marker.markerType}:${marker.elapsedSeconds}:${marker.createdAt}`)
+    .join("|");
+  const topicDigest = [...entry.topics].map((topic) => topic.trim().toLowerCase()).sort().join("|");
+
+  return [
+    entry.sessionId,
+    entry.userId,
+    entry.subject.trim().toLowerCase(),
+    entry.rawTranscription.trim().toLowerCase(),
+    topicDigest,
+    markerDigest,
+    entry.transcriptStats.totalSeconds,
+    entry.transcriptStats.pauseSeconds,
+    entry.transcriptStats.markerCount,
+  ].join("::");
 };
 
 const normalizeTopicName = (value: string) => value.trim().replace(/\s+/g, " ");
@@ -129,7 +152,6 @@ const dedupeTopics = (topics: string[]) => {
 
   return deduped;
 };
-
 export default function StudyNotesPage() {
   const { user } = useUser();
   const userEmail = user?.primaryEmailAddress?.emailAddress;
@@ -143,7 +165,11 @@ export default function StudyNotesPage() {
   );
   const convexUserId = appUser?._id;
   const [activeTab, setActiveTab] = useState<"record" | "timeline" | "topics" | "notebook" | "tools">("record");
-  const [selectedSubject, setSelectedSubject] = useState("Calculus");
+  const [selectedSubject, setSelectedSubject] = useState(() => {
+    if (typeof window === "undefined") return "Calculus";
+    const savedSubject = window.localStorage.getItem(SELECTED_SUBJECT_STORAGE_KEY);
+    return normalizeTopicName(savedSubject || "") || "Calculus";
+  });
   const [topicSearchTerm, setTopicSearchTerm] = useState("");
   const [customSubjects, setCustomSubjects] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
@@ -169,14 +195,31 @@ export default function StudyNotesPage() {
   const [isRetryingSync, setIsRetryingSync] = useState(false);
   const [retryingItemKey, setRetryingItemKey] = useState<string | null>(null);
   const [pendingSyncQueue, setPendingSyncQueue] = useState<PendingStudyNoteQueueEntry[]>(() => readPendingSyncQueue());
+  const [syncHealthTick, setSyncHealthTick] = useState(() => Date.now());
 
   const pendingSyncCount = pendingSyncQueue.length;
+  const pendingSyncOldestAgeMinutes = useMemo(() => {
+    if (pendingSyncQueue.length === 0) return 0;
+    const oldestQueuedAt = Math.min(...pendingSyncQueue.map((entry) => entry.queuedAt));
+    return Math.max(0, Math.floor((syncHealthTick - oldestQueuedAt) / 60000));
+  }, [pendingSyncQueue, syncHealthTick]);
+  const syncHealthLabel = pendingSyncCount === 0 ? "Synced" : pendingSyncOldestAgeMinutes >= 15 ? "Attention" : "Pending Sync";
+  const syncHealthToneClass = pendingSyncCount === 0
+    ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+    : pendingSyncOldestAgeMinutes >= 15
+      ? "border-red-300 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+      : "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const deduped = dedupeTopics(customSubjects);
     window.localStorage.setItem(CUSTOM_SUBJECTS_STORAGE_KEY, JSON.stringify(deduped));
   }, [customSubjects]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SELECTED_SUBJECT_STORAGE_KEY, selectedSubject);
+  }, [selectedSubject]);
 
   const allSubjects = useMemo(() => {
     return dedupeTopics([...DEFAULT_SUBJECTS, ...customSubjects]);
@@ -263,11 +306,13 @@ export default function StudyNotesPage() {
     window.addEventListener("focus", onFocus);
     window.addEventListener("storage", onStorage);
     const intervalId = window.setInterval(refreshPendingSyncQueue, 4000);
+    const healthTickId = window.setInterval(() => setSyncHealthTick(Date.now()), 60000);
 
     return () => {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("storage", onStorage);
       window.clearInterval(intervalId);
+      window.clearInterval(healthTickId);
     };
   }, []);
 
@@ -388,6 +433,7 @@ export default function StudyNotesPage() {
         await createNote({
           sessionId: entry.sessionId as Id<"studyClassSessions">,
           userId: entry.userId as Id<"users">,
+          syncFingerprint: entry.syncFingerprint,
           rawTranscription: entry.rawTranscription,
           subject: entry.subject,
           topics: entry.topics,
@@ -420,6 +466,22 @@ export default function StudyNotesPage() {
     }
 
     setIsRetryingSync(false);
+  };
+
+  const exportAllAndClearPendingQueue = () => {
+    if (pendingSyncQueue.length === 0) {
+      toast.message("No pending items to export.");
+      return;
+    }
+
+    const confirmed = window.confirm("Export all queued recordings and clear the local pending sync queue?");
+    if (!confirmed) return;
+
+    exportQueuePayload(pendingSyncQueue, "study-notes-pending-sync-all");
+    window.localStorage.setItem(PENDING_NOTE_QUEUE_KEY, JSON.stringify([]));
+    setPendingSyncQueue([]);
+    setShowPendingSyncDialog(false);
+    toast.success("Exported and cleared queued recordings.");
   };
 
   const exportAllPendingSyncItems = () => {
@@ -501,9 +563,9 @@ export default function StudyNotesPage() {
               <button
                 type="button"
                 onClick={() => setShowPendingSyncDialog(true)}
-                className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] transition-colors hover:opacity-90 ${syncHealthToneClass}`}
               >
-                Pending Sync: {pendingSyncCount}
+                {syncHealthLabel}: {pendingSyncCount}
               </button>
             ) : null}
             <Button asChild variant="outline" size="sm" className="ml-auto">
@@ -856,6 +918,9 @@ export default function StudyNotesPage() {
               </Button>
               <Button type="button" variant="outline" onClick={exportAllPendingSyncItems} disabled={pendingSyncQueue.length === 0}>
                 Export All
+              </Button>
+              <Button type="button" variant="outline" onClick={exportAllAndClearPendingQueue} disabled={pendingSyncQueue.length === 0}>
+                Export & Clear
               </Button>
             </div>
             <Button type="button" onClick={() => void retryPendingSyncNow()} disabled={isRetryingSync || pendingSyncQueue.length === 0}>

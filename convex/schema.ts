@@ -1105,6 +1105,7 @@ export default defineSchema({
     studyNotes: defineTable({
       sessionId: v.id("studyClassSessions"),
       userId: v.id("users"),
+      syncFingerprint: v.optional(v.string()),
       rawTranscription: v.string(), // Raw speech-to-text output
       organizationStatus: v.union(v.literal("raw"), v.literal("organized"), v.literal("summarized")),
       topics: v.array(v.string()), // e.g., ["derivatives", "integrals", "chain-rule"]
@@ -1153,6 +1154,7 @@ export default defineSchema({
       .index("by_session", ["sessionId"])
       .index("by_user", ["userId"])
       .index("by_subject", ["subject"])
+      .index("by_user_subject", ["userId", "subject"])
       .index("by_created", ["createdAt"]),
 
     studyNoteTopics: defineTable({
