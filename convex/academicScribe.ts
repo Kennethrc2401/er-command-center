@@ -91,6 +91,70 @@ export const getNotesBySubject = query({
   },
 });
 
+export const getLatestNotesPage = query({
+  args: {
+    userId: v.id("users"),
+    page: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  async handler(ctx, args) {
+    const safeLimit = Math.max(1, Math.min(args.limit ?? 8, 25));
+    const requestedPage = Math.max(1, Math.floor(args.page ?? 1));
+
+    let allUserNotes;
+    try {
+      allUserNotes = await ctx.db
+        .query("studyNotes")
+        .withIndex("by_user_created", (q) => q.eq("userId", args.userId))
+        .order("desc")
+        .collect();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!message.includes("backfilling")) {
+        throw error;
+      }
+
+      // Fallback while the compound index is backfilling.
+      allUserNotes = await ctx.db
+        .query("studyNotes")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .collect();
+
+      allUserNotes.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+
+    const totalCount = allUserNotes.length;
+    const totalPages = Math.max(1, Math.ceil(totalCount / safeLimit));
+    const page = Math.min(requestedPage, totalPages);
+    const start = (page - 1) * safeLimit;
+    const pageNotes = allUserNotes.slice(start, start + safeLimit);
+
+    const enriched = await Promise.all(
+      pageNotes.map(async (note) => {
+        const topics = await ctx.db
+          .query("studyNoteTopics")
+          .withIndex("by_note", (q) => q.eq("noteId", note._id))
+          .collect();
+        return {
+          ...note,
+          topics: topics.map((t) => ({
+            topic: t.topic,
+            frequency: t.frequency,
+          })),
+        };
+      })
+    );
+
+    return {
+      items: enriched,
+      totalCount,
+      totalPages,
+      page,
+      limit: safeLimit,
+    };
+  },
+});
+
 export const getStudyNoteDetail = query({
   args: {
     noteId: v.id("studyNotes"),

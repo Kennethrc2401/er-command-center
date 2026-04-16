@@ -190,6 +190,9 @@ export default function StudyNotesPage() {
   const [newTopicName, setNewTopicName] = useState("");
   const [isAddingTopic, setIsAddingTopic] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [timelineMode, setTimelineMode] = useState<"latest" | "subject">("latest");
+  const [latestNotesPage, setLatestNotesPage] = useState(1);
+  const [latestNotesPageSize, setLatestNotesPageSize] = useState<8 | 16 | 24>(8);
   const [isRecording, setIsRecording] = useState(false);
   const [showPendingSyncDialog, setShowPendingSyncDialog] = useState(false);
   const [isRetryingSync, setIsRetryingSync] = useState(false);
@@ -264,6 +267,21 @@ export default function StudyNotesPage() {
         }
       : "skip"
   );
+
+  const latestNotesPageData = useQuery(
+    api.academicScribe.getLatestNotesPage,
+    convexUserId
+      ? {
+          userId: convexUserId,
+          page: latestNotesPage,
+          limit: latestNotesPageSize,
+        }
+      : "skip"
+  );
+
+  const timelineNotes = timelineMode === "latest"
+    ? latestNotesPageData?.items || []
+    : notesBySubject || [];
 
   const deleteNote = useMutation(api.academicScribe.deleteStudyNote);
   const createNote = useMutation(api.academicScribe.createStudyNote);
@@ -738,12 +756,82 @@ export default function StudyNotesPage() {
               <CardHeader>
                 <CardTitle>Class Notes Timeline</CardTitle>
                 <CardDescription>
-                  Chronological view of all recorded classes in {selectedSubject}
+                  {timelineMode === "latest"
+                    ? "Latest notes across all subjects"
+                    : `Chronological view of notes in ${selectedSubject}`}
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={timelineMode === "latest" ? "default" : "outline"}
+                      onClick={() => {
+                        setTimelineMode("latest");
+                        setLatestNotesPage(1);
+                      }}
+                    >
+                      Latest Notes
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={timelineMode === "subject" ? "default" : "outline"}
+                      onClick={() => setTimelineMode("subject")}
+                    >
+                      This Subject
+                    </Button>
+                  </div>
+
+                  {timelineMode === "latest" ? (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={latestNotesPage <= 1}
+                        onClick={() => setLatestNotesPage((current) => Math.max(1, current - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <select
+                        className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                        value={latestNotesPageSize}
+                        onChange={(event) => {
+                          const next = Number(event.target.value);
+                          if (next === 8 || next === 16 || next === 24) {
+                            setLatestNotesPageSize(next);
+                            setLatestNotesPage(1);
+                          }
+                        }}
+                      >
+                        <option value={8}>8 / page</option>
+                        <option value={16}>16 / page</option>
+                        <option value={24}>24 / page</option>
+                      </select>
+                      <span className="text-xs text-slate-500">
+                        Page {latestNotesPageData?.page || 1} of {latestNotesPageData?.totalPages || 1}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={(latestNotesPageData?.page || 1) >= (latestNotesPageData?.totalPages || 1)}
+                        onClick={() => setLatestNotesPage((current) => {
+                          const totalPages = latestNotesPageData?.totalPages || 1;
+                          return Math.min(totalPages, current + 1);
+                        })}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+
                 <SessionTimeline
-                  notes={notesBySubject || []}
+                  notes={timelineNotes}
                   selectedNoteId={selectedNoteId}
                   onSelectNote={setSelectedNoteId}
                   onDelete={handleDeleteNote}

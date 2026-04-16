@@ -1155,6 +1155,7 @@ export default defineSchema({
       .index("by_user", ["userId"])
       .index("by_subject", ["subject"])
       .index("by_user_subject", ["userId", "subject"])
+      .index("by_user_created", ["userId", "createdAt"])
       .index("by_created", ["createdAt"]),
 
     studyNoteTopics: defineTable({
