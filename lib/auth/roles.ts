@@ -33,7 +33,20 @@ const ROLE_DEFAULT_CREDENTIALS: Record<StaffRole, string> = {
 export function normalizeActorRole(value: unknown): ActorRole {
   if (typeof value !== "string") return "UNKNOWN";
 
-  const normalized = value.toUpperCase();
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "ADMINISTRATOR") return "ADMIN";
+  if (normalized === "UNIT COORDINATOR") return "UNIT_COORDINATOR";
+  if (normalized === "RN") return "NURSE";
+  if (normalized === "MD") return "DOCTOR";
+  if (normalized === "PHYSICIAN") return "DOCTOR";
+  if (normalized === "RT") return "RESPIRATORY_THERAPIST";
+  if (normalized === "RESPIRATORY THERAPIST") return "RESPIRATORY_THERAPIST";
+  if (normalized === "RAD TECH" || normalized === "RADIOLOGY TECH") return "RAD_TECH";
+  if (normalized === "RADIOLOGIC TECHNOLOGIST") return "RAD_TECH";
+  if (normalized === "SCRUB TECH") return "SCRUB_TECH";
+  if (normalized === "SURGICAL TECHNOLOGIST") return "SCRUB_TECH";
+  if (normalized === "CCMA" || normalized === "MA") return "CCMA";
+
   return STAFF_ROLES.includes(normalized as StaffRole) ? (normalized as StaffRole) : "UNKNOWN";
 }
 

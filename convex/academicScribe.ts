@@ -252,6 +252,9 @@ export const createStudySession = mutation({
     subject: v.string(),
     className: v.string(),
     professor: v.optional(v.string()),
+    recordingInputSource: v.optional(
+      v.union(v.literal("microphone"), v.literal("system"), v.literal("mixed"))
+    ),
   },
   async handler(ctx, args) {
     const sessionId = await ctx.db.insert("studyClassSessions", {
@@ -259,6 +262,7 @@ export const createStudySession = mutation({
       subject: args.subject,
       className: args.className,
       professor: args.professor || undefined,
+      recordingInputSource: args.recordingInputSource,
       startedAt: Date.now(),
       status: "recording",
     });
@@ -298,6 +302,9 @@ export const createStudyNote = mutation({
     sessionId: v.id("studyClassSessions"),
     userId: v.id("users"),
     syncFingerprint: v.optional(v.string()),
+    recordingInputSource: v.optional(
+      v.union(v.literal("microphone"), v.literal("system"), v.literal("mixed"))
+    ),
     rawTranscription: v.string(),
     subject: v.string(),
     topics: v.optional(v.array(v.string())),
@@ -346,6 +353,7 @@ export const createStudyNote = mutation({
       sessionId: args.sessionId,
       userId: args.userId,
       syncFingerprint: args.syncFingerprint,
+      recordingInputSource: args.recordingInputSource,
       rawTranscription: args.rawTranscription,
       content: args.rawTranscription, // Start with raw, will be edited
       subject: args.subject,

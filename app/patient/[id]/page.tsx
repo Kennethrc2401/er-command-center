@@ -116,6 +116,48 @@ type CareMilestones = {
   handoffReady: boolean;
 };
 
+type PosChargeInput = {
+  encounterId: Id<"encounters">;
+  patientId: Id<"patients">;
+  amountCents: number;
+  description?: string;
+};
+
+type PosPaymentInput = {
+  chargeId: Id<"posCharges">;
+  amountCents: number;
+  method: string;
+  reference?: string;
+};
+
+type PosVoidInput = {
+  chargeId: Id<"posCharges">;
+  reason?: string;
+};
+
+type PosRefundInput = {
+  paymentId: Id<"posPayments">;
+  amountCents: number;
+  reason?: string;
+};
+
+type PosLedgerPayment = {
+  _id: string;
+  method: string;
+  netCents: number;
+  refundableCents: number;
+};
+
+type PosLedgerCharge = {
+  _id: string;
+  description?: string;
+  status: "pending" | "paid" | "void" | "refunded";
+  amountCents: number;
+  remainingCents: number;
+  paidCents: number;
+  payments?: PosLedgerPayment[];
+};
+
 const DEFAULT_CARE_MILESTONES: CareMilestones = {
   reassessment: false,
   medRec: false,
@@ -132,10 +174,27 @@ export default function PatientPage() {
   const staffEmail = user?.primaryEmailAddress?.emailAddress;
   const runDiscovery = useMutation(api.insurance.discoverSecondaryCoverage);
   const runCriticalSweep = useMutation(api.labs.runEscalationSweep);
-  const createPosCharge = useMutation(api.pos.createPosCharge);
-  const capturePosPayment = useMutation(api.pos.capturePosPayment);
-  const voidPosCharge = useMutation(api.pos.voidPosCharge);
-  const refundPosPayment = useMutation(api.pos.refundPosPayment);
+  // POS functions disabled - pos.ts backend deleted due to schema conflicts
+  // const createPosCharge = useMutation(api.pos.createPosCharge);
+  // const capturePosPayment = useMutation(api.pos.capturePosPayment);
+  // const voidPosCharge = useMutation(api.pos.voidPosCharge);
+  // const refundPosPayment = useMutation(api.pos.refundPosPayment);
+  const createPosCharge = async (input: PosChargeInput) => {
+    void input;
+    return { status: "disabled" as const };
+  };
+  const capturePosPayment = async (input: PosPaymentInput) => {
+    void input;
+    return { status: "disabled" as const };
+  };
+  const voidPosCharge = async (input: PosVoidInput) => {
+    void input;
+    return { status: "disabled" as const };
+  };
+  const refundPosPayment = async (input: PosRefundInput) => {
+    void input;
+    return { status: "disabled" as const };
+  };
   const [isSearching, setIsSearching] = useState(false);
   const [chargeDescription, setChargeDescription] = useState("ED copay");
   const [chargeAmount, setChargeAmount] = useState("50.00");
@@ -201,11 +260,22 @@ export default function PatientPage() {
   
   // Find the active encounter safely
   const activeEncounter = (encounters?.find(e => e.status !== "discharged") || encounters?.[0]) as DetailedEncounter | undefined;
-  const posLedger = useQuery(
-    api.pos.getEncounterPosLedger,
-    activeEncounter ? { encounterId: activeEncounter._id } : "skip"
-  );
-  const posPermissions = useQuery(api.pos.getPosPermissions, {});
+  // POS functions disabled - pos.ts backend deleted due to schema conflicts
+  // const posLedger = useQuery(
+  //   api.pos.getEncounterPosLedger,
+  //   activeEncounter ? { encounterId: activeEncounter._id } : "skip"
+  // );
+  // const posPermissions = useQuery(api.pos.getPosPermissions, {});
+  
+  // Stub objects for disabled POS functionality
+  const posLedger: {
+    charges: PosLedgerCharge[];
+    summary: { totalBilledCents: number; totalPaidCents: number; totalOutstandingCents: number };
+  } = {
+    charges: [],
+    summary: { totalBilledCents: 0, totalPaidCents: 0, totalOutstandingCents: 0 },
+  };
+  const posPermissions = { actorRole: "DISABLED", canManage: false, canCollect: false };
   
   const criticalLabs = useQuery(api.labs.getCriticalAlerts, 
     activeEncounter ? { encounterId: activeEncounter._id } : "skip"

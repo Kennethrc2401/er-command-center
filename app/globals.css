@@ -302,3 +302,229 @@
   background: linear-gradient(90deg, transparent, rgb(255 255 255 / 36%), transparent);
   animation: shimmer-sweep 4s linear infinite;
 }
+
+/* Ensure dropdowns and FullCalendar popovers are readable in dark mode */
+.dark select,
+.dark option,
+.dark .fc-popover,
+.dark .fc-popover *,
+.dark .fc .fc-scrollgrid-section > * {
+  color: var(--popover-foreground) !important;
+  background-color: var(--popover) !important;
+}
+
+/* Force select elements to use dark background/text in dark theme */
+select {
+  background-color: white;
+  color: #0f172a;
+}
+.dark select {
+  background-color: var(--input);
+  color: var(--popover-foreground);
+}
+
+/* AdvancedMD-style hover effects for calendar timeslots */
+.fc-timegrid-slot:hover {
+  background-color: #e0f2fe !important; /* light blue */
+}
+.dark .fc-timegrid-slot:hover {
+  background-color: #082f4e !important; /* dark blue for dark mode */
+}
+
+/* Smooth transitions for calendar interactions */
+.fc-daygrid-day:hover,
+.fc-timegrid-slot:hover {
+  transition: background-color 0.15s ease-in-out;
+}
+
+/* AdvancedMD-inspired scheduler skin */
+.advancedmd-calendar .fc {
+  font-size: 12px;
+}
+
+.advancedmd-calendar .fc-toolbar {
+  padding: 6px 8px;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+  border-bottom: 1px solid #cfe5fb;
+}
+
+.advancedmd-calendar .fc-toolbar-title {
+  font-size: 13px !important;
+  font-weight: 700;
+  color: #0f3f8a;
+  letter-spacing: 0.01em;
+}
+
+.advancedmd-calendar .fc-toolbar-chunk {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.advancedmd-calendar .fc-button {
+  background: #e9f3ff !important;
+  border: 1px solid #bfdbfe !important;
+  color: #1d4ed8 !important;
+  box-shadow: none !important;
+  padding: 2px 7px !important;
+  height: 26px;
+  font-size: 11px !important;
+  font-weight: 600;
+}
+
+.advancedmd-calendar .fc-button:hover,
+.advancedmd-calendar .fc-button-active {
+  background: #dbeafe !important;
+  border-color: #93c5fd !important;
+  color: #1e40af !important;
+}
+
+.advancedmd-calendar .fc-col-header-cell {
+  background-color: #f0f7ff;
+  border-color: #dbeafe;
+  color: #1e3a8a;
+  font-weight: 600;
+}
+
+.advancedmd-calendar .fc-timegrid-slot {
+  border-color: #e2ecf9;
+  height: 1.55rem;
+}
+
+.advancedmd-calendar .fc-timegrid-axis,
+.advancedmd-calendar .fc-timegrid-axis-cushion {
+  color: #1e3a8a;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.advancedmd-calendar .fc-timegrid-slot-label-cushion {
+  color: #334155;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.advancedmd-calendar .fc-scrollgrid,
+.advancedmd-calendar .fc-scrollgrid-section > * {
+  border-color: #dbeafe;
+}
+
+.advancedmd-calendar .fc-timegrid-slot-lane:hover,
+.advancedmd-calendar .fc-timegrid-col-frame:hover {
+  background: #e0f2fe !important;
+}
+
+.advancedmd-calendar .fc-timegrid-now-indicator-line {
+  border-color: #0ea5e9;
+}
+
+.advancedmd-calendar .fc-event {
+  border: 1px solid #93c5fd;
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+  color: #0f172a;
+  border-radius: 4px;
+  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.35);
+}
+
+.advancedmd-calendar .fc-event-main {
+  padding: 2px 4px;
+}
+
+.advancedmd-calendar .fc-timegrid-event-harness:hover {
+  z-index: 8;
+}
+
+.advancedmd-calendar .fc .fc-highlight {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+.dark .advancedmd-calendar .fc-toolbar {
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  border-bottom-color: #334155;
+}
+
+.dark .advancedmd-calendar .fc-toolbar-title {
+  color: #dbeafe;
+}
+
+.dark .advancedmd-calendar .fc-col-header-cell {
+  background-color: #1e293b;
+  border-color: #334155;
+  color: #bfdbfe;
+}
+
+.dark .advancedmd-calendar .fc-timegrid-axis,
+.dark .advancedmd-calendar .fc-timegrid-axis-cushion,
+.dark .advancedmd-calendar .fc-timegrid-slot-label-cushion {
+  color: #cbd5e1;
+}
+
+.dark .advancedmd-calendar .fc-timegrid-slot-lane:hover,
+.dark .advancedmd-calendar .fc-timegrid-col-frame:hover {
+  background: #0b2e4f !important;
+}
+
+.dark .advancedmd-calendar .fc .fc-highlight {
+  background: rgba(14, 116, 144, 0.32);
+}
+
+/* Theme preset variants */
+.advancedmd-calendar.advancedmd-classic .fc-toolbar {
+  padding: 4px 6px;
+  background: linear-gradient(180deg, #f5f8fd 0%, #e7eef8 100%);
+}
+
+.advancedmd-calendar.advancedmd-classic .fc-toolbar-title {
+  font-size: 12px !important;
+  letter-spacing: 0.02em;
+}
+
+.advancedmd-calendar.advancedmd-classic .fc-button {
+  height: 24px;
+  border-radius: 2px !important;
+  font-size: 10px !important;
+  padding: 1px 6px !important;
+  background: #e6edf7 !important;
+  border-color: #b8cbe3 !important;
+  color: #1f3f75 !important;
+}
+
+.advancedmd-calendar.advancedmd-classic .fc-col-header-cell {
+  background: #eaf2fc;
+  color: #1c3f78;
+}
+
+.advancedmd-calendar.advancedmd-classic .fc-timegrid-slot {
+  height: 1.4rem;
+}
+
+.advancedmd-calendar.advancedmd-classic .fc-event {
+  border-radius: 2px;
+  border-color: #8fb3db;
+  background: linear-gradient(180deg, #eef4fe 0%, #d7e6fb 100%);
+  box-shadow: none;
+}
+
+.advancedmd-calendar.advancedmd-classic .fc-event-main {
+  padding: 1px 3px;
+}
+
+.advancedmd-calendar.advancedmd-modern .fc-toolbar {
+  padding: 6px 8px;
+}
+
+.advancedmd-calendar.advancedmd-modern .fc-event {
+  border-radius: 4px;
+}
+
+.dark .advancedmd-calendar.advancedmd-classic .fc-toolbar {
+  background: linear-gradient(180deg, #0f172a 0%, #172437 100%);
+}
+
+.dark .advancedmd-calendar.advancedmd-classic .fc-button {
+  background: #1f2f46 !important;
+  border-color: #334a6a !important;
+  color: #bfdbfe !important;
+}

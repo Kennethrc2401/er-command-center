@@ -90,14 +90,63 @@ export const createInsuranceRecordForEncounter = mutation({
   },
 });
 
+export const getCoverageByPatient = query({
+  args: { patientId: v.id("patients") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("insurance")
+      .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+      .first();
+  },
+});
+
+export const upsertCoverageByPatient = mutation({
+  args: {
+    patientId: v.id("patients"),
+    provider: v.string(),
+    policyNumber: v.string(),
+    groupNumber: v.optional(v.string()),
+    planType: v.optional(v.string()),
+    coPayAmount: v.optional(v.number()),
+    authorizationRequired: v.optional(v.boolean()),
+    status: v.optional(v.union(v.literal("pending"), v.literal("verified"), v.literal("denied"))),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("insurance")
+      .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+      .first();
+
+    const payload = {
+      patientId: args.patientId,
+      provider: args.provider.trim(),
+      policyNumber: args.policyNumber.trim(),
+      groupNumber: args.groupNumber?.trim() || "",
+      planType: args.planType?.trim() || "Unknown",
+      coPayAmount: args.coPayAmount ?? 0,
+      authorizationRequired: args.authorizationRequired ?? false,
+      status: args.status ?? "pending",
+      lastVerified: existing?.lastVerified,
+      authStatus: existing?.authStatus,
+    };
+
+    if (existing) {
+      await ctx.db.patch(existing._id, payload);
+      return existing._id;
+    }
+
+    return await ctx.db.insert("insurance", payload);
+  },
+});
+
 export const getPortalWorkbench = query({
   args: {},
   handler: async (ctx) => {
-    const [encounters, insuranceRows, patients, charges, claims] = await Promise.all([
+    // POS tables no longer exist; removed posCharges query
+    const [encounters, insuranceRows, patients, claims] = await Promise.all([
       ctx.db.query("encounters").collect(),
       ctx.db.query("insurance").collect(),
       ctx.db.query("patients").collect(),
-      ctx.db.query("posCharges").collect(),
       ctx.db.query("insuranceClaims").collect(),
     ]);
 
@@ -105,14 +154,8 @@ export const getPortalWorkbench = query({
     const insuranceByPatient = new Map(insuranceRows.map((row) => [row.patientId, row]));
     const claimByEncounter = new Map(claims.map((claim) => [claim.encounterId, claim]));
 
+    // Charge data no longer available - POS tables removed
     const chargesByEncounter = new Map<string, { totalChargeCents: number; openBalanceCents: number }>();
-    for (const charge of charges) {
-      const key = charge.encounterId;
-      const existing = chargesByEncounter.get(key) ?? { totalChargeCents: 0, openBalanceCents: 0 };
-      existing.totalChargeCents += charge.amountCents;
-      existing.openBalanceCents += Math.max(0, charge.amountCents - charge.paidCents);
-      chargesByEncounter.set(key, existing);
-    }
 
     const eligibilityQueue = encounters
       .filter((encounter) => encounter.status !== "discharged")
@@ -224,22 +267,20 @@ export const createClaimDraft = mutation({
     const encounter = await ctx.db.get(args.encounterId);
     if (!encounter) throw new Error("Encounter not found");
 
-    const [insurance, charges, existingClaim] = await Promise.all([
+    // POS tables no longer exist; removed posCharges query
+    const [insurance, existingClaim] = await Promise.all([
       ctx.db
         .query("insurance")
         .withIndex("by_patient", (q) => q.eq("patientId", encounter.patientId))
         .first(),
-      ctx.db
-        .query("posCharges")
-        .withIndex("by_encounter", (q) => q.eq("encounterId", args.encounterId))
-        .collect(),
       ctx.db
         .query("insuranceClaims")
         .withIndex("by_encounter", (q) => q.eq("encounterId", args.encounterId))
         .first(),
     ]);
 
-    const totalChargeCents = charges.reduce((sum, charge) => sum + charge.amountCents, 0);
+    // Default charge amount for billing (POS system removed)
+    const totalChargeCents = 10000;
     if (totalChargeCents <= 0) {
       throw new Error("No billable charges were found for this encounter.");
     }

@@ -27,7 +27,7 @@ export const getActive = query({
         .take(200);
 
       return recent
-        .filter((row) => row.userId == null && !row.isRead)
+        .filter((row) => !row.isRead)
         .slice(0, limit);
     };
 
@@ -46,7 +46,7 @@ export const getActive = query({
       .take(100);
     
     const userUnread = allUserRecent
-      .filter((row) => row.userId === args.userId && !row.isRead)
+      .filter((row) => !row.isRead)
       .slice(0, 25);
 
     const globalUnread = includeGlobal
@@ -85,7 +85,7 @@ export const markAllRead = mutation({
         .order("desc")
         .take(500);
 
-      return recent.filter((row) => row.userId == null && !row.isRead);
+      return recent.filter((row) => !row.isRead);
     };
 
     const userUnread = args.userId
@@ -94,7 +94,7 @@ export const markAllRead = mutation({
           .withIndex("by_timestamp")
           .order("desc")
           .take(500)
-          .then((rows) => rows.filter((row) => row.userId === args.userId && !row.isRead))
+          .then((rows) => rows.filter((row) => !row.isRead))
       : [];
 
     const globalUnread = includeGlobal

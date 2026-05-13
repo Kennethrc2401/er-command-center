@@ -41,6 +41,10 @@
     "react-to-print": "^3.3.0",
     "recharts": "^3.7.0",
     "sonner": "^2.0.7",
+    "@fullcalendar/react": "^6.1.8",
+    "@fullcalendar/timegrid": "^6.1.8",
+    "@fullcalendar/interaction": "^6.1.8",
+    "@fullcalendar/resource-timegrid": "^6.1.8",
     "tailwind-merge": "^3.4.0",
     "zod": "^4.3.6",
     "zustand": "^5.0.11"

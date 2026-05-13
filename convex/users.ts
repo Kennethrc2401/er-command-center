@@ -173,6 +173,27 @@ export const getActiveRoster = query({
   },
 });
 
+// Return providers for a clinic (doctors and other clinical roles)
+export const listClinicProviders = query({
+  args: { clinicId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db.query("users").collect();
+    const providerRoles = new Set(["DOCTOR", "SURGEON", "ANESTHESIOLOGIST", "PHARMACIST", "NURSE", "CCMA"]);
+    return rows
+      .filter((u) => u.status === "ACTIVE" && providerRoles.has(String(u.role)))
+      .map((u) => ({
+        _id: u._id,
+        name: u.name,
+        role: u.role,
+        credentials: u.credentials ?? "",
+        department: u.department ?? "",
+        username: u.username ?? undefined,
+        title: u.name,
+      }))
+      .sort((left, right) => String(left.role).localeCompare(String(right.role)) || String(left.name).localeCompare(String(right.name)));
+  },
+});
+
 export const getByEmail = query({
   args: {
     email: v.string(),

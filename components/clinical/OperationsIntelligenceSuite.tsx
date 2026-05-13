@@ -43,7 +43,7 @@ export default function OperationsIntelligenceSuite() {
   const runSlaEscalationSweep = useMutation(api.workflow.runSlaEscalationSweep);
   const { actorName } = useResolvedActor();
   const [replayWindowHours, setReplayWindowHours] = useState<4 | 8 | 24>(24);
-  const replay = useQuery(api.workflow.getShiftReplay, { windowHours: replayWindowHours });
+  const replay = useQuery(api.workflow.getShiftReplay, { limit: replayWindowHours });
   const [replayTypeFilter, setReplayTypeFilter] = useState<Record<"protocol" | "handoff" | "deterioration" | "alert", boolean>>({
     protocol: true,
     handoff: true,
@@ -269,8 +269,8 @@ export default function OperationsIntelligenceSuite() {
   );
 
   const filteredReplayEvents = useMemo(() => {
-    if (!replay) return [];
-    return replay.events.filter((event) => {
+    if (!replay || !replay.events) return [];
+    return (replay.events ?? []).filter((event) => {
       if (event.type !== "protocol" && event.type !== "handoff" && event.type !== "deterioration" && event.type !== "alert") {
         return true;
       }
@@ -379,7 +379,9 @@ export default function OperationsIntelligenceSuite() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `shift-replay-${replay.windowHours}h-${new Date(replay.generatedAt).toISOString().replace(/[:.]/g, "-")}.csv`;
+    const windowLabel = replay?.windowHours ?? replayWindowHours;
+    const generatedAt = replay?.generatedAt ?? Date.now();
+    anchor.download = `shift-replay-${windowLabel}h-${new Date(generatedAt).toISOString().replace(/[:.]/g, "-")}.csv`;
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
@@ -439,7 +441,7 @@ export default function OperationsIntelligenceSuite() {
                 <Badge variant="outline">Skip Rate: {incidentRouting.skipRatePercent}%</Badge>
               </div>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-                {incidentRouting.byRole.map((row) => (
+                {(incidentRouting.byRole ?? []).map((row) => (
                   <div key={row.role} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-800 dark:bg-slate-950/40">
                     <p className="font-semibold text-slate-700 dark:text-slate-200">{row.role}</p>
                     <p className="text-[11px] text-slate-500">{row.total} total • {row.skipped} suppressed</p>
@@ -502,10 +504,10 @@ export default function OperationsIntelligenceSuite() {
             <CardTitle className="flex items-center gap-2 text-sm"><ShieldAlert className="h-4 w-4 text-red-600" /> Deterioration Watchlist</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
-            {intel.deteriorationWatchlist.length === 0 ? (
-              <p className="text-slate-500">No medium/high risk patients right now.</p>
-            ) : (
-              intel.deteriorationWatchlist.slice(0, 4).map((row) => (
+            {(intel.deteriorationWatchlist ?? []).length === 0 ? (
+                <p className="text-slate-500">No medium/high risk patients right now.</p>
+              ) : (
+                (intel.deteriorationWatchlist ?? []).slice(0, 4).map((row) => (
                 <div key={row.encounterId} className="rounded-lg border border-red-200 bg-white px-2 py-1.5 dark:border-red-900/40 dark:bg-slate-900/70">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-slate-700 dark:text-slate-200">{row.patientName}</span>
@@ -545,17 +547,17 @@ export default function OperationsIntelligenceSuite() {
           </CardHeader>
           <CardContent className="space-y-3 text-xs">
             <div className="grid grid-cols-2 gap-2">
-              <Badge className="justify-center bg-blue-600 text-white">Admit Ready: {intel.disposition.admitReady}</Badge>
-              <Badge className="justify-center bg-emerald-600 text-white">Discharge Ready: {intel.disposition.dischargeReady}</Badge>
-              <Badge className="justify-center bg-amber-500 text-white">Boarded: {intel.disposition.boarded}</Badge>
-              <Badge className="justify-center bg-slate-700 text-white">Undecided: {intel.disposition.undecided}</Badge>
+              <Badge className="justify-center bg-blue-600 text-white">Admit Ready: {intel.disposition?.admitReady ?? 0}</Badge>
+              <Badge className="justify-center bg-emerald-600 text-white">Discharge Ready: {intel.disposition?.dischargeReady ?? 0}</Badge>
+              <Badge className="justify-center bg-amber-500 text-white">Boarded: {intel.disposition?.boarded ?? 0}</Badge>
+              <Badge className="justify-center bg-slate-700 text-white">Undecided: {intel.disposition?.undecided ?? 0}</Badge>
             </div>
 
             <div className="space-y-2">
-              {intel.dispositionCandidates.length === 0 ? (
+              {(intel.dispositionCandidates ?? []).length === 0 ? (
                 <p className="text-slate-500">No disposition candidates.</p>
               ) : (
-                intel.dispositionCandidates.slice(0, 4).map((row) => (
+                (intel.dispositionCandidates ?? []).slice(0, 4).map((row) => (
                   <div key={row.encounterId} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-800 dark:bg-slate-900/70">
                     <div className="flex items-center justify-between gap-2">
                       <div>
@@ -632,10 +634,10 @@ export default function OperationsIntelligenceSuite() {
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
             <div className="grid grid-cols-2 gap-2">
-            <Badge variant="outline">Labs: {intel.closedLoop.openCriticalLabs}</Badge>
-            <Badge variant="outline">Imaging: {intel.closedLoop.openImagingReads}</Badge>
-            <Badge variant="outline">Consults: {intel.closedLoop.openConsultCallbacks}</Badge>
-            <Badge className="bg-slate-900 text-white">Total Open: {intel.closedLoop.totalOpen}</Badge>
+            <Badge variant="outline">Labs: {intel.closedLoop?.openCriticalLabs ?? 0}</Badge>
+            <Badge variant="outline">Imaging: {intel.closedLoop?.openImagingReads ?? 0}</Badge>
+            <Badge variant="outline">Consults: {intel.closedLoop?.openConsultCallbacks ?? 0}</Badge>
+            <Badge className="bg-slate-900 text-white">Total Open: {intel.closedLoop?.totalOpen ?? 0}</Badge>
             </div>
             <div className="space-y-2">
               {visibleCriticalActionItems.length === 0 ? (
@@ -671,10 +673,10 @@ export default function OperationsIntelligenceSuite() {
             <CardTitle className="flex items-center gap-2 text-sm"><Users className="h-4 w-4 text-cyan-700" /> Predictive Staffing Heatmap</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
-            <p>Active staff: <strong>{intel.staffingHeatmap.activeStaffCount}</strong></p>
-            <p>Arrivals (last hour): <strong>{intel.staffingHeatmap.arrivalsLastHour}</strong></p>
-            <p>High acuity load: <strong>{intel.staffingHeatmap.highAcuityCount}</strong></p>
-            <p className="font-semibold text-cyan-800 dark:text-cyan-300">{intel.staffingHeatmap.recommendation}</p>
+            <p>Active staff: <strong>{intel.staffingHeatmap?.activeStaffCount ?? 0}</strong></p>
+            <p>Arrivals (last hour): <strong>{intel.staffingHeatmap?.arrivalsLastHour ?? 0}</strong></p>
+            <p>High acuity load: <strong>{intel.staffingHeatmap?.highAcuityCount ?? 0}</strong></p>
+            <p className="font-semibold text-cyan-800 dark:text-cyan-300">{intel.staffingHeatmap?.recommendation ?? ""}</p>
           </CardContent>
         </Card>
 
@@ -682,8 +684,8 @@ export default function OperationsIntelligenceSuite() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm"><Waves className="h-4 w-4 text-blue-700" /> Bed Turnover Optimizer v2</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-xs">
-            {intel.bedOptimizer.slice(0, 4).map((row) => (
+            <CardContent className="space-y-2 text-xs">
+            {(intel.bedOptimizer ?? []).slice(0, 4).map((row) => (
               <div key={row.encounterId} className="flex items-center justify-between rounded-lg border border-blue-200 bg-white px-2 py-1.5 dark:border-blue-900/40 dark:bg-slate-900/70">
                 <span className="font-semibold">{row.bedLabel}</span>
                 <span>{row.etaMinutes}m · {Math.round(row.confidence * 100)}%</span>
@@ -697,10 +699,10 @@ export default function OperationsIntelligenceSuite() {
             <CardTitle className="flex items-center gap-2 text-sm"><CheckCheckIcon /> Smart Discharge Packet Automation</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
-            {intel.dischargeAutomation.length === 0 ? (
+            {(intel.dischargeAutomation ?? []).length === 0 ? (
               <p className="text-slate-500">No discharge-ready patients in queue.</p>
             ) : (
-              intel.dischargeAutomation.slice(0, 4).map((row) => (
+              (intel.dischargeAutomation ?? []).slice(0, 4).map((row) => (
                 <div key={row.encounterId} className="rounded-lg border border-emerald-200 bg-white px-2 py-1.5 dark:border-emerald-900/40 dark:bg-slate-900/70">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold">{row.patientName}</span>
@@ -732,16 +734,16 @@ export default function OperationsIntelligenceSuite() {
           </CardHeader>
           <CardContent className="space-y-3 text-xs">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              <Badge variant="outline">Sepsis 24h: {intel.qualityScorecards.sepsisBundleActivations24h}</Badge>
-              <Badge variant="outline">Stroke 24h: {intel.qualityScorecards.strokeAlertActivations24h}</Badge>
-              <Badge variant="outline">Handoffs 24h: {intel.qualityScorecards.handoffAcceptance24h}</Badge>
-              <Badge className="bg-red-600 text-white">Open Critical: {intel.qualityScorecards.openCriticalResults}</Badge>
-              <Badge className="bg-slate-900 text-white">Closed Loop: {Math.round(intel.qualityScorecards.overallClosedLoopRate * 100)}%</Badge>
-              <Badge className="bg-slate-900 text-white">Boarding: {Math.round(intel.qualityScorecards.boardingRate * 100)}%</Badge>
+              <Badge variant="outline">Sepsis 24h: {intel.qualityScorecards?.sepsisBundleActivations24h ?? 0}</Badge>
+              <Badge variant="outline">Stroke 24h: {intel.qualityScorecards?.strokeAlertActivations24h ?? 0}</Badge>
+              <Badge variant="outline">Handoffs 24h: {intel.qualityScorecards?.handoffAcceptance24h ?? 0}</Badge>
+              <Badge className="bg-red-600 text-white">Open Critical: {intel.qualityScorecards?.openCriticalResults ?? 0}</Badge>
+              <Badge className="bg-slate-900 text-white">Closed Loop: {Math.round((intel.qualityScorecards?.overallClosedLoopRate ?? 0) * 100)}%</Badge>
+              <Badge className="bg-slate-900 text-white">Boarding: {Math.round((intel.qualityScorecards?.boardingRate ?? 0) * 100)}%</Badge>
             </div>
 
             <div className="space-y-2">
-              {intel.qualityBenchmarks.map((metric) => (
+              {(intel.qualityBenchmarks ?? []).map((metric) => (
                 <div key={metric.label} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-800 dark:bg-slate-900/70">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
@@ -781,17 +783,17 @@ export default function OperationsIntelligenceSuite() {
             <CardTitle className="flex items-center gap-2 text-sm"><BellRing className="h-4 w-4 text-fuchsia-700" /> Role-Based Mobile Routing</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
-            <div className="grid grid-cols-3 gap-2">
-              <Badge className="justify-center bg-slate-900 text-white">RN: {intel.mobileRouting.toNurse}</Badge>
-              <Badge className="justify-center bg-slate-900 text-white">MD: {intel.mobileRouting.toDoctor}</Badge>
-              <Badge className="justify-center bg-slate-900 text-white">UC: {intel.mobileRouting.toUnitCoordinator}</Badge>
+              <div className="grid grid-cols-3 gap-2">
+              <Badge className="justify-center bg-slate-900 text-white">RN: {intel.mobileRouting?.toNurse ?? 0}</Badge>
+              <Badge className="justify-center bg-slate-900 text-white">MD: {intel.mobileRouting?.toDoctor ?? 0}</Badge>
+              <Badge className="justify-center bg-slate-900 text-white">UC: {intel.mobileRouting?.toUnitCoordinator ?? 0}</Badge>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <Button
                 size="sm"
                 className="h-7 text-[10px]"
                 disabled={pendingRoute.NURSE}
-                onClick={() => void routeAlerts("NURSE", intel.mobileRouting.toNurse)}
+                onClick={() => void routeAlerts("NURSE", intel.mobileRouting?.toNurse ?? 0)}
               >
                 {pendingRoute.NURSE ? "Routing..." : "Route RN"}
               </Button>
@@ -799,7 +801,7 @@ export default function OperationsIntelligenceSuite() {
                 size="sm"
                 className="h-7 text-[10px]"
                 disabled={pendingRoute.DOCTOR}
-                onClick={() => void routeAlerts("DOCTOR", intel.mobileRouting.toDoctor)}
+                onClick={() => void routeAlerts("DOCTOR", intel.mobileRouting?.toDoctor ?? 0)}
               >
                 {pendingRoute.DOCTOR ? "Routing..." : "Route MD"}
               </Button>
@@ -807,7 +809,7 @@ export default function OperationsIntelligenceSuite() {
                 size="sm"
                 className="h-7 text-[10px]"
                 disabled={pendingRoute.UNIT_COORDINATOR}
-                onClick={() => void routeAlerts("UNIT_COORDINATOR", intel.mobileRouting.toUnitCoordinator)}
+                onClick={() => void routeAlerts("UNIT_COORDINATOR", intel.mobileRouting?.toUnitCoordinator ?? 0)}
               >
                 {pendingRoute.UNIT_COORDINATOR ? "Routing..." : "Route UC"}
               </Button>
@@ -851,9 +853,9 @@ export default function OperationsIntelligenceSuite() {
                 </Button>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="outline">Events: {replay?.stats.eventCount ?? 0}</Badge>
-                <Badge className="bg-red-600 text-white">Critical: {replay?.stats.criticalEvents ?? 0}</Badge>
-                <Badge className="bg-amber-500 text-white">Bottlenecks: {replay?.stats.bottleneckCount ?? 0}</Badge>
+                <Badge variant="outline">Events: {replay?.stats?.eventCount ?? 0}</Badge>
+                <Badge className="bg-red-600 text-white">Critical: {replay?.stats?.criticalEvents ?? 0}</Badge>
+                <Badge className="bg-amber-500 text-white">Bottlenecks: {replay?.stats?.bottleneckCount ?? 0}</Badge>
                 <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]" onClick={exportReplayCsv}>
                   Export CSV
                 </Button>
@@ -902,7 +904,7 @@ export default function OperationsIntelligenceSuite() {
             {!replay ? (
               <p className="text-slate-500">Loading replay timeline...</p>
             ) : filteredReplayEvents.length === 0 ? (
-              <p className="text-slate-500">No replayable events in the last {replay.windowHours} hours.</p>
+              <p className="text-slate-500">No replayable events in the last {replay?.windowHours ?? replayWindowHours} hours.</p>
             ) : (
               <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
                 <div className="space-y-1.5">
@@ -922,10 +924,10 @@ export default function OperationsIntelligenceSuite() {
 
                 <div className="space-y-1.5">
                   <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Current Bottlenecks</p>
-                  {replay.bottlenecks.length === 0 ? (
+                  {(replay.bottlenecks ?? []).length === 0 ? (
                     <p className="text-slate-500">No active bottlenecks above threshold.</p>
                   ) : (
-                    replay.bottlenecks.map((item) => (
+                    (replay.bottlenecks ?? []).map((item) => (
                       <div key={item.encounterId} className="rounded-lg border border-amber-200 bg-white px-2 py-1.5 dark:border-amber-900/40 dark:bg-slate-900/70">
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-semibold text-slate-700 dark:text-slate-200">{item.patientName}</span>
@@ -948,7 +950,7 @@ export default function OperationsIntelligenceSuite() {
       </div>
 
       <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-        Last refresh: {new Date(intel.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        Last refresh: {new Date(intel.generatedAt ?? Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
       </p>
     </section>
   );

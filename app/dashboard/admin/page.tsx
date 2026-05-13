@@ -40,6 +40,37 @@ type RcmChecklistState = {
   claimBatchReady: boolean;
 };
 
+type PosQueueSummary = {
+  claimScrubQueue: number;
+  denialsAtRisk: number;
+  readyToSubmit: number;
+  todayCollectionsCents: number;
+};
+
+type PosPaymentRow = {
+  collectedAt: string | Date;
+  method: string;
+  amountCents: number;
+  reference?: string | null;
+  collectedBy: string;
+  chargeId: string | number;
+  encounterId: string | number;
+};
+
+type PosRefundRow = {
+  refundedAt: string | Date;
+  amountCents: number;
+  reason?: string | null;
+  refundedBy: string;
+  chargeId: string | number;
+  encounterId: string | number;
+};
+
+type PosCloseout = {
+  payments: PosPaymentRow[];
+  refunds: PosRefundRow[];
+};
+
 const DEFAULT_SHIFT_CHECKLIST: ShiftChecklistState = {
   staffingConfirmed: false,
   criticalCoverage: false,
@@ -57,8 +88,21 @@ const DEFAULT_RCM_CHECKLIST: RcmChecklistState = {
 export default function AdminDashboard() {
   const router = useRouter();
   const stats = useQuery(api.encounters.getERStats);
-  const posQueueSummary = useQuery(api.pos.getPosQueueSummary);
-  const posCloseout = useQuery(api.pos.getDailyCloseout, {});
+  // POS functions disabled - pos.ts backend deleted due to schema conflicts
+  // const posQueueSummary = useQuery(api.pos.getPosQueueSummary);
+  // const posCloseout = useQuery(api.pos.getDailyCloseout, {});
+  
+  // Stub objects for disabled POS functionality
+  const posQueueSummary: PosQueueSummary = {
+    claimScrubQueue: 0,
+    denialsAtRisk: 0,
+    readyToSubmit: 0,
+    todayCollectionsCents: 0,
+  };
+  const posCloseout: PosCloseout = {
+    payments: [],
+    refunds: [],
+  };
   const [isPresentationMode, setIsPresentationMode] = useState(false);
   const [isLaunchConsoleCollapsed, setIsLaunchConsoleCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -216,11 +260,6 @@ export default function AdminDashboard() {
   };
 
   const exportCloseoutCsv = () => {
-    if (!posCloseout) {
-      toast.error("Close-out data is still loading");
-      return;
-    }
-
     const paymentRows = posCloseout.payments.map((row) => [
       "payment",
       new Date(row.collectedAt).toISOString(),
@@ -248,9 +287,8 @@ export default function AdminDashboard() {
       ...refundRows,
     ];
 
-    const csv = rows
-      .map((line) => line.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
+    const csvRows: Array<Array<string | number | null | undefined>> = rows;
+    const csv = csvRows.map((line) => line.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n");
 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);

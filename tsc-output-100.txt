@@ -1,0 +1,100 @@
+﻿app/dashboard/admin/page.tsx(229,37): error TS2339: Property 'payments' does not exist on type 'never'.
+app/dashboard/admin/page.tsx(229,51): error TS7006: Parameter 'row' implicitly has an 'any' type.
+app/dashboard/admin/page.tsx(239,36): error TS2339: Property 'refunds' does not exist on type 'never'.
+app/dashboard/admin/page.tsx(239,49): error TS7006: Parameter 'row' implicitly has an 'any' type.
+app/dashboard/admin/page.tsx(257,32): error TS7006: Parameter 'value' implicitly has an 'any' type.
+app/dashboard/admin/revenue/page.tsx(37,9): error TS7034: Variable 'recentDrawerSessions' implicitly has type 'any[]' in some locations where its type cannot be determined.
+app/dashboard/admin/revenue/page.tsx(53,33): error TS2339: Property 'totalsByMethod' does not exist on type 'never'.
+app/dashboard/admin/revenue/page.tsx(54,37): error TS2339: Property 'refunds' does not exist on type 'never'.
+app/dashboard/admin/revenue/page.tsx(54,60): error TS7006: Parameter 'sum' implicitly has an 'any' type.
+app/dashboard/admin/revenue/page.tsx(54,65): error TS7006: Parameter 'refund' implicitly has an 'any' type.
+app/dashboard/admin/revenue/page.tsx(55,37): error TS2339: Property 'openingFloatCents' does not exist on type 'never'.
+app/dashboard/admin/revenue/page.tsx(59,10): error TS7005: Variable 'recentDrawerSessions' implicitly has an 'any[]' type.
+app/dashboard/admin/revenue/page.tsx(60,12): error TS7005: Variable 'recentDrawerSessions' implicitly has an 'any[]' type.
+app/dashboard/admin/revenue/page.tsx(66,7): error TS7005: Variable 'recentDrawerSessions' implicitly has an 'any[]' type.
+app/dashboard/admin/revenue/page.tsx(77,24): error TS2554: Expected 0 arguments, but got 1.
+app/dashboard/admin/revenue/page.tsx(100,40): error TS2554: Expected 0 arguments, but got 1.
+app/dashboard/admin/revenue/page.tsx(101,33): error TS2339: Property '_id' does not exist on type 'never'.
+app/dashboard/admin/revenue/page.tsx(125,33): error TS2554: Expected 0 arguments, but got 1.
+app/dashboard/admin/revenue/page.tsx(231,80): error TS2339: Property 'claimScrubQueue' does not exist on type 'never'.
+app/dashboard/admin/revenue/page.tsx(232,83): error TS2339: Property 'todayNetCollectionsCents' does not exist on type 'never'.
+app/dashboard/admin/revenue/page.tsx(233,75): error TS2339: Property 'todayRefundsCents' does not exist on type 'never'.
+app/dashboard/admin/revenue/page.tsx(262,13): error TS7005: Variable 'recentDrawerSessions' implicitly has an 'any[]' type.
+app/dashboard/admin/revenue/page.tsx(265,14): error TS7005: Variable 'recentDrawerSessions' implicitly has an 'any[]' type.
+app/dashboard/triage/page.tsx(176,49): error TS2339: Property 'workflow' does not exist on type '{ socialHistory: { getByPatient: FunctionReference<"query", "public", { patientId: Id<"patients">; }, { _id: Id<"socialHistory">; _creationTime: number; patientId: Id<"patients">; smokingStatus: string; livingSituation: string; alcoholUse: string; lastUpdated: number; } | null, string | undefined>; update: FunctionR...'.
+app/dashboard/triage/patients/page.tsx(88,49): error TS2339: Property 'workflow' does not exist on type '{ socialHistory: { getByPatient: FunctionReference<"query", "public", { patientId: Id<"patients">; }, { _id: Id<"socialHistory">; _creationTime: number; patientId: Id<"patients">; smokingStatus: string; livingSituation: string; alcoholUse: string; lastUpdated: number; } | null, string | undefined>; update: FunctionR...'.
+app/dashboard/triage/patients/page.tsx(90,49): error TS2339: Property 'workflow' does not exist on type '{ socialHistory: { getByPatient: FunctionReference<"query", "public", { patientId: Id<"patients">; }, { _id: Id<"socialHistory">; _creationTime: number; patientId: Id<"patients">; smokingStatus: string; livingSituation: string; alcoholUse: string; lastUpdated: number; } | null, string | undefined>; update: FunctionR...'.
+app/dashboard/triage/patients/page.tsx(91,49): error TS2339: Property 'workflow' does not exist on type '{ socialHistory: { getByPatient: FunctionReference<"query", "public", { patientId: Id<"patients">; }, { _id: Id<"socialHistory">; _creationTime: number; patientId: Id<"patients">; smokingStatus: string; livingSituation: string; alcoholUse: string; lastUpdated: number; } | null, string | undefined>; update: FunctionR...'.
+app/dashboard/triage/patients/page.tsx(175,40): error TS2339: Property 'workflow' does not exist on type '{ socialHistory: { getByPatient: FunctionReference<"query", "public", { patientId: Id<"patients">; }, { _id: Id<"socialHistory">; _creationTime: number; patientId: Id<"patients">; smokingStatus: string; livingSituation: string; alcoholUse: string; lastUpdated: number; } | null, string | undefined>; update: FunctionR...'.
+app/patient/[id]/page.tsx(429,29): error TS2554: Expected 0 arguments, but got 1.
+app/patient/[id]/page.tsx(458,31): error TS2554: Expected 0 arguments, but got 1.
+app/patient/[id]/page.tsx(483,27): error TS2554: Expected 0 arguments, but got 1.
+app/patient/[id]/page.tsx(514,30): error TS2554: Expected 0 arguments, but got 1.
+app/patient/[id]/page.tsx(1326,81): error TS2339: Property 'status' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1326,109): error TS2339: Property 'status' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1327,49): error TS2339: Property '_id' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1327,68): error TS2339: Property '_id' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1328,39): error TS2339: Property 'description' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1328,64): error TS2339: Property 'remainingCents' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1370,46): error TS2339: Property '_id' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1372,110): error TS2339: Property 'description' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1373,168): error TS2339: Property 'status' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1376,43): error TS2339: Property 'amountCents' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1376,93): error TS2339: Property 'remainingCents' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1380,84): error TS2339: Property '_id' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1385,41): error TS2339: Property 'paidCents' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1385,67): error TS2339: Property 'status' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1387,81): error TS2339: Property '_id' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1396,40): error TS2339: Property 'payments' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1398,44): error TS2339: Property 'payments' does not exist on type 'never'.
+app/patient/[id]/page.tsx(1398,77): error TS7006: Parameter 'payment' implicitly has an 'any' type.
+components/admin/AnalyticsDashboard.tsx(37,25): error TS2551: Property 'antibiotic_usage_rate' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'. Did you mean 'antibioticUsageRate'?
+components/admin/AnalyticsDashboard.tsx(41,26): error TS2551: Property 'antibiotic_usage_rate' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'. Did you mean 'antibioticUsageRate'?
+components/admin/AnalyticsDashboard.tsx(74,30): error TS2339: Property 'topProcedures' does not exist on type '{ cptCode: string; description: string; usageCount: number; }[]'.
+components/admin/AnalyticsDashboard.tsx(74,59): error TS2339: Property 'topProcedures' does not exist on type '{ cptCode: string; description: string; usageCount: number; }[]'.
+components/admin/AnalyticsDashboard.tsx(75,31): error TS2339: Property 'topProcedures' does not exist on type '{ cptCode: string; description: string; usageCount: number; }[]'.
+components/admin/AnalyticsDashboard.tsx(102,50): error TS2339: Property 'totalProcedures' does not exist on type '{ cptCode: string; description: string; usageCount: number; }[]'.
+components/admin/AnalyticsDashboard.tsx(113,31): error TS2551: Property 'antibiotic_usage_rate' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'. Did you mean 'antibioticUsageRate'?
+components/admin/AnalyticsDashboard.tsx(118,33): error TS2551: Property 'antibiotic_usage_rate' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'. Did you mean 'antibioticUsageRate'?
+components/admin/AnalyticsDashboard.tsx(125,33): error TS2551: Property 'antibiotic_usage_rate' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'. Did you mean 'antibioticUsageRate'?
+components/admin/AnalyticsDashboard.tsx(129,34): error TS2551: Property 'antibiotic_usage_rate' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'. Did you mean 'antibioticUsageRate'?
+components/admin/AnalyticsDashboard.tsx(136,34): error TS2339: Property 'flagged' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'.
+components/admin/AnalyticsDashboard.tsx(141,28): error TS2339: Property 'flagged' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'.
+components/admin/AnalyticsDashboard.tsx(150,34): error TS2551: Property 'recommendations' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'. Did you mean 'recommendation'?
+components/admin/AnalyticsDashboard.tsx(151,35): error TS2551: Property 'recommendations' does not exist on type '{ totalMedicationsOrdered: number; antibiotiOrderCount: number; antibioticUsageRate: number; highUsageAlert: boolean; recommendation: string; }'. Did you mean 'recommendation'?
+components/admin/AnalyticsDashboard.tsx(169,38): error TS2339: Property 'averageRiskScore' does not exist on type '{ totalDischarges: number; highRiskDischarges: number; riskRate: number; recommendations: string[]; }'.
+components/admin/AnalyticsDashboard.tsx(174,35): error TS2339: Property 'highRiskPatientCount' does not exist on type '{ totalDischarges: number; highRiskDischarges: number; riskRate: number; recommendations: string[]; }'.
+components/admin/AnalyticsDashboard.tsx(179,37): error TS2339: Property 'highRiskPatientCount' does not exist on type '{ totalDischarges: number; highRiskDischarges: number; riskRate: number; recommendations: string[]; }'.
+components/admin/AnalyticsDashboard.tsx(186,37): error TS2339: Property 'highRiskPatientCount' does not exist on type '{ totalDischarges: number; highRiskDischarges: number; riskRate: number; recommendations: string[]; }'.
+components/admin/AnalyticsDashboard.tsx(190,38): error TS2339: Property 'highRiskPatientCount' does not exist on type '{ totalDischarges: number; highRiskDischarges: number; riskRate: number; recommendations: string[]; }'.
+components/admin/AnalyticsDashboard.tsx(198,36): error TS2339: Property 'commonRiskFactors' does not exist on type '{ totalDischarges: number; highRiskDischarges: number; riskRate: number; recommendations: string[]; }'.
+components/admin/AnalyticsDashboard.tsx(199,37): error TS2339: Property 'commonRiskFactors' does not exist on type '{ totalDischarges: number; highRiskDischarges: number; riskRate: number; recommendations: string[]; }'.
+components/admin/AnalyticsDashboard.tsx(210,36): error TS2339: Property 'interventions' does not exist on type '{ totalDischarges: number; highRiskDischarges: number; riskRate: number; recommendations: string[]; }'.
+components/admin/AnalyticsDashboard.tsx(211,37): error TS2339: Property 'interventions' does not exist on type '{ totalDischarges: number; highRiskDischarges: number; riskRate: number; recommendations: string[]; }'.
+components/admin/ClinicalResearchHub.tsx(226,9): error TS2339: Property 'workflow' does not exist on type '{ socialHistory: { getByPatient: FunctionReference<"query", "public", { patientId: Id<"patients">; }, { _id: Id<"socialHistory">; _creationTime: number; patientId: Id<"patients">; smokingStatus: string; livingSituation: string; alcoholUse: string; lastUpdated: number; } | null, string | undefined>; update: FunctionR...'.
+components/admin/ClinicalResearchHub.tsx(246,9): error TS2339: Property 'workflow' does not exist on type '{ socialHistory: { getByPatient: FunctionReference<"query", "public", { patientId: Id<"patients">; }, { _id: Id<"socialHistory">; _creationTime: number; patientId: Id<"patients">; smokingStatus: string; livingSituation: string; alcoholUse: string; lastUpdated: number; } | null, string | undefined>; update: FunctionR...'.
+components/admin/ClinicalResearchHub.tsx(510,39): error TS7006: Parameter 'row' implicitly has an 'any' type.
+components/admin/ClinicalResearchHub.tsx(974,37): error TS7006: Parameter 'row' implicitly has an 'any' type.
+components/admin/EpicFhirSyncUI.tsx(45,9): error TS2322: Type '"Discharge to home with follow-up"' is not assignable to type '"discharge" | "admit" | "observation" | "transfer"'.
+components/admin/EpicFhirSyncUI.tsx(54,53): error TS2367: This comparison appears to be unintentional because the types '"pending" | "failed" | "synced" | "conflict"' and '"success"' have no overlap.
+components/admin/EpicFhirSyncUI.tsx(55,49): error TS2367: This comparison appears to be unintentional because the types '"pending" | "failed" | "synced" | "conflict"' and '"failure"' have no overlap.
+components/admin/EpicFhirSyncUI.tsx(100,39): error TS2345: Argument of type '{ encounterId: any; }' is not assignable to parameter of type '{ patientId: Id<"patients">; epicMRN: string; encounterId: Id<"encounters">; }'.
+  Type '{ encounterId: any; }' is missing the following properties from type '{ patientId: Id<"patients">; epicMRN: string; encounterId: Id<"encounters">; }': patientId, epicMRN
+components/admin/EpicFhirSyncUI.tsx(106,39): error TS2345: Argument of type '{ encounterId: any; }' is not assignable to parameter of type '{ patientId: Id<"patients">; epicMRN: string; encounterId: Id<"encounters">; }'.
+  Type '{ encounterId: any; }' is missing the following properties from type '{ patientId: Id<"patients">; epicMRN: string; encounterId: Id<"encounters">; }': patientId, epicMRN
+components/admin/EpicFhirSyncUI.tsx(133,73): error TS2339: Property 'resourceId' does not exist on type '{ _id: Id<"fhirResources">; _creationTime: number; encounterId?: Id<"encounters"> | undefined; canonicalUrl?: string | undefined; effectiveAt?: number | undefined; sourceSystem?: string | undefined; ... 5 more ...; importedAt: number; }'.
+components/admin/EpicFhirSyncUI.tsx(142,49): error TS2339: Property 'syncStatus' does not exist on type '{ _id: Id<"fhirResources">; _creationTime: number; encounterId?: Id<"encounters"> | undefined; canonicalUrl?: string | undefined; effectiveAt?: number | undefined; sourceSystem?: string | undefined; ... 5 more ...; importedAt: number; }'.
+components/admin/EpicFhirSyncUI.tsx(144,39): error TS2339: Property 'syncStatus' does not exist on type '{ _id: Id<"fhirResources">; _creationTime: number; encounterId?: Id<"encounters"> | undefined; canonicalUrl?: string | undefined; effectiveAt?: number | undefined; sourceSystem?: string | undefined; ... 5 more ...; importedAt: number; }'.
+components/admin/EpicFhirSyncUI.tsx(149,46): error TS2339: Property 'lastSyncedAt' does not exist on type '{ _id: Id<"fhirResources">; _creationTime: number; encounterId?: Id<"encounters"> | undefined; canonicalUrl?: string | undefined; effectiveAt?: number | undefined; sourceSystem?: string | undefined; ... 5 more ...; importedAt: number; }'.
+components/admin/EpicFhirSyncUI.tsx(180,23): error TS2367: This comparison appears to be unintentional because the types '"pending" | "failed" | "synced" | "conflict"' and '"success"' have no overlap.
+components/admin/EpicFhirSyncUI.tsx(186,58): error TS2339: Property 'syncOperation' does not exist on type '{ _id: Id<"epicFhirSync">; _creationTime: number; conflictNote?: string | undefined; syncedBy?: string | undefined; status: "pending" | "failed" | "synced" | "conflict"; patientId: Id<...>; ... 7 more ...; syncedFields: string[]; }'.
+components/admin/EpicFhirSyncUI.tsx(188,40): error TS2339: Property 'syncTimestamp' does not exist on type '{ _id: Id<"epicFhirSync">; _creationTime: number; conflictNote?: string | undefined; syncedBy?: string | undefined; status: "pending" | "failed" | "synced" | "conflict"; patientId: Id<...>; ... 7 more ...; syncedFields: string[]; }'.
+components/admin/EpicFhirSyncUI.tsx(191,22): error TS2367: This comparison appears to be unintentional because the types '"pending" | "failed" | "synced" | "conflict"' and '"success"' have no overlap.
+components/admin/EpicFhirSyncUI.tsx(221,47): error TS2339: Property 'syncTimestamp' does not exist on type '{ _id: Id<"epicFhirSync">; _creationTime: number; conflictNote?: string | undefined; syncedBy?: string | undefined; status: "pending" | "failed" | "synced" | "conflict"; patientId: Id<...>; ... 7 more ...; syncedFields: string[]; }'.
+components/admin/WorkflowAutomationUI.tsx(43,9): error TS2322: Type '"consultation"' is not assignable to type '"transfer" | "consult" | "follow_up"'.
+components/admin/WorkflowAutomationUI.tsx(54,33): error TS2345: Argument of type '{ encounterId: any; }' is not assignable to parameter of type '{ patientId: Id<"patients">; encounterId: Id<"encounters">; }'.
+  Property 'patientId' is missing in type '{ encounterId: any; }' but required in type '{ patientId: Id<"patients">; encounterId: Id<"encounters">; }'.
+components/admin/WorkflowAutomationUI.tsx(79,29): error TS2339: Property 'workflowPhase' does not exist on type '{ adtEventCount: number; adtSuccessCount: number; adtFailureCount: number; referralCount: number; pendingReferralCount: number; completedReferralCount: number; }'.
+components/admin/WorkflowAutomationUI.tsx(164,30): error TS2339: Property 'assignedProvider' does not exist on type '{ _id: Id<"referralRouting">; _creationTime: number; notes?: string | undefined; acceptedAt?: number | undefined; routedToProvider?: Id<"users"> | undefined; routedToProviderName?: string | undefined; ... 7 more ...; routedBy: string; }'.
+components/admin/WorkflowAutomationUI.tsx(166,77): error TS2339: Property 'assignedProvider' does not exist on type '{ _id: Id<"referralRouting">; _creationTime: number; notes?: string | undefined; acceptedAt?: number | undefined; routedToProvider?: Id<"users"> | undefined; routedToProviderName?: string | undefined; ... 7 more ...; routedBy: string; }'.
+components/admin/WorkflowAutomationUI.tsx(221,63): error TS2339: Property 'eventDescription' does not exist on type '{ _id: Id<"adtEventLog">; _creationTime: number; metadata?: string | undefined; failureReason?: string | undefined; epicEventId?: string | undefined; status: "acknowledged" | "sent" | "failed" | "queued"; ... 6 more ...; pushedBy: string; }'.

@@ -126,11 +126,29 @@ const BASE_ITEMS: LauncherItem[] = [
     kind: "route",
   },
   {
+    id: "ob-gyn-ld",
+    title: "OB/GYN and L&D",
+    description: "Open obstetric triage, labor board, fetal surveillance, and postpartum readiness workflows.",
+    href: "/dashboard/ob-gyn-ld",
+    tags: ["ob", "gyn", "labor", "delivery", "maternal", "fetal", "postpartum"],
+    roles: ["ANY"],
+    kind: "route",
+  },
+  {
     id: "faxes",
     title: "Faxes",
     description: "Manage incoming and outgoing fax workflow.",
     href: "/dashboard/faxes",
     tags: ["fax", "documents", "referrals"],
+    roles: ["ANY"],
+    kind: "route",
+  },
+  {
+    id: "primary-care-clinic",
+    title: "Primary Care Clinic",
+    description: "Open the Primary Care PM / EHR / Scheduler workspace.",
+    href: "/clinics/primary-care",
+    tags: ["clinic", "primary care", "scheduler", "pm", "ehr"],
     roles: ["ANY"],
     kind: "route",
   },
@@ -481,8 +499,8 @@ export default function GlobalLauncher() {
   const recommendedItems = useMemo(() => {
     const orderByRole: Record<string, string[]> = {
       ADMIN: ["admin-suite", "clinical-research", "productivity-hub", "triage-board"],
-      PROVIDER: ["triage-board", "productivity-hub", "references-hub", "ai-tools"],
-      RN: ["triage-board", "productivity-hub", "references-hub", "procedure-pack"],
+      PROVIDER: ["triage-board", "ob-gyn-ld", "productivity-hub", "references-hub"],
+      RN: ["triage-board", "ob-gyn-ld", "productivity-hub", "references-hub"],
       CCMA: ["triage-board", "productivity-hub", "references-hub", "faxes"],
     };
 
@@ -725,7 +743,7 @@ export default function GlobalLauncher() {
         title: "Provider Command Bundle",
         subtitle: "Decision support and rapid protocol jumps",
         actions: ["open-productivity", "open-scribe", "stroke-protocol"],
-        routes: ["triage-board", "productivity-hub", "references-hub"],
+        routes: ["triage-board", "ob-gyn-ld", "references-hub"],
       };
     }
 
@@ -733,7 +751,7 @@ export default function GlobalLauncher() {
       title: "Nursing Command Bundle",
       subtitle: "Fast intake and protocol workflow",
       actions: ["new-admission", "open-productivity", "sepsis-protocol"],
-      routes: ["triage-board", "productivity-hub", "references-hub"],
+      routes: ["triage-board", "ob-gyn-ld", "references-hub"],
     };
   }, [actorRole, isAdmin]);
 

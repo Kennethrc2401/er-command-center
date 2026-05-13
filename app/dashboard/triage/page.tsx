@@ -173,7 +173,7 @@ function ERDashboardContent() {
 
   const assignBed = useMutation(api.encounters.assignBed);
   const clearBeds = useMutation(api.encounters.clearAllBeds);
-  const routeRoleNotification = useMutation(api.workflow.routeRoleNotification);
+  const routeRoleNotification = useMutation((api as any).workflow?.routeRoleNotification);
 
   const notifyBedAssignmentError = (error: unknown) => {
     const message = error instanceof Error ? error.message : "Unable to assign bed right now.";

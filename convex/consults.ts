@@ -32,10 +32,12 @@ export const start = mutation({
     await ctx.db.insert("notifications", {
       title: `Incoming ${args.specialty} Consult`,
       message: `Urgent Tele-Consult requested for Patient ID: ${args.patientId.slice(0, 5)}`,
-      type: "SYSTEM",
+      type: "CONSULT_REQUEST",
+      severity: "high",
       isRead: false,
       timestamp: Date.now(),
       patientId: args.patientId,
+      encounterId: args.encounterId,
       suppressionKey: `consult-start:${args.encounterId}:${args.specialty.toLowerCase()}`,
     });
 

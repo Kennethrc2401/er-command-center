@@ -28,6 +28,7 @@ export function validateWorkspaceBackup(payload: unknown): BackupValidationResul
   }
 
   const data = payload as Record<string, unknown>;
+  const hasOwn = (key: string) => Object.prototype.hasOwnProperty.call(data, key);
   if (typeof data.schemaVersion !== "number") {
     errors.push("schemaVersion must be a number.");
   }
@@ -38,8 +39,12 @@ export function validateWorkspaceBackup(payload: unknown): BackupValidationResul
   if (!Array.isArray(data.deletedDocs)) errors.push("deletedDocs must be an array.");
   if (!Array.isArray(data.sheetRows)) errors.push("sheetRows must be an array.");
   if (!Array.isArray(data.slides)) errors.push("slides must be an array.");
-  if (!Array.isArray(data.favoriteDocIds)) errors.push("favoriteDocIds must be an array.");
-  if (!Array.isArray(data.recentDocIds)) errors.push("recentDocIds must be an array.");
+  if (hasOwn("favoriteDocIds") && !Array.isArray(data.favoriteDocIds)) {
+    errors.push("favoriteDocIds must be an array.");
+  }
+  if (hasOwn("recentDocIds") && !Array.isArray(data.recentDocIds)) {
+    errors.push("recentDocIds must be an array.");
+  }
   if (typeof data.updatedAt !== "number") errors.push("updatedAt must be a number.");
 
   if (typeof data.schemaVersion === "number" && data.schemaVersion > CURRENT_WORKSPACE_SCHEMA_VERSION) {

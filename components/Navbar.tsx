@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useUser, SignOutButton } from "@clerk/nextjs";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { 
   Activity, 
@@ -22,7 +23,8 @@ import {
   Sparkles,
   BookOpen,
   FlaskConical,
-  Briefcase
+  Briefcase,
+  Baby,
 } from "lucide-react";
 import NewPatientModal from "./NewPatientModal";
 import { LucideIcon } from "lucide-react";
@@ -53,6 +55,8 @@ export default function Navbar() {
   );
   const { isPrivate, togglePrivacy } = usePrivacyMode();
 
+  const router = useRouter();
+
   useEffect(() => {
     if (!user || !primaryEmail) return;
     if (convexUser === undefined || convexUser) return;
@@ -73,6 +77,21 @@ export default function Navbar() {
       provisionAttemptedRef.current = false;
     });
   }, [convexUser, ensureUserProfile, primaryEmail, user]);
+
+  useEffect(() => {
+    const keyHandler = (event: KeyboardEvent) => {
+      if (!event) return;
+      if (!(event.ctrlKey || event.metaKey) || !event.altKey) return;
+      if (event.key.toLowerCase() !== "c") return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      event.preventDefault();
+      router.push("/clinics/primary-care");
+    };
+
+    window.addEventListener("keydown", keyHandler);
+    return () => window.removeEventListener("keydown", keyHandler);
+  }, [router]);
 
   if (pathname === "/kiosk") return null;
 
@@ -124,6 +143,12 @@ export default function Navbar() {
               active={pathname.includes("/or-scheduler")}
             />
             <NavLink
+              href="/dashboard/ob-gyn-ld"
+              icon={Baby}
+              label="OB/L&D"
+              active={pathname.includes("/ob-gyn-ld")}
+            />
+            <NavLink
               href="/dashboard/ai-tools"
               icon={BrainCircuit}
               label="AI Tools"
@@ -146,6 +171,12 @@ export default function Navbar() {
               icon={Briefcase}
               label="Productivity"
               active={pathname.includes("/productivity")}
+            />
+            <NavLink
+              href="/clinics/primary-care"
+              icon={FileText}
+              label="Primary Care"
+              active={pathname.includes("/clinics/primary-care")}
             />
 
             {isAdmin && (

@@ -23,3 +23,27 @@ export const mustBeDoctor = async (ctx: MutationCtx | QueryCtx) => {
 
   return identity;
 };
+
+export const mustBeStaffOrDoctor = async (ctx: MutationCtx) => {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("Not authenticated");
+  if (!identity.role) throw new Error("Requires staff or doctor role");
+  if (!(identity.role === "doctor" || identity.role === "staff" || identity.role === "admin")) throw new Error("Requires staff or doctor role");
+}
+
+export const mustBeClinicAdmin = async (ctx: MutationCtx) => {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("Not authenticated");
+  if (identity.role === "admin") return;
+  const publicMeta = (identity as any).publicMetadata;
+  if (publicMeta && publicMeta.clinicAdmin) return;
+  throw new Error("Requires clinic admin role");
+}
+
+export const mustBeAdmin = async (ctx: MutationCtx | QueryCtx) => {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error('Unauthenticated: Please log in.');
+  const role = identity.role as string;
+  if (role !== 'admin') throw new Error(`Unauthorized: admin role required.`);
+  return identity;
+};

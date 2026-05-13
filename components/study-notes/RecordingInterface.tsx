@@ -163,6 +163,7 @@ type PendingStudyNotePayload = {
   sessionId: string;
   userId: string;
   syncFingerprint: string;
+  recordingInputSource?: RecordingInputSource;
   subject: string;
   rawTranscription: string;
   topics: string[];
@@ -213,6 +214,7 @@ function escapeForRegExp(value: string) {
 }
 
 type RecordingMode = "voice" | "text";
+type RecordingInputSource = "microphone" | "system" | "mixed";
 
 type SpeechEngineStatus = "idle" | "starting" | "listening" | "restarting" | "error" | "unsupported";
 
@@ -320,6 +322,7 @@ export default function RecordingInterface({
     }
   });
   const [recordingMode, setRecordingMode] = useState<RecordingMode>("voice");
+  const [recordingInputSource, setRecordingInputSource] = useState<RecordingInputSource>("microphone");
   const [templates, setTemplates] = useState<NoteTemplate[]>(() => {
     if (typeof window === "undefined") return [];
     const raw = window.localStorage.getItem("study-notes:templates");
@@ -360,6 +363,8 @@ export default function RecordingInterface({
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const qualityIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const captureStreamsRef = useRef<MediaStream[]>([]);
+  const mixContextRef = useRef<AudioContext | null>(null);
 
   const createSession = useMutation(api.academicScribe.createStudySession);
   const endSession = useMutation(api.academicScribe.endStudySession);
@@ -405,6 +410,7 @@ export default function RecordingInterface({
     return [
       payload.sessionId,
       payload.userId,
+      payload.recordingInputSource ?? "microphone",
       payload.subject.trim().toLowerCase(),
       payload.rawTranscription.trim().toLowerCase(),
       topicDigest,
@@ -437,7 +443,7 @@ export default function RecordingInterface({
       }),
     ];
     writePendingQueue(deduped);
-  }, [readPendingQueue, writePendingQueue]);
+  }, [buildStudyNoteFingerprint, readPendingQueue, writePendingQueue]);
 
   const exportPendingNoteBackup = useCallback((payload: PendingStudyNoteDraft) => {
     if (typeof window === "undefined") return;
@@ -464,7 +470,7 @@ export default function RecordingInterface({
     anchor.download = `study-note-backup-${safeSubject}-${new Date().toISOString().slice(0, 10)}.json`;
     anchor.click();
     window.URL.revokeObjectURL(url);
-  }, []);
+  }, [buildStudyNoteFingerprint]);
 
   const flushPendingQueue = useCallback(async () => {
     const queue = readPendingQueue();
@@ -481,6 +487,7 @@ export default function RecordingInterface({
           userId: entry.userId as Id<"users">,
           syncFingerprint,
           rawTranscription: entry.rawTranscription,
+          recordingInputSource: entry.recordingInputSource,
           subject: entry.subject,
           topics: entry.topics,
           recordingMarkers: entry.recordingMarkers,
@@ -503,7 +510,7 @@ export default function RecordingInterface({
     if (recoveredCount > 0) {
       toast.success(`Recovered ${recoveredCount} pending study note${recoveredCount === 1 ? "" : "s"}.`);
     }
-  }, [createNote, endSession, readPendingQueue, writePendingQueue]);
+  }, [buildStudyNoteFingerprint, createNote, endSession, readPendingQueue, writePendingQueue]);
 
   const logDebug = useCallback((...args: unknown[]) => {
     if (RECORDING_DEBUG_ENABLED) {
@@ -1465,6 +1472,60 @@ export default function RecordingInterface({
     }
   }, []);
 
+  const stopCapturedStreams = useCallback(() => {
+    captureStreamsRef.current.forEach((stream) => {
+      stream.getTracks().forEach((track) => track.stop());
+    });
+    captureStreamsRef.current = [];
+
+    if (mixContextRef.current) {
+      void mixContextRef.current.close();
+      mixContextRef.current = null;
+    }
+  }, []);
+
+  const acquireVoiceCaptureStream = useCallback(async () => {
+    if (recordingInputSource === "microphone") {
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      captureStreamsRef.current = [micStream];
+      return micStream;
+    }
+
+    if (recordingInputSource === "system") {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+      const audioTracks = displayStream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        displayStream.getTracks().forEach((track) => track.stop());
+        throw new Error("No system audio was shared. Re-start and enable tab/system audio in the share dialog.");
+      }
+
+      const audioOnlyStream = new MediaStream(audioTracks);
+      captureStreamsRef.current = [displayStream, audioOnlyStream];
+      return audioOnlyStream;
+    }
+
+    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const displayStream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+    const systemAudioTracks = displayStream.getAudioTracks();
+    if (systemAudioTracks.length === 0) {
+      micStream.getTracks().forEach((track) => track.stop());
+      displayStream.getTracks().forEach((track) => track.stop());
+      throw new Error("No system audio was shared. Re-start and enable tab/system audio in the share dialog.");
+    }
+
+    const mixContext = new AudioContext();
+    const destination = mixContext.createMediaStreamDestination();
+    const micSource = mixContext.createMediaStreamSource(micStream);
+    const systemSource = mixContext.createMediaStreamSource(new MediaStream(systemAudioTracks));
+    micSource.connect(destination);
+    systemSource.connect(destination);
+
+    const mixedStream = destination.stream;
+    mixContextRef.current = mixContext;
+    captureStreamsRef.current = [micStream, displayStream, mixedStream];
+    return mixedStream;
+  }, [recordingInputSource]);
+
   const applyClassPreset = useCallback((presetId: string) => {
     const preset = CLASS_MODE_PRESETS.find((item) => item.id === presetId);
     if (!preset) return;
@@ -1488,6 +1549,7 @@ export default function RecordingInterface({
       const payload = {
         className,
         professor,
+        recordingInputSource,
         markerLabel,
         markerType,
         selectedPresetId,
@@ -1507,6 +1569,7 @@ export default function RecordingInterface({
     isRecording,
     className,
     professor,
+    recordingInputSource,
     markerLabel,
     markerType,
     selectedPresetId,
@@ -1635,16 +1698,18 @@ export default function RecordingInterface({
         subject,
         className,
         professor: professor || undefined,
+        recordingInputSource,
       });
       setSessionId(newSessionId);
       logDebug("✅ Recording: Session created with ID:", newSessionId);
 
       if (recordingMode === "voice") {
-        // VOICE MODE: Request mic, start media recorder, start speech recognition
-        logDebug("🎙️ Recording: Voice mode - requesting microphone permission...");
+        // VOICE MODE: Request selected source, start media recorder, start speech recognition when mic is available
+        logDebug(`🎙️ Recording: Voice mode - requesting ${recordingInputSource} audio...`);
 
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        logDebug("✅ Recording: Microphone permission granted");
+        stopCapturedStreams();
+        const stream = await acquireVoiceCaptureStream();
+        logDebug(`✅ Recording: ${recordingInputSource} permission granted`);
         logDebug("📊 Recording: Audio tracks available:", stream.getAudioTracks().length);
 
         const mediaRecorder = new MediaRecorder(stream);
@@ -1678,15 +1743,23 @@ export default function RecordingInterface({
         logDebug("🎬 Recording: MediaRecorder started with 1s timeslice");
         startAudioMeter(stream);
 
-        // Start speech-to-text
-        logDebug("🎤 Recording: Voice mode - starting speech recognition");
-        recognitionShouldRunRef.current = true;
-        isRecordingRef.current = true;
-        setSpeechEngineStatus("starting");
-        setSpeechEngineError(null);
-        clearRecognitionRestart();
-        const recognitionStarted = startRecognition();
-        logDebug("🎤 Recording: Speech recognition start result:", recognitionStarted);
+        // Speech-to-text only supports microphone input in browsers.
+        if (recordingInputSource === "system") {
+          recognitionShouldRunRef.current = false;
+          isRecordingRef.current = true;
+          setSpeechEngineStatus("idle");
+          setSpeechEngineError(null);
+          toast.message("System audio capture started. Transcription will process after you stop recording.");
+        } else {
+          logDebug("🎤 Recording: Voice mode - starting speech recognition");
+          recognitionShouldRunRef.current = true;
+          isRecordingRef.current = true;
+          setSpeechEngineStatus("starting");
+          setSpeechEngineError(null);
+          clearRecognitionRestart();
+          const recognitionStarted = startRecognition();
+          logDebug("🎤 Recording: Speech recognition start result:", recognitionStarted);
+        }
       } else {
         // TEXT MODE: Just set up for typing with timer
         logDebug("📝 Recording: Text mode - ready for manual typing");
@@ -1715,20 +1788,21 @@ export default function RecordingInterface({
 
       startTimer();
       logDebug("✅ Recording: All systems ready");
-      toast.success(`Recording started in ${recordingMode === "voice" ? "voice" : "text"} mode`);
+      toast.success(`Recording started in ${recordingMode === "voice" ? `${recordingInputSource} voice` : "text"} mode`);
     } catch (error) {
       const err = error as Error;
 
       if (err?.name === "NotAllowedError" || err?.message?.includes("Permission")) {
-        console.error("❌ Recording: Microphone permission denied. Please enable microphone access in your browser settings.");
-        toast.error("Microphone permission denied. Please enable it in your browser settings.");
+        console.error("❌ Recording: Audio permission denied. Please enable access in your browser settings.");
+        toast.error("Audio permission denied. Please enable access in your browser settings.");
       } else if (err?.name === "NotFoundError") {
-        console.error("❌ Recording: No microphone found. Please connect a microphone.");
-        toast.error("No microphone found. Please connect a microphone.");
+        console.error("❌ Recording: No audio input found.");
+        toast.error("No audio input found for the selected source.");
       } else {
         console.error("❌ Recording: Failed to start:", err);
-        toast.error("Failed to start recording");
+        toast.error(err?.message || "Failed to start recording");
       }
+      stopCapturedStreams();
     }
   };
 
@@ -1738,13 +1812,15 @@ export default function RecordingInterface({
       return;
     }
 
-    const SpeechRecognitionCtor = getSpeechRecognitionCtor();
-    if (!SpeechRecognitionCtor) {
-      setSpeechEngineStatus("unsupported");
-      setSpeechEngineError("This browser does not support speech recognition.");
-      setPreflightResult("Speech recognition unsupported in this browser.");
-      toast.error("Speech recognition is not supported in this browser.");
-      return;
+    if (recordingInputSource !== "system") {
+      const SpeechRecognitionCtor = getSpeechRecognitionCtor();
+      if (!SpeechRecognitionCtor) {
+        setSpeechEngineStatus("unsupported");
+        setSpeechEngineError("This browser does not support speech recognition.");
+        setPreflightResult("Speech recognition unsupported in this browser.");
+        toast.error("Speech recognition is not supported in this browser.");
+        return;
+      }
     }
 
     setIsRunningPreflight(true);
@@ -1756,7 +1832,15 @@ export default function RecordingInterface({
     let audioContext: AudioContext | null = null;
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = recordingInputSource === "system"
+        ? await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true })
+        : await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const activeTracks = stream.getAudioTracks();
+      if (activeTracks.length === 0) {
+        throw new Error("No audio track detected. Share tab/system audio and retry.");
+      }
+
       audioContext = new AudioContext();
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
@@ -1769,6 +1853,26 @@ export default function RecordingInterface({
       analyser.getByteFrequencyData(buffer);
       const averageLevel = buffer.reduce((sum, value) => sum + value, 0) / buffer.length;
       const micLooksActive = averageLevel > 8;
+
+      if (recordingInputSource === "system") {
+        if (micLooksActive) {
+          setPreflightResult("Pre-flight passed: system audio signal detected.");
+          setSpeechEngineStatus("idle");
+          setSpeechEngineError(null);
+          toast.success("Pre-flight passed: system audio capture is ready.");
+        } else {
+          setPreflightResult("System audio signal is very low. Ensure the shared tab/app is playing audio.");
+          setSpeechEngineStatus("error");
+          setSpeechEngineError("Low system audio signal during test.");
+          toast.warning("System audio level is low. Play source audio and retry.");
+        }
+        return;
+      }
+
+      const SpeechRecognitionCtor = getSpeechRecognitionCtor();
+      if (!SpeechRecognitionCtor) {
+        throw new Error("Speech recognition unsupported in this browser.");
+      }
 
       const speechSample = await new Promise<string>((resolve, reject) => {
         const recognition = new SpeechRecognitionCtor() as unknown as SpeechRecognitionLike;
@@ -1870,6 +1974,7 @@ export default function RecordingInterface({
       const parsed = JSON.parse(raw) as {
         className?: string;
         professor?: string;
+        recordingInputSource?: RecordingInputSource;
         markerLabel?: string;
         markerType?: MarkerType;
         selectedPresetId?: string;
@@ -1883,6 +1988,7 @@ export default function RecordingInterface({
 
       if (parsed.className) setClassName(parsed.className);
       if (parsed.professor) setProfessor(parsed.professor);
+      if (parsed.recordingInputSource) setRecordingInputSource(parsed.recordingInputSource);
       if (parsed.markerLabel) setMarkerLabel(parsed.markerLabel);
       if (parsed.markerType) setMarkerType(parsed.markerType);
       if (parsed.selectedPresetId) setSelectedPresetId(parsed.selectedPresetId);
@@ -1906,8 +2012,55 @@ export default function RecordingInterface({
     setHasRecoverableDraft(false);
   };
 
+  const stopMediaRecorderAndGetBlob = useCallback(async () => {
+    const mediaRecorder = mediaRecorderRef.current;
+    if (!mediaRecorder) return null;
+
+    if (mediaRecorder.state === "inactive") {
+      return audioChunksRef.current.length > 0
+        ? new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || "audio/webm" })
+        : null;
+    }
+
+    return new Promise<Blob | null>((resolve) => {
+      const handleStop = () => {
+        mediaRecorder.removeEventListener("stop", handleStop);
+        resolve(
+          audioChunksRef.current.length > 0
+            ? new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || "audio/webm" })
+            : null
+        );
+      };
+
+      mediaRecorder.addEventListener("stop", handleStop, { once: true });
+      mediaRecorder.stop();
+      logDebug("✅ Stopping: MediaRecorder stopped");
+    });
+  }, [logDebug]);
+
+  const transcribeAudioBlob = useCallback(async (audioBlob: Blob) => {
+    if (!audioBlob.size) return "";
+
+    const payload = new FormData();
+    payload.append("audio", new File([audioBlob], "class-session.webm", { type: audioBlob.type || "audio/webm" }));
+    payload.append("language", recognitionLanguage);
+
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      body: payload,
+    });
+
+    if (!response.ok) {
+      const failure = await response.json().catch(() => null) as { error?: string } | null;
+      throw new Error(failure?.error || "Audio transcription failed");
+    }
+
+    const json = (await response.json()) as { transcript?: string };
+    return (json.transcript || "").trim();
+  }, [recognitionLanguage]);
+
   const pauseRecording = useCallback(async () => {
-    if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
+    if (!mediaRecorderRef.current || !sessionId) return;
 
     try {
       logDebug("⏸️  Pause: User paused recording");
@@ -1932,11 +2085,11 @@ export default function RecordingInterface({
   }, [clearRecognitionRestart, logDebug, sessionId, stopRecognition, stopTimer]);
 
   const resumeRecording = useCallback(async () => {
-    if (!mediaRecorderRef.current || !recognitionRef.current || !sessionId) return;
+    if (!mediaRecorderRef.current || !sessionId) return;
 
     try {
       logDebug("▶️  Resume: User resumed recording");
-      recognitionShouldRunRef.current = true;
+      recognitionShouldRunRef.current = recordingInputSource !== "system";
       isRecordingRef.current = true;  // Set ref immediately before calling startRecognition
       isPausedRef.current = false;    // Set ref immediately before calling startRecognition
       setSpeechEngineStatus("starting");
@@ -1948,7 +2101,11 @@ export default function RecordingInterface({
       }
 
       clearRecognitionRestart();
-      void startRecognition();
+      if (recordingInputSource !== "system") {
+        void startRecognition();
+      } else {
+        setSpeechEngineStatus("idle");
+      }
       if (pauseStartedAt) {
         const pauseDuration = Math.max(0, Math.round((Date.now() - pauseStartedAt) / 1000));
         logDebug(`📊 Resume: Paused for ${pauseDuration} seconds`);
@@ -1962,7 +2119,7 @@ export default function RecordingInterface({
       console.error("❌ Resume error:", error);
       toast.error("Failed to resume recording");
     }
-  }, [clearRecognitionRestart, logDebug, pauseStartedAt, sessionId, startRecognition, startTimer]);
+  }, [clearRecognitionRestart, logDebug, pauseStartedAt, recordingInputSource, sessionId, startRecognition, startTimer]);
 
   const stopRecording = async () => {
     if (!sessionId) return;
@@ -1974,17 +2131,13 @@ export default function RecordingInterface({
       setSpeechEngineError(null);
 
       logDebug("⏹️  User clicked stop button");
+      let recordedAudioBlob: Blob | null = null;
 
       // Stop media recorder (voice mode only)
       if (recordingMode === "voice" && mediaRecorderRef.current) {
-        if (mediaRecorderRef.current.state !== "inactive") {
-          mediaRecorderRef.current.stop();
-          logDebug("✅ Stopping: MediaRecorder stopped");
-        }
-        mediaRecorderRef.current.stream.getTracks().forEach((track) => {
-          track.stop();
-          logDebug("✅ Stopping: Audio track stopped:", track.label);
-        });
+        recordedAudioBlob = await stopMediaRecorderAndGetBlob();
+        stopCapturedStreams();
+        logDebug("✅ Stopping: Source tracks stopped");
 
         // Stop speech recognition
         stopRecognition();
@@ -2003,9 +2156,34 @@ export default function RecordingInterface({
 
       setIsRecording(false);
       setIsPaused(false);
+      setIsTranscribing(true);
+
+      let mergedTranscription = applyTranscriptionQuality(transcription);
+
+      if (
+        recordingMode === "voice" &&
+        recordedAudioBlob &&
+        (recordingInputSource === "system" || !mergedTranscription.trim())
+      ) {
+        try {
+          const asyncTranscript = await transcribeAudioBlob(recordedAudioBlob);
+          if (asyncTranscript) {
+            mergedTranscription = mergedTranscription.trim()
+              ? applyTranscriptionQuality(`${mergedTranscription}\n${asyncTranscript}`)
+              : applyTranscriptionQuality(asyncTranscript);
+            setTranscription(mergedTranscription);
+            toast.success("Audio transcription completed.");
+          } else if (recordingInputSource === "system") {
+            toast.warning("System audio was captured, but no transcript text was returned.");
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Audio transcription failed";
+          toast.warning(message);
+        }
+      }
 
       // Create note with transcription
-      const processedTranscription = applyTranscriptionQuality(transcription);
+      const processedTranscription = applyTranscriptionQuality(mergedTranscription);
       if (processedTranscription.trim()) {
         const { topics } = extractTopicsFromTranscription(processedTranscription, subject);
         const transcriptStats = {
@@ -2021,9 +2199,9 @@ export default function RecordingInterface({
           topics,
           recordingMarkers,
           transcriptStats,
+          recordingInputSource,
         });
 
-        setIsTranscribing(true);
         try {
           await createNote({
             sessionId: sessionId as Id<"studyClassSessions">,
@@ -2034,6 +2212,7 @@ export default function RecordingInterface({
             topics,
             recordingMarkers,
             transcriptStats,
+            recordingInputSource,
           });
           logDebug("✅ Note: Created with", topics.length, "topics");
 
@@ -2067,12 +2246,11 @@ export default function RecordingInterface({
             topics,
             recordingMarkers,
             transcriptStats,
+            recordingInputSource,
           };
           queuePendingNote(pendingPayload);
           exportPendingNoteBackup(pendingPayload);
           toast.error("Could not finalize note to database right now. Saved to retry queue and downloaded backup JSON.");
-        } finally {
-          setIsTranscribing(false);
         }
       } else {
         await endSession({
@@ -2086,6 +2264,7 @@ export default function RecordingInterface({
       console.error("❌ Stop recording error:", error);
       toast.error("Failed to stop recording");
     } finally {
+      setIsTranscribing(false);
       setIsRecording(false);
       setIsPaused(false);
       setSpeechEngineStatus("idle");
@@ -2108,10 +2287,8 @@ export default function RecordingInterface({
           mediaRecorderRef.current.stop();
           logDebug("✅ Discarding: MediaRecorder stopped");
         }
-        mediaRecorderRef.current.stream.getTracks().forEach((track) => {
-          track.stop();
-          logDebug("✅ Discarding: Audio track stopped");
-        });
+        stopCapturedStreams();
+        logDebug("✅ Discarding: Source tracks stopped");
 
         stopRecognition();
         stopAudioMeter();
@@ -2241,9 +2418,9 @@ export default function RecordingInterface({
         }
       }
 
-      mediaRecorder?.stream.getTracks().forEach((track) => track.stop());
+      stopCapturedStreams();
     };
-  }, [clearRecognitionRestart, stopAudioMeter, stopTimer]);
+  }, [clearRecognitionRestart, stopAudioMeter, stopCapturedStreams, stopTimer]);
 
   return (
     <div className="space-y-4">
@@ -2381,6 +2558,30 @@ export default function RecordingInterface({
                     </Button>
                   ))}
                 </div>
+                {recordingMode === "voice" && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs font-medium text-purple-800 dark:text-purple-200">Audio Source</p>
+                    <div className="flex flex-wrap gap-2">
+                      {([
+                        ["microphone", "Mic Only"],
+                        ["system", "System Audio"],
+                        ["mixed", "Mic + System"],
+                      ] as const).map(([value, label]) => (
+                        <Button
+                          key={value}
+                          variant={recordingInputSource === value ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setRecordingInputSource(value)}
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-purple-700 dark:text-purple-300">
+                      System audio requires choosing a browser tab/window with audio in the share dialog.
+                    </p>
+                  </div>
+                )}
               </div>
               <Button
                 variant="outline"
@@ -2637,7 +2838,7 @@ export default function RecordingInterface({
               {speechEngineStatus === "idle" && <Mic className="h-3.5 w-3.5" />}
               <span>{speechStatusLabel}</span>
             </Badge>
-            {!isRecording && (
+            {!isRecording && recordingMode === "voice" && (
               <Button
                 type="button"
                 variant="outline"
@@ -2646,7 +2847,11 @@ export default function RecordingInterface({
                 disabled={isRunningPreflight || isTranscribing}
               >
                 {isRunningPreflight ? <Loader2 className="h-4 w-4 animate-spin" /> : <Stethoscope className="h-4 w-4" />}
-                {isRunningPreflight ? "Running Pre-Flight" : "Test Mic + Transcription"}
+                {isRunningPreflight
+                  ? "Running Pre-Flight"
+                  : recordingInputSource === "system"
+                    ? "Test System Audio"
+                    : "Test Mic + Transcription"}
               </Button>
             )}
           </div>
@@ -3173,6 +3378,7 @@ export default function RecordingInterface({
             {recordingMode === "voice" && (
               <>
                 <li>• Speak clearly and at a natural pace</li>
+                <li>• For System Audio, select a tab/window and enable audio in the share dialog</li>
                 <li>• Topics will be automatically extracted from your recording</li>
                 <li>• You can edit and organize the transcription after</li>
                 <li>• Longer recordings get better topic organization</li>

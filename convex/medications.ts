@@ -1,7 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 
-// Fetch all meds for a specific visit
 export const getByEncounter = query({
   args: { encounterId: v.id("encounters") },
   handler: async (ctx, args) => {
@@ -13,24 +12,15 @@ export const getByEncounter = query({
 });
 
 export const administer = mutation({
-  args: { 
-    medicationId: v.id("medications") 
-  },
+  args: { medicationId: v.id("medications") },
   handler: async (ctx, args) => {
-    const { medicationId } = args;
-
-    // 1. Verify the medication exists
-    const med = await ctx.db.get(medicationId);
+    const med = await ctx.db.get(args.medicationId);
     if (!med) throw new Error("Medication record not found");
-
-    // 2. Update the record with administration details
-    await ctx.db.patch(medicationId, {
+    await ctx.db.patch(args.medicationId, {
       status: "administered",
       adminTime: Date.now(),
-      // Hardcoded for your profile as the primary RN
-      adminBy: "Sophia R, RN", 
+      adminBy: "Automated MAR",
     });
-
     return { success: true, medicationName: med.name };
   },
 });
@@ -40,14 +30,20 @@ export const createOrder = mutation({
     patientId: v.id("patients"),
     encounterId: v.id("encounters"),
     name: v.string(),
-    dosage: v.string(),
-    route: v.string(),
+    dosage: v.optional(v.string()),
+    route: v.optional(v.string()),
     orderedBy: v.string(),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("medications", {
-      ...args,
+      patientId: args.patientId,
+      encounterId: args.encounterId,
+      name: args.name,
+      dosage: args.dosage,
+      route: args.route,
+      orderedBy: args.orderedBy,
       status: "ordered",
+      createdAt: Date.now(),
     });
   },
 });

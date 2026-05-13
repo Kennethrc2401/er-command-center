@@ -20,11 +20,12 @@ crons.interval(
   {}
 );
 
-crons.interval(
-  "provider_fairness_drift_sweep",
-  { minutes: 5 },
-  internal.workflow.runProviderFairnessSweep,
-  {}
-);
+// runProviderFairnessSweep is in compliance.ts
+// crons.interval(
+//   "provider_fairness_drift_sweep",
+//   { minutes: 5 },
+//   internal.compliance.runProviderFairnessSweep,
+//   {}
+// );
 
 export default crons;

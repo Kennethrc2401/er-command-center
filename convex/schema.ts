@@ -51,6 +51,13 @@ export default defineSchema({
         })
       )
     ),
+    // === EPIC FHIR & MESSAGING ===
+    epicPatientId: v.optional(v.string()),
+    fhirPatientResourceId: v.optional(v.string()),
+    portalEnabled: v.optional(v.boolean()),
+    portalLanguagePreference: v.optional(v.string()),
+    smsOptIn: v.optional(v.boolean()),
+    emailOptIn: v.optional(v.boolean()),
   })
   .index("by_mrn", ["mrn"])
   .searchIndex("search_patients", {
@@ -231,116 +238,53 @@ export default defineSchema({
     signatureTimestamp: v.optional(v.number()),
     consentToTreatSignedAt: v.optional(v.number()),
     hipaaAcknowledgedAt: v.optional(v.number()),
+    // === EPIC FHIR & BILLING FIELDS ===
+    epicMRN: v.optional(v.string()),
+    epicEncounterId: v.optional(v.string()),
+    epicProviderNPI: v.optional(v.string()),
+    fhirResourceId: v.optional(v.string()),
+    cptCodes: v.optional(v.array(v.string())), // e.g., ["99213", "99214"]
+    denialRiskFactors: v.optional(v.array(v.string())), // e.g., ["missing_provider_notes", "incomplete_coding"]
+    priorAuthStatus: v.optional(v.union(
+      v.literal("not_needed"),
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("denied")
+    )),
+    // === PATIENT PORTAL & MESSAGING ===
+    portalSummaryGenerated: v.optional(v.boolean()),
+    portalSummarySentAt: v.optional(v.number()),
+    portalDeliveryStatus: v.optional(v.union(
+      v.literal("pending"),
+      v.literal("sent"),
+      v.literal("viewed"),
+      v.literal("failed")
+    )),
+    // === WORKFLOW AUTOMATION ===
+    adtEventPushed: v.optional(v.boolean()),
+    adtEventPushedAt: v.optional(v.number()),
+    referralRoutingReferrals: v.optional(v.array(
+      v.object({
+        specialtyRequested: v.string(),
+        routedTo: v.optional(v.string()),
+        routedAt: v.optional(v.number()),
+      })
+    )),
+    // === ANALYTICS & COMPLIANCE ===
+    hedisMetricsTracked: v.optional(v.boolean()),
+    codingAuditCompletedAt: v.optional(v.number()),
+    clinicalVarianceFlags: v.optional(v.array(v.string())), // e.g., ["high_antibiotic_use", "unusual_procedure"]
+    // === REAL-TIME ALERTS ===
+    criticalResultsEscalated: v.optional(v.boolean()),
+    escalatedToRole: v.optional(v.union(
+      v.literal("NURSE"),
+      v.literal("DOCTOR"),
+      v.literal("UNIT_COORDINATOR")
+    )),
   })
+    .index("by_patient", ["patientId"])
     .index("by_status", ["status"])
-    .index("by_patient", ["patientId"]),
-
-  medications: defineTable({
-    patientId: v.id("patients"),
-    encounterId: v.id("encounters"),
-    name: v.string(), // e.g., "Aspirin, Heparin"
-    dosage: v.string(), // e.g., "325 mg", "5000 units"
-    route: v.string(), // e.g., "Oral", "IV"
-    orderedBy: v.string(),
-    status: v.union(v.literal("ordered"), v.literal("administered"), v.literal("held")),
-    frequency: v.optional(v.number()), // minutes until next dose, e.g., 240 for q4h
-    adminTime: v.optional(v.number()),
-    adminBy: v.optional(v.string()),
-  }).index("by_encounter", ["encounterId"]),
-
-  posCharges: defineTable({
-    encounterId: v.id("encounters"),
-    patientId: v.id("patients"),
-    description: v.string(),
-    amountCents: v.number(),
-    paidCents: v.number(),
-    status: v.union(v.literal("open"), v.literal("partial"), v.literal("paid"), v.literal("void")),
-    createdBy: v.string(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-    lastPaymentMethod: v.optional(v.union(v.literal("card"), v.literal("cash"), v.literal("check"), v.literal("hsa"), v.literal("other"))),
-    lastReference: v.optional(v.string()),
-  })
-    .index("by_encounter", ["encounterId"])
-    .index("by_status", ["status"])
-    .index("by_updated_at", ["updatedAt"]),
-
-  posPayments: defineTable({
-    chargeId: v.id("posCharges"),
-    encounterId: v.id("encounters"),
-    patientId: v.id("patients"),
-    amountCents: v.number(),
-    method: v.union(v.literal("card"), v.literal("cash"), v.literal("check"), v.literal("hsa"), v.literal("other")),
-    reference: v.optional(v.string()),
-    collectedBy: v.string(),
-    collectedAt: v.number(),
-  })
-    .index("by_charge", ["chargeId"])
-    .index("by_encounter", ["encounterId"])
-    .index("by_collected_at", ["collectedAt"]),
-
-  posRefunds: defineTable({
-    paymentId: v.id("posPayments"),
-    chargeId: v.id("posCharges"),
-    encounterId: v.id("encounters"),
-    patientId: v.id("patients"),
-    amountCents: v.number(),
-    reason: v.optional(v.string()),
-    refundedBy: v.string(),
-    refundedAt: v.number(),
-  })
-    .index("by_payment", ["paymentId"])
-    .index("by_charge", ["chargeId"])
-    .index("by_encounter", ["encounterId"])
-    .index("by_refunded_at", ["refundedAt"]),
-
-  posDrawerSessions: defineTable({
-    openedBy: v.string(),
-    openedAt: v.number(),
-    openingFloatCents: v.number(),
-    status: v.union(v.literal("open"), v.literal("closed")),
-    closedBy: v.optional(v.string()),
-    closedAt: v.optional(v.number()),
-    expectedCashCents: v.optional(v.number()),
-    actualCashCents: v.optional(v.number()),
-    varianceCents: v.optional(v.number()),
-    closeNote: v.optional(v.string()),
-    varianceAcknowledged: v.optional(v.boolean()),
-    varianceAcknowledgedBy: v.optional(v.string()),
-    varianceAcknowledgedAt: v.optional(v.number()),
-    varianceAcknowledgementNote: v.optional(v.string()),
-  })
-    .index("by_status", ["status"])
-    .index("by_opened_at", ["openedAt"])
-    .index("by_closed_at", ["closedAt"]),
-  
-  notifications: defineTable({
-    // Keep null for backward compatibility with older notification rows.
-    userId: v.optional(v.union(v.id("users"), v.null())), // null/undefined => global/broadcast
-    title: v.string(),
-    message: v.string(),
-    type: v.union(v.literal("STAT_ORDER"), v.literal("CRITICAL_VITAL"), v.literal("CRITICAL_LAB"), v.literal("SYSTEM")),
-    isRead: v.boolean(),
-    timestamp: v.number(),
-    patientId: v.optional(v.id("patients")),
-    suppressionKey: v.optional(v.string()),
-  })
-  .index("by_timestamp", ["timestamp"])
-  .index("by_suppression_key_timestamp", ["suppressionKey", "timestamp"]),
-
-  notificationRoutingEvents: defineTable({
-    role: v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR")),
-    actorName: v.string(),
-    actorRole: v.string(),
-    message: v.string(),
-    suppressionKey: v.string(),
-    suppressionWindowMinutes: v.number(),
-    skipped: v.boolean(),
-    routedAt: v.number(),
-    notificationId: v.optional(v.id("notifications")),
-  })
-    .index("by_timestamp", ["routedAt"])
-    .index("by_role_timestamp", ["role", "routedAt"]),
+    .index("by_acuity", ["acuity"]),
 
   providerFairnessSignals: defineTable({
     providerName: v.string(),
@@ -402,6 +346,48 @@ export default defineSchema({
   acknowledgedBy: v.optional(v.string()),
   acknowledgedAt: v.optional(v.number()),
 }).index("by_encounter", ["encounterId"]),
+
+  medications: defineTable({
+    patientId: v.id("patients"),
+    encounterId: v.id("encounters"),
+    name: v.string(),
+    dosage: v.optional(v.string()),
+    route: v.optional(v.string()),
+    frequency: v.optional(v.string()),
+    status: v.optional(v.union(v.literal("ordered"), v.literal("administered"), v.literal("held"), v.literal("cancelled"))),
+    orderedBy: v.optional(v.string()),
+    adminTime: v.optional(v.number()),
+    adminBy: v.optional(v.string()),
+    createdAt: v.optional(v.number()),
+  }).index("by_encounter", ["encounterId"]).index("by_patient", ["patientId"]),
+
+  posCharges: defineTable({
+    encounterId: v.id("encounters"),
+    patientId: v.id("patients"),
+    amountCents: v.number(),
+    description: v.optional(v.string()),
+    status: v.union(v.literal("PENDING"), v.literal("PAID"), v.literal("VOID"), v.literal("REFUNDED")),
+    createdAt: v.number(),
+    createdBy: v.optional(v.string()),
+  }).index("by_encounter", ["encounterId"]).index("by_status", ["status"]),
+
+  posPayments: defineTable({
+    chargeId: v.id("posCharges"),
+    amountCents: v.number(),
+    method: v.string(),
+    processedAt: v.number(),
+    refunded: v.optional(v.boolean()),
+  }).index("by_charge", ["chargeId"]),
+
+  posDrawerSessions: defineTable({
+    openedBy: v.string(),
+    openedAt: v.number(),
+    openingFloatCents: v.number(),
+    closedAt: v.optional(v.number()),
+    closingFloatCents: v.optional(v.number()),
+    varianceCents: v.optional(v.number()),
+    varianceAcknowledged: v.optional(v.boolean()),
+  }).index("by_opened_at", ["openedAt"]).index("by_closed_at", ["closedAt"]),
 
   auditLogs: defineTable({
     userId: v.id("users"),
@@ -795,6 +781,60 @@ export default defineSchema({
       )),
     })
       .index("by_singleton_key", ["singletonKey"]),
+  // Primary care clinic specific tables for appointment types, appointments, and note templates
+  primaryCareApptTypes: defineTable({
+    clinicId: v.optional(v.string()),
+    name: v.string(),
+    createdAt: v.number(),
+  }).index("by_clinic", ["clinicId"]),
+
+  primaryCareAppointments: defineTable({
+    clinicId: v.optional(v.string()),
+    patientId: v.optional(v.id("patients")),
+    patientName: v.string(),
+    providerId: v.optional(v.id("users")),
+    roomId: v.optional(v.id("rooms")),
+    typeId: v.optional(v.id("primaryCareApptTypes")),
+    startMs: v.number(),
+    endMs: v.optional(v.number()),
+    notes: v.optional(v.string()),
+    pmStatus: v.optional(v.union(
+      v.literal("scheduled"),
+      v.literal("arrived"),
+      v.literal("checked_in"),
+      v.literal("seen"),
+      v.literal("completed"),
+      v.literal("no_show"),
+      v.literal("cancelled"),
+      v.literal("blocked")
+    )),
+    pmStatusReason: v.optional(v.string()),
+    pmStatusUpdatedAt: v.optional(v.number()),
+    arrivedAt: v.optional(v.number()),
+    checkedInAt: v.optional(v.number()),
+    seenAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    noShowAt: v.optional(v.number()),
+    cancelledAt: v.optional(v.number()),
+    blockedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+  }).index("by_clinic", ["clinicId"]).index("by_start", ["startMs"]).index("by_clinic_pm_status", ["clinicId", "pmStatus"]),
+
+  rooms: defineTable({
+    clinicId: v.optional(v.string()),
+    name: v.string(),
+    capacity: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_clinic", ["clinicId"]),
+
+  primaryCareNoteTemplates: defineTable({
+    clinicId: v.optional(v.string()),
+    name: v.string(),
+    content: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+  }).index("by_clinic", ["clinicId"]),
     orCases: defineTable({
       patientName: v.string(),
       procedure: v.string(),
@@ -1093,6 +1133,9 @@ export default defineSchema({
       subject: v.string(), // e.g., "Calculus II", "Quantum Mechanics", "Data Structures"
       className: v.string(), // e.g., "MATH-201", "CS-301"
       professor: v.optional(v.string()),
+      recordingInputSource: v.optional(
+        v.union(v.literal("microphone"), v.literal("system"), v.literal("mixed"))
+      ),
       startedAt: v.number(),
       endedAt: v.optional(v.number()),
       durationMinutes: v.optional(v.number()),
@@ -1106,6 +1149,9 @@ export default defineSchema({
       sessionId: v.id("studyClassSessions"),
       userId: v.id("users"),
       syncFingerprint: v.optional(v.string()),
+      recordingInputSource: v.optional(
+        v.union(v.literal("microphone"), v.literal("system"), v.literal("mixed"))
+      ),
       rawTranscription: v.string(), // Raw speech-to-text output
       organizationStatus: v.union(v.literal("raw"), v.literal("organized"), v.literal("summarized")),
       topics: v.array(v.string()), // e.g., ["derivatives", "integrals", "chain-rule"]
@@ -1258,4 +1304,304 @@ export default defineSchema({
     })
       .index("by_user", ["userId"])
       .index("by_user_subject", ["userId", "subject"]),
+
+    // ============ EPIC FHIR INTEGRATION ============
+    epicFhirSync: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      epicMRN: v.string(),
+      epicEncounterId: v.string(),
+      syncDirection: v.union(v.literal("pull"), v.literal("push"), v.literal("bidirectional")),
+      resourceType: v.string(), // "Patient", "Encounter", "Observation", etc.
+      fhirResourceId: v.string(),
+      status: v.union(v.literal("synced"), v.literal("pending"), v.literal("failed"), v.literal("conflict")),
+      lastSyncAt: v.number(),
+      syncedFields: v.array(v.string()), // Fields that were synced
+      conflictNote: v.optional(v.string()),
+      syncedBy: v.optional(v.string()),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_patient", ["patientId"])
+      .index("by_status", ["status"])
+      .index("by_last_sync", ["lastSyncAt"]),
+
+    fhirResources: defineTable({
+      encounterId: v.optional(v.id("encounters")),
+      patientId: v.id("patients"),
+      resourceType: v.string(), // "Patient", "Observation", "Condition", "MedicationRequest", etc.
+      fhirId: v.string(),
+      resourceContent: v.string(), // Serialized FHIR JSON
+      canonicalUrl: v.optional(v.string()),
+      status: v.union(v.literal("active"), v.literal("inactive"), v.literal("superseded")),
+      effectiveAt: v.optional(v.number()),
+      importedAt: v.number(),
+      sourceSystem: v.optional(v.string()), // "Epic", "Cerner", etc.
+    })
+      .index("by_patient", ["patientId"])
+      .index("by_encounter", ["encounterId"])
+      .index("by_resource_type", ["resourceType"]),
+
+    // ============ ADVANCEDMD BILLING & CPT CODES ============
+    cptCodeCaptures: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      cptCode: v.string(), // e.g., "99213"
+      cptDescription: v.string(), // e.g., "Office visit, established patient"
+      severity: v.optional(v.string()),
+      capturedAt: v.number(),
+      capturedBy: v.string(),
+      linkedToService: v.optional(v.string()), // Link to specific service rendered
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_patient", ["patientId"])
+      .index("by_cpt", ["cptCode"]),
+
+    denialRiskAssessments: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      riskFactors: v.array(v.string()), // e.g., ["missing_provider_notes", "incomplete_coding", "documentation_gap"]
+      riskScore: v.number(), // 0-100
+      riskTier: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+      flaggedAt: v.number(),
+      flaggedBy: v.string(),
+      recommendations: v.array(v.string()), // Actionable items to reduce risk
+      addressedAt: v.optional(v.number()),
+      resolvedFactors: v.optional(v.array(v.string())),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_risk_tier", ["riskTier"])
+      .index("by_flagged_at", ["flaggedAt"]),
+
+    priorAuthorizationRequests: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      insuranceId: v.id("insurance"),
+      procedureCode: v.string(),
+      procedureDescription: v.string(),
+      requestedAt: v.number(),
+      requestedBy: v.string(),
+      status: v.union(v.literal("pending"), v.literal("approved"), v.literal("denied"), v.literal("expired")),
+      approvalNumber: v.optional(v.string()),
+      denialReason: v.optional(v.string()),
+      expiresAt: v.optional(v.number()),
+      respondedAt: v.optional(v.number()),
+      notes: v.optional(v.string()),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_status", ["status"])
+      .index("by_requested_at", ["requestedAt"]),
+
+    // ============ PATIENT PORTAL & MESSAGING ============
+    portalMessages: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      messageType: v.union(
+        v.literal("discharge_summary"),
+        v.literal("appointment_reminder"),
+        v.literal("medication_list"),
+        v.literal("education"),
+        v.literal("follow_up_instructions"),
+        v.literal("test_results")
+      ),
+      subject: v.string(),
+      content: v.string(),
+      generatedAt: v.number(),
+      generatedBy: v.string(),
+      sentAt: v.optional(v.number()),
+      viewedAt: v.optional(v.number()),
+      readyToSend: v.boolean(),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_patient", ["patientId"])
+      .index("by_message_type", ["messageType"])
+      .index("by_sent_at", ["sentAt"]),
+
+    portalDeliveryEvents: defineTable({
+      messageId: v.id("portalMessages"),
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      deliveryChannel: v.union(v.literal("sms"), v.literal("email"), v.literal("portal"), v.literal("push")),
+      deliveryStatus: v.union(v.literal("pending"), v.literal("sent"), v.literal("delivered"), v.literal("failed"), v.literal("bounced")),
+      attemptedAt: v.number(),
+      deliveredAt: v.optional(v.number()),
+      failureReason: v.optional(v.string()),
+      retryCount: v.number(),
+    })
+      .index("by_message", ["messageId"])
+      .index("by_encounter", ["encounterId"])
+      .index("by_status", ["deliveryStatus"]),
+
+    // ============ WORKFLOW AUTOMATION ============
+    adtEventLog: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      eventType: v.union(v.literal("admit"), v.literal("discharge"), v.literal("transfer")),
+      epicEventId: v.optional(v.string()),
+      eventTimestamp: v.number(),
+      pushedToEpicAt: v.number(),
+      pushedBy: v.string(),
+      status: v.union(v.literal("queued"), v.literal("sent"), v.literal("acknowledged"), v.literal("failed")),
+      failureReason: v.optional(v.string()),
+      retryCount: v.number(),
+      metadata: v.optional(v.string()), // Additional event details
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_event_type", ["eventType"])
+      .index("by_pushed_at", ["pushedToEpicAt"]),
+
+    referralRouting: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      specialtyRequested: v.string(), // e.g., "Cardiology", "Orthopedics"
+      referralType: v.union(v.literal("consult"), v.literal("follow_up"), v.literal("transfer")),
+      routedToProvider: v.optional(v.id("users")),
+      routedToProviderName: v.optional(v.string()),
+      preferredSchedule: v.optional(v.string()), // e.g., "within 48 hours"
+      routedAt: v.number(),
+      routedBy: v.string(),
+      status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("completed"), v.literal("cancelled")),
+      acceptedAt: v.optional(v.number()),
+      notes: v.optional(v.string()),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_specialty", ["specialtyRequested"])
+      .index("by_status", ["status"]),
+
+    // ============ ANALYTICS & COMPLIANCE ============
+    hedisMetricsCapture: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      metricType: v.array(v.string()), // e.g., ["medication_reconciliation", "preventive_care_screening", "chronic_disease_management"]
+      measurementPeriod: v.string(), // e.g., "2026-Q1"
+      complianceStatus: v.union(v.literal("compliant"), v.literal("non_compliant"), v.literal("not_applicable")),
+      capturedAt: v.number(),
+      capturedBy: v.string(),
+      notes: v.optional(v.string()),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_measurement_period", ["measurementPeriod"])
+      .index("by_compliance_status", ["complianceStatus"]),
+
+    clinicalVarianceTracking: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      varianceType: v.union(
+        v.literal("high_antibiotic_use"),
+        v.literal("unusual_procedure"),
+        v.literal("extended_los"),
+        v.literal("high_readmission_risk"),
+        v.literal("medication_allergy_conflict")
+      ),
+      varianceDescription: v.string(),
+      severity: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+      flaggedAt: v.number(),
+      flaggedBy: v.string(),
+      rootCauseAnalysis: v.optional(v.string()),
+      interventionPlan: v.optional(v.string()),
+      resolvedAt: v.optional(v.number()),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_variance_type", ["varianceType"])
+      .index("by_severity", ["severity"]),
+
+    codingAuditLog: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      coderName: v.string(),
+      coderRole: v.string(),
+      cptCodesReviewed: v.array(v.string()),
+      icdCodesReviewed: v.array(v.string()),
+      auditType: v.union(v.literal("pre_bill"), v.literal("random_sample"), v.literal("high_risk"), v.literal("post_payment")),
+      findingsCount: v.number(),
+      criticalFindingsCount: v.number(),
+      findings: v.optional(v.array(v.string())), // Specific issues found
+      auditedAt: v.number(),
+      status: v.union(v.literal("pending_review"), v.literal("approved"), v.literal("requires_correction")),
+      reviewedAt: v.optional(v.number()),
+      reviewedBy: v.optional(v.string()),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_audit_type", ["auditType"])
+      .index("by_status", ["status"]),
+
+    // ============ REAL-TIME ALERTS & ROUTING ============
+    alertConfigurations: defineTable({
+      alertType: v.union(
+        v.literal("critical_lab"),
+        v.literal("critical_vital"),
+        v.literal("stat_order"),
+        v.literal("deterioration_risk"),
+        v.literal("high_readmission_risk"),
+        v.literal("denial_risk")
+      ),
+      routingRules: v.array(
+        v.object({
+          condition: v.string(), // e.g., "acuity >= 2"
+          targetRole: v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR")),
+          priority: v.union(v.literal("high"), v.literal("normal")),
+          notifySecondaryRole: v.optional(v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR"))),
+          escalateAfterMinutes: v.optional(v.number()), // Auto-escalate if unacknowledged
+        })
+      ),
+      isActive: v.boolean(),
+      createdAt: v.number(),
+      createdBy: v.string(),
+      updatedAt: v.number(),
+    })
+      .index("by_alert_type", ["alertType"])
+      .index("by_active", ["isActive"]),
+
+    escalationTracks: defineTable({
+      encounterId: v.id("encounters"),
+      patientId: v.id("patients"),
+      alertId: v.string(), // Reference to the original alert
+      alertType: v.string(),
+      initialTriggerAt: v.number(),
+      routedToRole: v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR")),
+      routedToUser: v.optional(v.id("users")),
+      routedToUserName: v.optional(v.string()),
+      acknowledgedAt: v.optional(v.number()),
+      acknowledgedBy: v.optional(v.string()),
+      escalatedAt: v.optional(v.number()),
+      escalatedToRole: v.optional(v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR"))),
+      escalatedToUser: v.optional(v.id("users")),
+      resolutionAt: v.optional(v.number()),
+      resolutionDetails: v.optional(v.string()),
+    })
+      .index("by_encounter", ["encounterId"])
+      .index("by_alert_type", ["alertType"])
+      .index("by_routed_to_role", ["routedToRole"]),
+
+    notifications: defineTable({
+      type: v.string(), // e.g., "CRITICAL_LAB", "DETERIORATION", "STAT_ORDER"
+      title: v.string(),
+      message: v.string(),
+      patientId: v.optional(v.id("patients")),
+      encounterId: v.optional(v.id("encounters")),
+      timestamp: v.number(),
+      severity: v.optional(v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("critical"))),
+      routedTo: v.optional(v.union(v.literal("NURSE"), v.literal("DOCTOR"), v.literal("UNIT_COORDINATOR"))),
+      isRead: v.optional(v.boolean()),
+      readAt: v.optional(v.number()),
+      suppressionKey: v.optional(v.string()),
+      suppressedUntil: v.optional(v.number()),
+    })
+      .index("by_patient", ["patientId"])
+      .index("by_type", ["type"])
+      .index("by_timestamp", ["timestamp"]),
+
+    notificationRoutingEvents: defineTable({
+      notificationId: v.optional(v.id("notifications")),
+      encounterId: v.optional(v.id("encounters")),
+      patientId: v.id("patients"),
+      type: v.string(),
+      role: v.string(),
+      routedByUser: v.optional(v.string()),
+      routedAt: v.number(),
+      skipped: v.optional(v.boolean()),
+      skipReason: v.optional(v.string()),
+    })
+      .index("by_patient", ["patientId"])
+      .index("by_role", ["role"])
+      .index("by_routed_at", ["routedAt"]),
   })

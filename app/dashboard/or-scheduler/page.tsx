@@ -113,11 +113,11 @@ export default function OrSchedulerPage() {
   );
 
   const roomOptions = useMemo(
-    () => Array.from(new Set(sortedDayCases.map((entry) => entry.room))).sort((a, b) => a.localeCompare(b)),
+    () => Array.from<string>(new Set<string>(sortedDayCases.map((entry) => String(entry.room)))).sort((a, b) => a.localeCompare(b)),
     [sortedDayCases]
   );
   const surgeonOptions = useMemo(
-    () => Array.from(new Set(sortedDayCases.map((entry) => entry.surgeon))).sort((a, b) => a.localeCompare(b)),
+    () => Array.from<string>(new Set<string>(sortedDayCases.map((entry) => String(entry.surgeon)))).sort((a, b) => a.localeCompare(b)),
     [sortedDayCases]
   );
 
@@ -180,7 +180,7 @@ export default function OrSchedulerPage() {
 
   const timelineRooms = useMemo(
     () =>
-      Array.from(new Set(filteredDayCases.map((entry) => entry.room)))
+      Array.from<string>(new Set<string>(filteredDayCases.map((entry) => String(entry.room))))
         .sort((a, b) => a.localeCompare(b))
         .map((roomName) => ({
           roomName,

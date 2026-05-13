@@ -20,6 +20,12 @@ async function findEscalationRecipient(ctx: MutationCtx, role: EscalationRole) {
   return candidates.find((user) => user.status === "ACTIVE") ?? null;
 }
 
+function mapToNotificationRole(role?: string): "NURSE" | "DOCTOR" | "UNIT_COORDINATOR" | undefined {
+  if (!role) return undefined;
+  if (role === "NURSE" || role === "DOCTOR" || role === "UNIT_COORDINATOR") return role;
+  return undefined;
+}
+
 function isOpenCriticalForDisplay(lab: {
   isAbnormal: boolean;
   status: "pending" | "final";
@@ -46,27 +52,31 @@ function shouldEscalateCritical(lab: {
 async function insertNotificationWithSuppression(
   ctx: MutationCtx,
   args: {
-    userId?: Doc<"notifications">["userId"];
     title: string;
     message: string;
     type: "CRITICAL_LAB";
     patientId?: Doc<"notifications">["patientId"];
+    routedTo?: Doc<"notifications">["routedTo"];
     suppressionKey: string;
     suppressionWindowMs: number;
   }
 ) {
   const now = Date.now();
+  // Use by_timestamp index since by_suppression_key_timestamp doesn't exist
   const recent = await ctx.db
     .query("notifications")
-    .withIndex("by_suppression_key_timestamp", (q) =>
-      q.eq("suppressionKey", args.suppressionKey).gte("timestamp", now - args.suppressionWindowMs)
+    .withIndex("by_type", (q) =>
+      q.eq("type", args.type)
     )
+    .filter((q) => q.and(
+      q.gte(q.field("timestamp"), now - args.suppressionWindowMs),
+      q.eq(q.field("suppressionKey"), args.suppressionKey)
+    ))
     .take(1);
 
   if (recent.length > 0) return false;
 
   await ctx.db.insert("notifications", {
-    userId: args.userId,
     title: args.title,
     message: args.message,
     type: args.type,
@@ -74,6 +84,7 @@ async function insertNotificationWithSuppression(
     timestamp: now,
     patientId: args.patientId,
     suppressionKey: args.suppressionKey,
+    routedTo: args.routedTo,
   });
 
   return true;
@@ -113,7 +124,7 @@ async function escalateCriticalLabs(
       const encounter = await ctx.db.get(lab.encounterId);
       const patientId = encounter?.patientId;
       await insertNotificationWithSuppression(ctx, {
-        userId: recipient?._id,
+        routedTo: mapToNotificationRole(recipient?.role as string | undefined),
         title: "Critical Lab Escalated",
         message: `${lab.testName} remains unacknowledged and has been escalated to ${escalationRole} (${escalationCount}).`,
         type: "CRITICAL_LAB",
@@ -153,7 +164,7 @@ export const postResult = mutation({
       const encounter = await ctx.db.get(args.encounterId);
       const recipient = await findEscalationRecipient(ctx, "NURSE");
       await insertNotificationWithSuppression(ctx, {
-        userId: recipient?._id,
+        routedTo: mapToNotificationRole(recipient?.role as string | undefined),
         title: "Critical Lab Result",
         message: `${args.testName} is critical and requires acknowledgement within 10 minutes. Routed to NURSE on duty.`,
         type: "CRITICAL_LAB",
@@ -255,7 +266,6 @@ export const acknowledgeLab = mutation({
 
     const encounter = await ctx.db.get(lab.encounterId);
     await ctx.db.insert("notifications", {
-      userId: undefined,
       title: "Critical Lab Acknowledged",
       message: `${lab.testName} acknowledged by ${args.staffName}.`,
       type: "CRITICAL_LAB",
@@ -291,7 +301,6 @@ export const resolveCriticalLab = mutation({
 
     const encounter = await ctx.db.get(lab.encounterId);
     await ctx.db.insert("notifications", {
-      userId: undefined,
       title: "Critical Lab Resolved",
       message: `${lab.testName} resolved by ${args.staffName}.`,
       type: "CRITICAL_LAB",

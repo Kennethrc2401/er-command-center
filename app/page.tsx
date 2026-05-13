@@ -16,6 +16,7 @@ import {
   BookOpen,
   FlaskConical,
   Briefcase,
+  Baby,
 } from "lucide-react";
 import Link from "next/link";
 import { useResolvedActor } from "@/lib/hooks/useResolvedActor";
@@ -103,6 +104,14 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
       role: "Perioperative"
     },
     {
+      title: "OB/GYN and L&D",
+      desc: "Specialty maternal-fetal triage, labor board, and postpartum readiness workflows",
+      href: "/dashboard/ob-gyn-ld",
+      icon: Baby,
+      color: "bg-rose-600",
+      role: "Women's Health"
+    },
+    {
       title: "AI Tools Hub",
       desc: "Clinical, handoff, and denial-risk copilots in one workspace",
       href: "/dashboard/ai-tools",
@@ -181,8 +190,8 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
 
   const rolePriorityMap: Record<string, string[]> = {
     ADMIN: ["Executive Suite", "Clinical Productivity", "Clinical Research", "Clinical Command"],
-    PROVIDER: ["Clinical Command", "Clinical Productivity", "Clinical References", "AI Tools Hub"],
-    RN: ["Clinical Command", "Clinical Productivity", "Clinical References", "Training Center"],
+    PROVIDER: ["Clinical Command", "OB/GYN and L&D", "Clinical Productivity", "Clinical References"],
+    RN: ["Clinical Command", "OB/GYN and L&D", "Clinical Productivity", "Clinical References"],
     CCMA: ["Clinical Command", "Clinical Productivity", "Clinical References", "Patient Kiosk"],
   };
 
@@ -218,6 +227,7 @@ function PortalDashboard({ displayName, isAdmin }: { displayName: string; isAdmi
     "route:productivity-hub": "Productivity Hub",
     "route:ai-tools": "AI Tools Hub",
     "route:or-scheduler": "OR Scheduler",
+    "route:ob-gyn-ld": "OB/GYN and L&D",
     "route:faxes": "Faxes",
     "route:procedure-pack": "Procedure Prep",
     "route:protocol-pack": "Protocol Pack",
